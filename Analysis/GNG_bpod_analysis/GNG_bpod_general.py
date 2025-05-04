@@ -2,16 +2,9 @@ from Analysis.GNG_bpod_analysis.psychometric_curves import *
 from Analysis.GNG_bpod_analysis.licking_and_outcome import *
 from Analysis.GNG_bpod_analysis.metric import *
 
-import re
-import ast
+
 import numpy as np
-import pandas as pd
-import plotly.graph_objects as go
-import altair as alt
-from plotly.subplots import make_subplots
-from scipy.optimize import curve_fit
-from scipy.stats import norm
-from sklearn.metrics import roc_auc_score, roc_curve, confusion_matrix
+
 
 def getNameAndSession(project_data, index):
     mouse_name = project_data.iloc[index]['MouseName']
@@ -33,14 +26,7 @@ def get_sessions_for_animal(selected_data, animal_name):
     return session_indices, session_dates
 
 
-    # Function to filter out None and empty arrays
-    def filter_valid_arrays(data):
-        return [arr for arr in data if isinstance(arr, np.ndarray) and arr.ndim == 1 and arr.size > 0]
+# Function to filter out None and empty arrays
+def filter_valid_arrays(data):
+    return [arr for arr in data if isinstance(arr, np.ndarray) and arr.ndim == 1 and arr.size > 0]
 
-    # Filter valid Go and No-Go licks
-    filtered_go_licks = filter_valid_arrays(go_licks)
-    filtered_no_go_licks = filter_valid_arrays(no_go_licks)
-
-    # Concatenate valid licks
-    concatenated_go = np.concatenate(filtered_go_licks) if filtered_go_licks else np.array([])
-    concatenated_no_go = np.concatenate(filtered_no_go_licks) if filtered_no_go_licks else np.array([])

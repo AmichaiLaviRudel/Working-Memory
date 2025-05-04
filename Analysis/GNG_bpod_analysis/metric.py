@@ -1,14 +1,9 @@
 from Analysis.GNG_bpod_analysis.psychometric_curves import *
 from Analysis.GNG_bpod_analysis.GNG_bpod_general import *
 
-import re
-import ast
 import numpy as np
 import pandas as pd
-import plotly.graph_objects as go
 import altair as alt
-from plotly.subplots import make_subplots
-from scipy.optimize import curve_fit
 from scipy.stats import norm
 from sklearn.metrics import roc_auc_score, roc_curve, confusion_matrix
 import streamlit as st

@@ -244,45 +244,15 @@ def process_and_plot_lick_data(project_data, index):
     go_licks = licks[go_trial]
     no_go_licks = licks[no_go_trial]
 
-    # Function to create learning curve with interactivity
-    def learning_curve(selected_data, index=0):
-        # Get the data from the responses function
-        data = responses(selected_data, index)
-
-        # Melt the data to long format for Altair
-        data_melted = pd.melt(data.reset_index(), id_vars = "index", var_name = "Response Type", value_name = "Value")
-
-        # Create the Altair line chart with custom colors and interactivity
-        chart = alt.Chart(data_melted).mark_line().encode(
-            x = alt.X('index:Q', title = 'Trials'),
-            y = alt.Y('Value:Q', title = 'Cumulative Responses'),
-            color = alt.Color('Response Type:N', scale = alt.Scale(
-                domain = ['Hit', 'CR', 'FA', 'Miss'],
-                range = ["#008000", '#1E90FA', '#FF9100', '#B22222']  # Custom colors
-            )),
-            tooltip = ['index', 'Response Type', 'Value']
-        ).properties(
-            title = "Mouse Performance Learning Curve"
-        ).interactive()  # Enable zooming and panning
-
-        # Remove the grid lines for a clean look
-        chart = chart.configure_axis(grid = False)
-
-        # Display the interactive chart in Streamlit
-        st.altair_chart(chart, use_container_width = True)
 
 
-    # Prepare raster plot data
-    def prepare_raster_data(licks_list, trial_type, start_index=1):
+    # Filter valid Go and No-Go licks
+    filtered_go_licks = filter_valid_arrays(go_licks)
+    filtered_no_go_licks = filter_valid_arrays(no_go_licks)
 
-        """Formats raster data for Plotly scatter plot."""
-        data = []
-        for i, licks_in_trial in enumerate(licks_list):
-            if isinstance(licks_in_trial, np.ndarray) and licks_in_trial.size > 0:
-                trial_idx = start_index + i  # Assigns sequential index
-                for lick in licks_in_trial:
-                    data.append({"Time": lick, "Trial Index": trial_idx, "Trial Type": trial_type})
-        return pd.DataFrame(data)
+    # Concatenate valid licks
+    concatenated_go = np.concatenate(filtered_go_licks) if filtered_go_licks else np.array([])
+    concatenated_no_go = np.concatenate(filtered_no_go_licks) if filtered_no_go_licks else np.array([])
 
     # Generate new trial indices for Go and No-Go
     df_go_raster = prepare_raster_data(filtered_go_licks, "Go", start_index=1)
@@ -379,5 +349,41 @@ def process_and_plot_lick_data(project_data, index):
     # Display the subplot figure in Streamlit
     st.plotly_chart(fig, use_container_width=False)
 
+# Prepare raster plot data
+def prepare_raster_data(licks_list, trial_type, start_index=1):
 
+    """Formats raster data for Plotly scatter plot."""
+    data = []
+    for i, licks_in_trial in enumerate(licks_list):
+        if isinstance(licks_in_trial, np.ndarray) and licks_in_trial.size > 0:
+            trial_idx = start_index + i  # Assigns sequential index
+            for lick in licks_in_trial:
+                data.append({"Time": lick, "Trial Index": trial_idx, "Trial Type": trial_type})
+    return pd.DataFrame(data)
 
+# Function to create learning curve with interactivity
+def learning_curve(selected_data, index=0):
+    # Get the data from the responses function
+    data = responses(selected_data, index)
+
+    # Melt the data to long format for Altair
+    data_melted = pd.melt(data.reset_index(), id_vars = "index", var_name = "Response Type", value_name = "Value")
+
+    # Create the Altair line chart with custom colors and interactivity
+    chart = alt.Chart(data_melted).mark_line().encode(
+        x = alt.X('index:Q', title = 'Trials'),
+        y = alt.Y('Value:Q', title = 'Cumulative Responses'),
+        color = alt.Color('Response Type:N', scale = alt.Scale(
+            domain = ['Hit', 'CR', 'FA', 'Miss'],
+            range = ["#008000", '#1E90FA', '#FF9100', '#B22222']  # Custom colors
+        )),
+        tooltip = ['index', 'Response Type', 'Value']
+    ).properties(
+        title = "Mouse Performance Learning Curve"
+    ).interactive()  # Enable zooming and panning
+
+    # Remove the grid lines for a clean look
+    chart = chart.configure_axis(grid = False)
+
+    # Display the interactive chart in Streamlit
+    st.altair_chart(chart, use_container_width = True)
