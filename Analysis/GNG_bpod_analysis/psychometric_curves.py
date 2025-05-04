@@ -1,11 +1,12 @@
 from Analysis.GNG_bpod_analysis.licking_and_outcome import *
 from Analysis.GNG_bpod_analysis.metric import *
-from Analysis.GNG_bpod_analysis.GNG_bpod_general import *
 
 import plotly.graph_objects as go
 import numpy as np
 import streamlit as st
 import pandas as pd
+from scipy.optimize import curve_fit
+
 
 
 ### Function: Fit Psychometric Curve ###
@@ -73,6 +74,7 @@ def psychometric_curve(selected_data, index, plot=True):
     except Exception as e:
 
         return None, None, None
+
 def psychometric_curve_multiple_sessions(selected_data, animal_name = "None", plot=False):
     """
     Plots the progression of the slope at the boundary across multiple sessions for a selected animal.
