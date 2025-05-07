@@ -18,7 +18,7 @@ def gng_bpod_analysis(project_data, index):
     with tab1:
         try:
             classifier_metric(project_data, index)
-            # d_prime(project_data, index, t=bin, plot=True)
+            d_prime(project_data, index, t=bin, plot=True)
 
         except Exception as e:
             st.warning(f"something went wrong with this graph :|\n\n{e}")
@@ -68,10 +68,14 @@ def gng_bpod_analysis_multipule(project_data, index):
 
         multi_animal_d_prime_progression(project_data)
 
+        multi_animal_d_prime_progression(project_data, N_Boundaries = 1)
+        multi_animal_d_prime_progression(project_data, N_Boundaries = 2)
+
+
     with tab3:
         psychometric_curve_multiple_sessions(project_data, animal_name = animal_name, plot=True)
-        multi_animal_psychometric_slope_progression(project_data,  N_Boundaries = 1)
-        multi_animal_psychometric_slope_progression(project_data,  N_Boundaries = 2)
+        multi_animal_psychometric_slope_progression(project_data,  N_Boundaries = None)
+        # multi_animal_psychometric_slope_progression(project_data,  N_Boundaries = 2)
         plot_psychometric_curves_with_boundaries(project_data, N_Boundaries = 1, n_indices = 2)
         plot_psychometric_curves_with_boundaries(project_data,  N_Boundaries = 2, n_indices = 2)
 

@@ -60,7 +60,7 @@ def current_project_overview(existing_projects, selected_project, path, types):
     st_project_data = st.data_editor(
         data = project_data,
         height = 400,
-        # use_container_width = True,
+        use_container_width = True,
         hide_index = True,
         column_order = columns_to_present,
         column_config = {

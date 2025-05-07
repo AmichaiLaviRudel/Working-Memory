@@ -1,6 +1,17 @@
-c_go = "#006837"  # Dark Green
-c_nogo = "#A50026"  # Dark Red
-gray_shades = ["#D3D3D3"]
-color = '#1E90FA'
+# ─── Global Color Palette ─────────────────────────────────────────────
+COLOR_GO       = "#006837"   # Dark Green
+COLOR_NOGO     = "#A50026"   # Dark Red
+COLOR_GRAY     = "#D3D3D3"   # Light Gray
+COLOR_BLUE     = "#104E8B "   # Blue
+COLOR_ACCENT   = '#1E90FA'   # Dodger Blue
+COLOR_SUBTLE   = "#9699A7"   # Muted Gray-Blue
 
-color_a = '#9699A7'
+COLOR_LOW_BD   = COLOR_BLUE
+COLOR_HIGH_BD  = COLOR_ACCENT
+
+COLOR_D_PRIME = "#FF7F0E"  # Orange
+# ─── Line Width ─────────────────────────────────────────────────
+LINE_WIDTH_THIN     = 0.5
+LINE_WIDTH_MEDIUM  = 1.0
+LINE_WIDTH_THICK    = 5
+LINE_WIDTH_VERY_THICK = 7

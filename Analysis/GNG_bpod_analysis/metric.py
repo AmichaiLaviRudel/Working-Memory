@@ -1,5 +1,6 @@
 from Analysis.GNG_bpod_analysis.psychometric_curves import *
 from Analysis.GNG_bpod_analysis.GNG_bpod_general import *
+import Analysis.GNG_bpod_analysis.colors as colors
 
 import numpy as np
 import pandas as pd
@@ -13,6 +14,7 @@ def d_prime(selected_data, index=0, t=10, plot=False):
     from Analysis.GNG_bpod_analysis.licking_and_outcome import licking_rate
     rates, frac = licking_rate(selected_data, index, t=t, plot=False)
     # Calculate hits, misses, false alarms, and correct rejections
+
     hit = rates["Hit"]
     miss = rates["Miss"]
     fa = rates["FA"]
@@ -55,7 +57,7 @@ def d_prime(selected_data, index=0, t=10, plot=False):
 
         # Add a horizontal line at y=1
         horizontal_line = alt.Chart(pd.DataFrame({"y": [1]})).mark_rule(
-            color = "gray",
+            color = colors.COLOR_GRAY,
             strokeDash = [4, 4]
         ).encode(
             y = "y:Q"
@@ -146,8 +148,13 @@ def d_prime_multiple_sessions(selected_data, t=10, animal_name='None', plot = Tr
 
     return data
 
-def multi_animal_d_prime_progression(selected_data):
-    st.title("Multi-Animal Progress")
+def multi_animal_d_prime_progression(selected_data, N_Boundaries = None):
+
+    if N_Boundaries != None:
+        st.title(f"Multi-Animal Progress {N_Boundaries} boudaries")
+        selected_data = selected_data[selected_data["N_Boundaries"] == N_Boundaries].reset_index(drop = True)
+    else:
+        st.title("Multi-Animal Progress")
 
     # Get unique subject names
     subjects = selected_data["MouseName"].unique()

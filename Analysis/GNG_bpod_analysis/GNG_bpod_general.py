@@ -30,3 +30,11 @@ def get_sessions_for_animal(selected_data, animal_name):
 def filter_valid_arrays(data):
     return [arr for arr in data if isinstance(arr, np.ndarray) and arr.ndim == 1 and arr.size > 0]
 
+
+# Parse stringified stimulus arrays into numeric NumPy arrays
+def parse_stimuli(stim_str):
+    try:
+        return np.fromstring(stim_str.strip("[]"), sep = " ")
+    except Exception:
+        return np.array([])
+

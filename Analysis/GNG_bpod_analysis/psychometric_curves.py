@@ -1,6 +1,6 @@
 from Analysis.GNG_bpod_analysis.licking_and_outcome import *
 from Analysis.GNG_bpod_analysis.metric import *
-
+import Analysis.GNG_bpod_analysis.colors as colors
 import plotly.graph_objects as go
 import numpy as np
 import streamlit as st
@@ -48,8 +48,6 @@ def psychometric_fitting(unique_stims, data_points):
 
     return x0, slope_at_midpoint, slope_at_boundary, x_fit, y_fit
 
-
-
 ### Main Function: Run the Full Psychometric Analysis ###
 def psychometric_curve(selected_data, index, plot=True):
     """
@@ -60,16 +58,46 @@ def psychometric_curve(selected_data, index, plot=True):
         stimuli, outcomes = preprocess_stimuli_outcomes(selected_data, index)
         unique_stimuli, lick_rates = compute_lick_rate(stimuli, outcomes)
 
-        # Fit the psychometric curve
-        x0, slope_at_midpoint, slope_at_boundary, x_fit, y_fit = psychometric_fitting(unique_stimuli, lick_rates)
+        n_b = selected_data.loc[index, 'N_Boundaries']
 
-        # Display results
-        if plot:
-            st.subheader("Psychometric Curve with Fit")
-            st.text(f"x0: {round(x0, 2)}, Slope at Boundary: {round(slope_at_boundary, 2)}")
-            plot_psychometric_curve(unique_stimuli, lick_rates, x_fit, y_fit, x0, slope_at_boundary)
+        if n_b == 1:
+            # Fit the psychometric curve
+            x0, slope_at_midpoint, slope_at_boundary, x_fit, y_fit = psychometric_fitting(unique_stimuli, lick_rates)
 
-        return x0, slope_at_midpoint, slope_at_boundary
+            # Display results
+            if plot:
+                st.subheader("Psychometric Curve with Fit")
+                st.text(f"x0: {round(x0, 2)}, Slope at Boundary: {round(slope_at_boundary, 2)}")
+                plot_psychometric_curve(unique_stimuli, lick_rates, x_fit, y_fit, x0, slope_at_boundary)
+            return [x0, np.nan], [slope_at_midpoint, np.nan], [slope_at_boundary, np.nan]
+
+        if n_b == 2:
+            unique_stimuli_low = unique_stimuli[unique_stimuli <= 1.5]
+            unique_stimuli_high = unique_stimuli[unique_stimuli > 1]
+            lick_rates_low = lick_rates[unique_stimuli <= 1.5]
+            lick_rates_high = lick_rates[unique_stimuli > 1]
+            # Fit the psychometric curve for low and high stimuli
+            x0_low, slope_at_midpoint_low, slope_at_boundary_low, x_fit_low, y_fit_low = psychometric_fitting(unique_stimuli_low, lick_rates_low)
+            x0_high, slope_at_midpoint_high, slope_at_boundary_high, x_fit_high, y_fit_high = psychometric_fitting(unique_stimuli_high, lick_rates_high)
+
+            # Display results
+            if plot:
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.subheader("Psychometric Curve with Low Fit")
+                    st.text(f"x0: {round(x0_low, 5)}, Slope at Boundary: {round(slope_at_boundary_low, 5)}")
+                    plot_psychometric_curve(unique_stimuli_low, lick_rates_low, x_fit_low, y_fit_low, x0_low, slope_at_boundary_low)
+                with col2:
+                    st.subheader("Psychometric Curve with hij Fit")
+                    st.text(f"x0: {round(x0_high, 5)}, Slope at Boundary: {round(slope_at_boundary_high, 5)}")
+                    plot_psychometric_curve(unique_stimuli_high, lick_rates_high, x_fit_high, y_fit_high, x0_high, slope_at_boundary_high)
+
+            x0s = [x0_low, x0_high]
+            slopes_at_midpoint = [slope_at_midpoint_low, slope_at_midpoint_high]
+            slopes_at_boundary = [slope_at_boundary_low, slope_at_boundary_high]
+
+            return x0s, slopes_at_midpoint, slopes_at_boundary
+
 
     except Exception as e:
 
@@ -83,143 +111,171 @@ def psychometric_curve_multiple_sessions(selected_data, animal_name = "None", pl
         # Select animal
         animal_name = st.selectbox("Choose an Animal", selected_data["MouseName"].unique(), key="slope_animal_select")
 
-    # Get session indices
-    session_indices, session_dates = get_sessions_for_animal(selected_data, animal_name)
+    session_indices, _ = get_sessions_for_animal(selected_data, animal_name)
 
-    # Initialize array for slopes
-    slopes = np.full(len(session_indices), np.nan)
-    tones_per_class = []
-    boundaries = []
-    for idx, i in enumerate(session_indices):
-        x0, slope_at_midpoint, slope_at_boundary = psychometric_curve(selected_data, i, plot=False)
-        # Retrieve session metadata
-        tones_per_class.append(selected_data.loc[i, 'Tones_per_class'])
-        boundaries.append(selected_data.loc[i, 'N_Boundaries'])
+    low_slopes, high_slopes, tones, n_bounds = [], [], [], []
+    for idx in session_indices:
+        _, _, slope_bd = psychometric_curve(selected_data, idx, plot = False)
 
-        if slope_at_boundary is not None:
-            slopes[idx] = slope_at_boundary  # Store only slope_at_boundary
+        # accept None, scalar or (low, high) iterable
+        if slope_bd is None:
+            low, high = np.nan, np.nan
+        else:
+            try:  # iterable (two‑boundary session)
+                low, high = slope_bd
+            except TypeError:  # scalar (single‑boundary session)
+                low, high = slope_bd, np.nan
 
-    # Create DataFrame for plotting
-    data = pd.DataFrame({
-        'Session Index': np.arange(1, len(session_indices) + 1),
-        'Slope at Boundary': slopes,
-        'Legend': ['Slope Progression'] * len(session_indices), # Dummy column for legend
-        'tones_per_class': tones_per_class,
-        'Boundaries': boundaries
-    })
+        low_slopes.append(low)
+        high_slopes.append(high)
+        tones.append(selected_data.at[idx, "Tones_per_class"])
+        n_bounds.append(selected_data.at[idx, "N_Boundaries"])
 
-    # Plot using Altair
+    # ── tidy dataframe for Altair ────────────────────────────────────────────────
+
+    df = (
+        pd.DataFrame(
+            dict(
+                Session = np.arange(1, len(session_indices) + 1),
+                Low = np.abs(low_slopes),
+                High = high_slopes,
+                tones_per_class = tones,
+                Boundaries = n_bounds,
+            )
+        )
+        .melt(
+            id_vars = ["Session", "tones_per_class", "Boundaries"],
+            value_vars = ["Low", "High"],
+            var_name = "Boundary",
+            value_name = "Slope",
+        )
+    )
+    # ── plotting ────────────────────────────────────────────────────────────────
     if plot:
-
-        chart = alt.Chart(data).mark_line().encode(
-            x=alt.X('Session Index:Q', title='Session Index'),
-            y=alt.Y('Slope at Boundary:Q', title="Slope at Boundary"),
-            color=alt.Color('Legend:N', legend=alt.Legend(title="Legend"))  # Adding legend
+        COLOR_BOUNDARY_SCALE = alt.Scale(
+            domain = ["Low", "High"],
+            range = [colors.COLOR_LOW_BD, colors.COLOR_HIGH_BD]
+        )
+        base = (
+            alt.Chart(df)
+            .encode(
+                x = alt.X("Session:Q", title = "Session index"),
+                y = alt.Y("Slope:Q", title = "Slope at boundary"),
+                color = alt.Color("Boundary:N", scale=COLOR_BOUNDARY_SCALE, title = "Boundary"),
+            )
         )
 
-        # Horizontal reference line at y=0
-        horizontal_line = alt.Chart(pd.DataFrame({'y': [0]})).mark_rule(
-            color='black', strokeDash=[5, 5]
-        ).encode(
-            y='y:Q',
+        lines = base.mark_line(point = True)
+
+
+        anno = (
+            base.mark_point(size = 30, stroke = "black")
+            .encode(
+                shape = alt.Shape(
+                    "Boundaries:N",
+                    scale = alt.Scale(domain = [1, 2], range = ["circle", "circle"]),
+                ),
+                fill = alt.Fill(
+                    "Boundaries:N",
+                    scale = alt.Scale(domain = [1, 2], range = ["white", "black"]),
+                ),
+                tooltip = [
+                    alt.Tooltip("Session", title = "Session"),
+                    alt.Tooltip("tones_per_class", title = "Tones / class"),
+                    alt.Tooltip("Boundaries", title = "# boundaries"),
+                    alt.Tooltip("Slope", title = "Slope"),
+                ],
+            )
         )
 
-        # Annotations: empty circle for Boundaries==1, filled circle for Boundaries==2
-        annotations = alt.Chart(data).mark_point(size = 50).encode(
-            x = 'Session Index:Q',
-            y = 'Slope at Boundary:Q',
-            fill = alt.condition(alt.datum.Boundaries == 2, alt.value('black'), alt.value('white')),
-            stroke = alt.value('black'),
-            tooltip = [
-                alt.Tooltip('Session Index', title = 'Session Index'),
-                alt.Tooltip('tones_per_class', title = 'tones_per_class'),
-                alt.Tooltip('Boundaries', title = 'Boundaries'),
-                alt.Tooltip('Slope at Boundary', title = "Slope'")
-            ]
-        )
-
-
-        st.markdown(f"**Slope Progress for {animal_name}**")
-        # Combine plots
-        st.altair_chart(chart + horizontal_line + annotations, use_container_width=True)
-
-    return slopes
-
-
+        st.markdown(f"**Slope progression – {animal_name}**")
+        st.altair_chart(lines + anno, use_container_width = True)
+    # ── numeric return (n_sessions × 2) ─────────────────────────────────────────
+    return np.column_stack([low_slopes, high_slopes])
 
 def multi_animal_psychometric_slope_progression(selected_data, N_Boundaries=1):
 
-    # Filter the rows where the condition is met
-    selected_data = selected_data[selected_data["N_Boundaries"] == N_Boundaries]
-    selected_data = selected_data.reset_index()
+    df = selected_data
 
-    # Get unique subject names
-    subjects = selected_data["MouseName"].unique()
+    if N_Boundaries != None:
+        df = (
+            selected_data
+            .loc[selected_data["N_Boundaries"] == N_Boundaries]
+            .reset_index(drop=True)
+        )
+    # ─── parse stimuli strings to arrays ───────────────────────────────
+    def parse_stimuli(s):
+        try:
+            return np.fromstring(s.strip("[]"), sep=" ")
+        except:
+            return np.array([])
 
-    # Store slope values for each subject
-    slope_data = []
-    session_counts = []
+    df["Parsed_Stimuli"] = df["Unique_Stimuli_Values"].apply(parse_stimuli)
 
-    for subject in subjects:
-        # Compute psychometric slope for each subject
-        slope_values = psychometric_curve_multiple_sessions(selected_data, animal_name = subject, plot = False)
 
-        slope_data.append(slope_values)
-        session_counts.append(len(slope_values))
+    # ─── compute slopes for each subject & session ─────────────────────
+    records = []
+    for subj in df["MouseName"].unique():
+        slopes = psychometric_curve_multiple_sessions(df, animal_name=subj, plot=False)
+        # slopes shape: (n_sessions, 2) → [low, high]
+        for sess_idx, (low, high) in enumerate(slopes, start=1):
+            records.append({"Mouse": subj, "Session": sess_idx, "Boundary": "Low",  "Slope": np.abs(low)})
+            records.append({"Mouse": subj, "Session": sess_idx, "Boundary": "High", "Slope": high})
 
-    # Determine max number of sessions for alignment
-    max_sessions = max(session_counts)
+    long_df = pd.DataFrame(records)
 
-    # Convert list of arrays to DataFrame (aligned by padding with NaN)
-    slope_df = pd.DataFrame(
-        [np.pad(s, (0, max_sessions - len(s)), constant_values = np.nan) for s in slope_data])
-
-    # Compute average slope across subjects
-    avg_slope = slope_df.mean(axis = 0, skipna = True)
-
-    # Prepare DataFrame for Altair
-    data_list = []
-    for i, subject in enumerate(subjects):
-        for session, slope in enumerate(slope_df.iloc[i]):
-            if not np.isnan(slope):
-                data_list.append({"Session": session + 1, "Slope": slope, "Mouse": subject})
-
-    # Add average line data
-    avg_list = []
-    for session, slope in enumerate(avg_slope):
-        if not np.isnan(slope):
-            avg_list.append({"Session": session + 1, "Slope": slope, "Mouse": "Average"})
-
-    df_altair = pd.DataFrame(data_list)
-    df_avg = pd.DataFrame(avg_list)
-
-    # 🎨 Altair line chart for each subject (Gray Palette)
-    subject_lines = alt.Chart(df_altair).mark_line(opacity = 0.7).encode(
-        x = alt.X("Session:Q", title = "Session"),
-        y = alt.Y("Slope:Q", title = "Slope"),
-        color = alt.Color("Mouse:N", scale = alt.Scale(scheme = "greys"), legend = alt.Legend(title = "Subject")),
-        tooltip = ["Mouse", "Session", "Slope"]
-    ).properties(width = 700, height = 400)
-
-    # average line
-    avg_line = alt.Chart(df_avg).mark_line( strokeWidth = 3).encode(
-        x = "Session:Q",
-        y = "Slope:Q"
+    # ─── compute session‐wise average per boundary ────────────────────
+    avg_df = (
+        long_df
+        .groupby(["Session", "Boundary"], as_index=False)["Slope"]
+        .mean()
+        .assign(Mouse="Average")
+    )
+    # ─── define a two‐color scale for Low vs High ──────────────────────
+    two_color = alt.Scale(
+        domain=["Low","High"],
+        range=[colors.COLOR_LOW_BD,colors.COLOR_HIGH_BD]
     )
 
-    # ⚫ Dashed black reference line at y = 0
-    ref_line = alt.Chart(pd.DataFrame({"y": [0]})).mark_rule(color = "black", strokeDash = [5, 5]).encode(
-        y = "y:Q"
+    # ─── individual subjects colored by boundary ───────────────────────
+    subj_lines = (
+        alt.Chart(long_df)
+        .mark_line(opacity=0.3)
+        .encode(
+            x="Session:Q",
+            y="Slope:Q",
+            color=alt.Color("Boundary:N", scale=two_color, legend=alt.Legend(title="Boundary")),
+            detail="Mouse:N",
+            tooltip=["Mouse","Session","Boundary","Slope"],
+        )
     )
 
-    # 🏆 Combine all charts
-    title_name = "One boundary" if N_Boundaries ==1 else "Two boundaries"
-    final_chart = (subject_lines + avg_line + ref_line).properties(title = f"Psychometric Slope Progression, {title_name}")
+    # ─── average lines, same colors but bolder ─────────────────────────
+    avg_line = (
+        alt.Chart(avg_df)
+        .mark_line(strokeWidth=colors.LINE_WIDTH_THICK)
+        .encode(
+            x="Session:Q",
+            y="Slope:Q",
+            color=alt.Color("Boundary:N", scale=two_color, legend=None),
+        )
+    )
 
-    # Display chart in Streamlit
-    st.altair_chart(final_chart, use_container_width = True)
+    # ─── reference at y=0 ──────────────────────────────────────────────
+    zero_rule = (
+        alt.Chart(pd.DataFrame({"y":[0]}))
+        .mark_rule(color="black", strokeDash=[5,5])
+        .encode(y="y:Q")
+    )
+
+    chart = (subj_lines + avg_line + zero_rule).properties(
+        width=700, height=400,
+        title=f"Psychometric Slope Progression"
+    )
+    st.altair_chart(chart, use_container_width=True)
 
 
+    return long_df, avg_df
 
 def plot_psychometric_curves_with_boundaries(project_data, N_Boundaries, n_indices = 2):
     """
@@ -236,11 +292,24 @@ def plot_psychometric_curves_with_boundaries(project_data, N_Boundaries, n_indic
     fig = go.Figure()
 
     # Define a grayscale color palette
-    gray_shades = ["#D3D3D3"]
+    gray_shades = [colors.COLOR_GRAY]
 
-    # Filter the rows where the condition is met
-    filtered_df = project_data[project_data["N_Boundaries"] == N_Boundaries]
-    filtered_df_reset = filtered_df.reset_index()
+    # Filter rows where N_Boundaries matches
+    filtered_df_reset = project_data[project_data["N_Boundaries"] == N_Boundaries].reset_index(drop = True)
+
+    # Parse stringified stimulus arrays into numeric NumPy arrays
+    def parse_stimuli(stim_str):
+        try:
+            return np.fromstring(stim_str.strip("[]"), sep = " ")
+        except Exception:
+            return np.array([])
+
+    filtered_df_reset["Parsed_Stimuli"] = filtered_df_reset["Unique_Stimuli_Values"].apply(parse_stimuli)
+
+    # Further filter if N_Boundaries == 1 (exclude rows with any stimulus > 1.5)
+    if N_Boundaries == 1:
+        filtered_df_reset = filtered_df_reset[filtered_df_reset["Parsed_Stimuli"].apply(lambda x: np.all(x <= 1.5))].reset_index(drop = True)
+
 
     # Get the sessions for each mouse
     mouse_sessions = {}
@@ -283,7 +352,7 @@ def plot_psychometric_curves_with_boundaries(project_data, N_Boundaries, n_indic
             fig.add_trace(go.Scatter(
                 x = unique_stimuli, y = lick_rates,
                 mode = 'lines+markers',
-                line = dict(width = 1, color = gray_shades[i % len(gray_shades)]),  # Cycle through grayscale colors
+                line = dict(width = colors.LINE_WIDTH_MEDIUM, color = gray_shades[i % len(gray_shades)]),  # Cycle through grayscale colors
                 marker = dict(size = 6, color = gray_shades[i % len(gray_shades)]),
                 name = f"{name}, #{session}",
                 hovertemplate = "Stimulus: %{x:.2f} kHz<br>Lick Rate: %{y:.2f}%<extra></extra>"
@@ -306,11 +375,11 @@ def plot_psychometric_curves_with_boundaries(project_data, N_Boundaries, n_indic
         # Compute the average lick rate across all trials
         avg_lick_rate = np.mean(interpolated_lick_rates, axis = 0)
 
-        # Add the average line in **blue** (width = 5)
+        # Add the average line
         fig.add_trace(go.Scatter(
             x = common_stimuli, y = avg_lick_rate,
             mode = 'lines',
-            line = dict(width = 5, color = '#1E90FA'),
+            line = dict(width = colors.LINE_WIDTH_THICK, color = colors.COLOR_LOW_BD if N_Boundaries == 1 else colors.COLOR_HIGH_BD),
             name = "Average Response",
             hovertemplate = "Stimulus: %{x:.2f} kHz<br>Avg Lick Rate: %{y:.2f}%<extra></extra>"
         ))
@@ -321,7 +390,7 @@ def plot_psychometric_curves_with_boundaries(project_data, N_Boundaries, n_indic
             if x_val > 0:
                 fig.add_trace(go.Scatter(
                     x = [x_val, x_val], y = [0, 100],
-                    mode = "lines", line = dict(dash = "dash", width = 2, color = 'gray'),
+                    mode = "lines", line = dict(dash = "dash", width = colors.LINE_WIDTH_MEDIUM, color = 'gray'),
                     name = name,
                     hoverinfo = "skip"
                 ))
@@ -344,14 +413,14 @@ def plot_psychometric_curves_with_boundaries(project_data, N_Boundaries, n_indic
         # Add vertical boundary line at 1.5 kHz
         fig.add_trace(go.Scatter(
             x = [1, 1], y = [0, 100],
-            mode = "lines", line = dict(dash = "dash", width = 2, color = 'gray'),
+            mode = "lines", line = dict(dash = "dash", width = colors.LINE_WIDTH_MEDIUM, color = 'gray'),
             name = "Low Boundary",
             hoverinfo = "skip"
         ))
 
         # Layout settings
         fig.update_layout(
-            title = "Psychometric Curve, One Boundary (Experts)",
+            title = "Psychometric Curve, One Boundary",
             xaxis = dict(
                 title = "Stimulus Value [kHz] <br> (log scale)", type = "log",
                 tickmode = "array", tickvals = [1.5] + sorted(np.round(common_stimuli, 2).tolist()),
@@ -366,7 +435,6 @@ def plot_psychometric_curves_with_boundaries(project_data, N_Boundaries, n_indic
     st.plotly_chart(fig, use_container_width = False)
 
 
-
 def plot_psychometric_curve(unique_stimuli, lick_rates, x_fit, y_fit, x0, slope_at_midpoint):
     """
     Creates an interactive Plotly graph of the psychometric curve with:
@@ -376,7 +444,6 @@ def plot_psychometric_curve(unique_stimuli, lick_rates, x_fit, y_fit, x0, slope_
     - Vertical dashed lines for x0, x=1, and x=1.5.
     - Interactive legend (toggle data series).
     """
-    st.write("hey")
     try:
         # Ensure unique_stimuli and x_fit are valid (positive for log scale)
         if np.any(unique_stimuli <= 0):
@@ -408,7 +475,7 @@ def plot_psychometric_curve(unique_stimuli, lick_rates, x_fit, y_fit, x0, slope_
         # Fitted sigmoid curve
         fig.add_trace(go.Scatter(
             x = x_fit, y = ((y_fit+min_dp)/(max_dp+min_dp)*100),
-            mode = 'lines', line = dict(width = 3, color = '#9699A7'),
+            mode = 'lines', line = dict(width = colors.LINE_WIDTH_THICK, color = '#9699A7'),
             name = "Fitted Curve",
             hovertemplate = "Stimulus: %{x:.2f} kHz<br>Fitted Lick Rate: %{y:.2f}%<extra></extra>"
         ))
@@ -418,7 +485,7 @@ def plot_psychometric_curve(unique_stimuli, lick_rates, x_fit, y_fit, x0, slope_
             if x_val > 0:  # Avoid issues with log scale
                 fig.add_trace(go.Scatter(
                     x = [x_val, x_val], y = [0, 100],
-                    mode = "lines", line = dict(dash = "dash", width = 2, color = 'gray'),
+                    mode = "lines", line = dict(dash = "dash", width = colors.LINE_WIDTH_THICK, color = 'gray'),
                     name = name,
                     hoverinfo = "skip"
                 ))
@@ -443,4 +510,122 @@ def plot_psychometric_curve(unique_stimuli, lick_rates, x_fit, y_fit, x0, slope_
     except Exception as e:
         st.error(f"Unexpected error in plot_psychometric_curve: {e}")
 
+# ------------------------------------------------------------------
+# Double‑logistic psychometric fit (three decision boundaries)
+# ------------------------------------------------------------------
+def double_psychometric_fitting(unique_stims, data_points, *,
+                                log2_x=True, lapse_fixed=0.0):
+    """
+    Fits a non‑monotonic (rise–fall–rise) psychometric function of the form
+        P(Go) = σ(f; b1,k1) · [1 − σ(f; b2,k2)] + σ(f; b3,k3)
+    with an optional symmetric lapse rate λ.
+
+    Parameters
+    ----------
+    unique_stims : array‑like
+        1‑D stimulus axis (e.g. tone frequency in kHz).
+    data_points : array‑like
+        1‑D hit‑rate (or lick‑probability) values, same length as `unique_stims`.
+    log2_x : bool, default True
+        Apply log2 transform to the x‑axis before fitting (recommended for octaves).
+    lapse_fixed : float in [0,0.5), default 0
+        Fix the lapse rate to this value.  Pass `None` to fit λ as an extra param.
+
+    Returns
+    -------
+    boundaries : ndarray shape (3,)
+        Fitted boundary locations [b1, b2, b3] (on *log2* scale if `log2_x`).
+    slopes_mid  : ndarray shape (3,)
+        Maximal slopes of each logistic component (L*k/4, here equal to k/4).
+    slopes_at_b1b2 : ndarray shape (2,)
+        Slope of the composite curve exactly at b1 and b3 (optional diagnostic).
+    x_fit, y_fit : ndarrays
+        Smooth fitted curve for plotting (100 points, ascending x).
+
+    Notes
+    -----
+    • If you later want asymmetric lapses (different Go/No‑Go ceiling/floor),
+      extend the model with separate upper and lower asymptotes.
+    • All preprocessing (NaN removal, normalisation) mirrors the original function.
+    """
+
+    # ----- helpers -----
+    def σ(x, b, k):
+        # logistic with asymptotes 0..1
+        return 1.0 / (1.0 + np.exp(-k * (x - b)))
+
+    def model(x, b1, b2, b3, k1, k2, k3, λ=0.0):
+        p = σ(x, b1, k1) * (1.0 - σ(x, b2, k2)) + σ(x, b3, k3)
+        return λ * 0.5 + (1.0 - λ) * p
+
+    # ----- clean & normalise -----
+    unique_stims = np.asarray(unique_stims, dtype=float)
+    data_points  = np.asarray(data_points,  dtype=float)
+    mask         = np.isfinite(unique_stims) & np.isfinite(data_points)
+    x, y         = unique_stims[mask], data_points[mask]
+
+    if len(x) < 5:
+        raise ValueError("Insufficient valid data for double‑logistic fitting.")
+
+    # map y to 0..1 (monotonic rescale like your original code)
+    y = (y - y.min()) / (y.max() - y.min())
+
+    # optional log2 transform of x (better for frequency tasks)
+    if log2_x:
+        x = np.log2(x)
+
+    # ----- initial guesses -----
+    # crude: boundaries at 25‑, 50‑, 75‑percentiles of x; slopes = 2
+    q25, q50, q75 = np.percentile(x, [25, 50, 75])
+    p0 = [q25, q50, q75, 2.0, 2.0, 2.0]           # b1, b2, b3, k1..k3
+    bounds_lo = [x.min(), x.min(), x.min(), 0.1, 0.1, 0.1]
+    bounds_hi = [x.max(), x.max(), x.max(), 20,  20,  20]
+
+    if lapse_fixed is None:
+        p0.append(0.02)             # start λ at 2 %
+        bounds_lo.append(0.0)
+        bounds_hi.append(0.3)
+
+    # ----- curve fit -----
+    try:
+        popt, _ = curve_fit(
+            lambda _x, *pars: model(_x, *pars) if lapse_fixed is None
+            else model(_x, *pars, λ=lapse_fixed),
+            x, y, p0=p0, bounds=(bounds_lo, bounds_hi), maxfev=20000
+        )
+    except RuntimeError as e:
+        raise RuntimeError(f"Double‑logistic fitting failed: {e}")
+
+    if lapse_fixed is None:
+        *popt_core, λ_hat = popt
+    else:
+        popt_core, λ_hat = popt, lapse_fixed
+
+    b1, b2, b3, k1, k2, k3 = popt_core
+
+    # ----- derived slopes -----
+    slopes_mid = np.array([k1, k2, k3]) / 4.0
+
+    # slope of *composite* curve exactly at b1 and b3 (optional check)
+    def composite_slope_at(b, which):
+        eps  = 1e-6
+        if which == "low":
+            return (model(b+eps, b1,b2,b3,k1,k2,k3, λ_hat)
+                    - model(b-eps, b1,b2,b3,k1,k2,k3, λ_hat)) / (2*eps)
+        else:
+            return (model(b+eps, b1,b2,b3,k1,k2,k3, λ_hat)
+                    - model(b-eps, b1,b2,b3,k1,k2,k3, λ_hat)) / (2*eps)
+
+    slope_b1 = composite_slope_at(1, "low")
+    slope_b3 = composite_slope_at(1.5, "high")
+
+    # ----- smooth curve for plotting -----
+    x_fit = np.linspace(x.min(), x.max(), 100)
+    y_fit = model(x_fit, b1, b2, b3, k1, k2, k3, λ_hat)
+
+    return (np.array([k1, k2, k3]),
+            slopes_mid,
+            np.array([slope_b1, slope_b3]),
+            x_fit,
+            y_fit)
 
