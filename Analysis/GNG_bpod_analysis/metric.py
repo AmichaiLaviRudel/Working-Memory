@@ -378,3 +378,99 @@ def classifier_metric(project_data, index):
         st.altair_chart(roc_chart + diagonal, use_container_width = False)
 
     return class_metric_df
+
+
+
+def d_prime_multiple_sessions_divde_oneNtwo(selected_data, t=10, animal_name='None', plot = True):
+    if animal_name == "None":
+        # Step 1: Let the user choose an animal from the data, assign a unique key
+        animal_name = st.selectbox("Choose an Animal", selected_data["MouseName"].unique(), key="d_prime_animal_select")
+    data = []
+    # Step 2: Automatically select all sessions for the chosen animal
+    session_indices, session_dates = get_sessions_for_animal(selected_data, animal_name)
+
+    ds = np.zeros([len(session_indices), 3])  # mean, std, max for each session
+    tones_per_class = []
+    boundaries = []
+
+
+    # Compute d' statistics and collect metadata
+    for idx, sess_idx in enumerate(session_indices):
+        stimuli = parse_stimuli(selected_data.loc[sess_idx, 'Stimuli'])
+        stimuli_mask = stimuli < 1.5
+
+        # Filter relevant columns using the same mask
+        filtered_trials = selected_data.loc[sess_idx, 'TrialTypes'][stimuli_mask]
+        filtered_outcomes = selected_data.loc[sess_idx, 'Outcomes'][stimuli_mask]
+        selected_data_filtered = selected_data.copy()
+        selected_data_filtered.at[sess_idx, 'TrialTypes'] = filtered_trials
+        selected_data_filtered.at[sess_idx, 'Outcomes'] = filtered_outcomes
+
+        d = d_prime(selected_data, index=sess_idx, t=t)
+
+    st.table(selected_data)
+
+        # d_low = d[stimuli < 1.5]
+        # d_high = d[stimuli > 1]
+                    # Calculate d' for each condition
+    #     ds[idx, 0] = np.nanmean(d)
+    #     ds[idx, 1] = np.nanstd(d)
+    #     ds[idx, 2] = np.nanmax(d)
+    #     # Retrieve session metadata
+    #     tones_per_class.append(selected_data.loc[sess_idx, 'Tones_per_class'])
+    #     boundaries.append(selected_data.loc[sess_idx, 'N_Boundaries'])
+    #
+    # # Build DataFrame for plotting
+    # data = pd.DataFrame({
+    #     'Session Index':   np.arange(1, len(session_indices) + 1),
+    #     'SessionDate':     session_dates,
+    #     'd_prime': ds[:, 0],
+    #     'Error': ds[:, 1],
+    #     'Max_d_prime': ds[:, 2],
+    #     'tones_per_class': tones_per_class,
+    #     'Boundaries':      boundaries
+    # })
+    #
+    #
+    #
+    # chart = alt.Chart(data).mark_line().encode(
+    #     x=alt.X('Session Index:Q', title='Session Index', axis=alt.Axis(format='.0f', tickCount=len(session_indices))),  # Use session index
+    #     y=alt.Y('d_prime:Q', title="Mean d'", scale=alt.Scale(domain=[-2, 6])),  # Set y-limit between -2 and 6
+    #     tooltip=['Session Index:Q', 'd_prime', 'Error']
+    # ).properties(
+    #     width=600,
+    #     height=300
+    # )
+    #
+    # # Adding error bars
+    # error_bars = chart.mark_errorbar().encode(
+    #     x='Session Index:Q',
+    #     y='d_prime:Q',
+    #     yError='Error:Q'
+    # )
+    # # Adding a horizontal line at y = 1
+    # horizontal_line = alt.Chart(pd.DataFrame({'y': [1]})).mark_rule(color='gray').encode(
+    #     y='y:Q'
+    # )
+    #
+    # # Annotations: empty circle for Boundaries==1, filled circle for Boundaries==2
+    # annotations = alt.Chart(data).mark_point(size = 50).encode(
+    #     x = 'Session Index:Q',
+    #     y = 'd_prime:Q',
+    #     fill = alt.condition(alt.datum.Boundaries == 2, alt.value('black'), alt.value('white')),
+    #     stroke = alt.value('black'),
+    #     tooltip = [
+    #         alt.Tooltip('Session Index', title = 'Session Index'),
+    #         alt.Tooltip('tones_per_class', title = 'tones_per_class'),
+    #         alt.Tooltip('Boundaries', title = 'Boundaries'),
+    #         alt.Tooltip('d_prime', title = "d'")
+    #     ]
+    # )
+    #
+    # if plot:
+    #     # Plot using Altair with session index
+    #     st.title(f"d' Progress for {animal_name}")
+    #     # Combine the line chart, error bars, and the horizontal line
+    #     st.altair_chart(chart + error_bars + horizontal_line+annotations, use_container_width=True)
+
+    return data

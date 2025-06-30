@@ -65,6 +65,7 @@ def gng_bpod_analysis_multipule(project_data, index):
         lick_rate_multipule_sessions(project_data, t=bin, plot=True, animal_name = animal_name)
     with tab2:
         d_prime_multiple_sessions(project_data, t=bin, animal_name = animal_name)
+        # d_prime_multiple_sessions_divde_oneNtwo(project_data, t = 10, animal_name = 'None', plot = True)
 
         multi_animal_d_prime_progression(project_data)
 

@@ -6,49 +6,165 @@ import numpy as np
 import streamlit as st
 import pandas as pd
 from scipy.optimize import curve_fit
+from scipy.interpolate import interp1d
 
 
 
-### Function: Fit Psychometric Curve ###
-def psychometric_fitting(unique_stims, data_points):
+import numpy as np
+from scipy.optimize import curve_fit
+
+# -------------------------------------------------------------------
+# LOW-LEVEL HELPERS
+# -------------------------------------------------------------------
+def _σ(x, b, k):
+    """Simple logistic with asymptotes 0…1."""
+    return 1.0 / (1.0 + np.exp(-k * (x - b)))
+
+
+def _single_sigmoid_fit(x, y, *, x_boundary=1):
     """
-    Fits a sigmoid curve to the psychometric data and extracts key parameters.
-    Returns:
-    - x0: Inflection point (boundary)
-    - slope_at_midpoint: Slope at x0
-    - slope_at_boundary: Slope at the x = 1
-    - x_fit, y_fit: Fitted curve
+    Classic monotone psychometric.  Returns:
+        boundaries      – np.array([x0])
+        slopes_mid      – np.array([k/4])
+        slopes_at_bnds  – np.array([slope_at_x_boundary])
+        x_fit, y_fit    – smooth curve for plotting
     """
+    def sig(x, L, x0, k):
+        return L / (1. + np.exp(-k * (x - x0)))
 
-    def sigmoid(x, L, x0, k):
-        return L / (1 + np.exp(-k * (x - x0)))
-
-    # Handle NaNs before fitting
-    valid_mask = np.isfinite(unique_stims) & np.isfinite(data_points)
-    unique_stims, data_points = unique_stims[valid_mask], data_points[valid_mask]
-    max_dp, min_dp = data_points.max(), data_points.min()
-    data_points = ((data_points-min_dp)/(max_dp-min_dp))*100
-
-    if len(unique_stims) < 3:
-        raise ValueError("Insufficient valid data for curve fitting.")
-
-    try:
-        popt, _ = curve_fit(sigmoid, unique_stims, data_points,
-                            p0 = [max(data_points), np.median(unique_stims), 1], maxfev = 10000)
-    except RuntimeError:
-        raise RuntimeError("Curve fitting failed. Check data for validity.")
-
+    # initial guess: midpoint = median(x), slope = 2
+    p0 = [y.max(), np.median(x), 2.0]
+    popt, _ = curve_fit(sig, x, y, p0=p0, maxfev=10000)
     L, x0, k = popt
-    slope_at_midpoint = (L * k) / 4
-    x_median = 1
-    slope_at_boundary = (L * k * np.exp(-k * (x_median - x0))) / ((1 + np.exp(-k * (x_median - x0))) ** 2)
 
-    x_fit = np.linspace(min(unique_stims), max(unique_stims), 100)
-    y_fit = sigmoid(x_fit, *popt)
+    slope_mid = (L * k) / 4.0
+    slope_at_boundary = (L * k * np.exp(-k * (x_boundary - x0))) / (
+        (1 + np.exp(-k * (x_boundary - x0))) ** 2
+    )
 
-    return x0, slope_at_midpoint, slope_at_boundary, x_fit, y_fit
+    x_fit = np.linspace(x.min(), x.max(), 200)
+    y_fit = sig(x_fit, *popt) / L  # return on 0‥1 scale
 
-### Main Function: Run the Full Psychometric Analysis ###
+    return (
+        np.array([x0]),
+        np.array([slope_mid]),
+        np.array([slope_at_boundary]),
+        x_fit,
+        y_fit,
+    )
+
+
+def _double_sigmoid_fit(x, y, *, b_fixed=None, lam_fixed=0.0):
+    """
+ *Double-boundary* model (phenology style):
+
+            y = p₀ − p₁ · [ 1/(1+e^{p₂(x−p₃)}) + 1/(1+e^{−p₄(x−p₅)}) − 1 ]
+
+      where p₃≈left boundary, p₅≈right boundary.
+    """
+
+    # Phenology double sigmoid model
+    def dbl_sigmoid(t, p0, p1, p2, p3, p4, p5):
+        sigma1 = 1.0 / (1.0 + np.exp(p2 * (t - p3)))
+        sigma2 = 1.0 / (1.0 + np.exp(-p4 * (t - p5)))
+        return p0 - p1 * (sigma1 + sigma2 - 1.0)
+
+    # ----- bounds & guesses -----
+    if b_fixed is None:
+        q25, q75 = np.percentile(x, [25, 75])
+        p0 = [q25, q75, 2.0, 2.0]
+        lo, hi = [x.min(), x.min(), 0.1, 0.1], [x.max(), x.max(), 20.0, 20.0]
+    else:
+        b1, b2 = b_fixed
+        p0 = [2.0, 2.0]
+        lo, hi = [0.1, 0.1], [20.0, 20.0]
+
+    # ----- fit -----
+    # initial guesses
+    p0_guess = [100, 100, 5, 1, 5, 1.5]
+
+    popt, _ = curve_fit(dbl_sigmoid, x, y, p0 = p0_guess, maxfev = 20000)
+    x_fit = np.linspace(x.min(), x.max(), 300)
+    y_fit = dbl_sigmoid(x_fit, *popt)
+
+    p0, p1, p2, p3, p4, p5 = popt
+
+    boundaries = np.array([p3, p5])
+    slopes_midpoint = np.array([p2, p4]) / 4.0
+
+
+    return boundaries, slopes_midpoint, x_fit, y_fit
+
+
+# -------------------------------------------------------------------
+# MAIN FRONT-END FUNCTION
+# -------------------------------------------------------------------
+def psychometric_fitting(unique_stims,
+                     data_points,
+                     *,
+                     N_Boundaries=1,
+                     log2_x=True,
+                     b_fixed=None,
+                     lapse_fixed=0.0):
+    """
+    Universal psychometric fitter.
+
+    Parameters
+    ----------
+    unique_stims, data_points : 1-D arrays
+        Stimulus axis and lick probability.
+    N_Boundaries : 1 or 2
+        • 1 → monotone single sigmoid
+        • 2 → rise–fall model (two boundaries)
+    log2_x : bool
+        Log-transform x before fitting (good for frequencies).
+    b_fixed : None | (tuple)
+        If N_Boundaries==2 you can pin the two boundaries, e.g. (1,1.5).
+    lapse_fixed : float
+        Symmetric lapse (only in two-boundary model).
+
+    Returns
+    -------
+    boundaries, slopes_mid, slopes_at_bnds, x_fit, y_fit
+        Arrays sized according to N_Boundaries.
+    """
+
+    # ── clean & normalise ─────────────────────────────────────────────
+    x = np.asarray(unique_stims, float)
+    y = np.asarray(data_points,  float)
+    mask = np.isfinite(x) & np.isfinite(y)
+    x, y = x[mask], y[mask]
+
+    if len(x) < 4:
+        raise ValueError("Insufficient data for fitting.")
+
+    # Map y to 0…1
+    y = (y - y.min()) / (y.max() - y.min())
+
+    # Optional log2 on x
+    if log2_x:
+        x = np.log2(x)
+        b_fixed_log = None if b_fixed is None else tuple(np.log2(b_fixed))
+    else:
+        b_fixed_log = b_fixed
+
+    # ── choose model ─────────────────────────────────────────────────
+    if N_Boundaries == 1:
+        b, sm, sb, x_fit, y_fit = _single_sigmoid_fit(x, y)
+    elif N_Boundaries == 2:
+        b, sm, x_fit, y_fit = _double_sigmoid_fit(
+            x, y, b_fixed=b_fixed_log, lam_fixed=lapse_fixed
+        )
+    else:
+        raise ValueError("N_Boundaries must be 1 or 2")
+
+    # transform boundaries & x_fit back if log-scaled earlier
+    if log2_x:
+        b = np.power(2.0, b)
+        x_fit = np.power(2.0, x_fit)
+
+    return b, sm, x_fit, y_fit
+
 def psychometric_curve(selected_data, index, plot=True):
     """
     Processes psychometric data, fits a sigmoid curve, and plots the psychometric curve.
@@ -59,45 +175,25 @@ def psychometric_curve(selected_data, index, plot=True):
         unique_stimuli, lick_rates = compute_lick_rate(stimuli, outcomes)
 
         n_b = selected_data.loc[index, 'N_Boundaries']
+        b, sm, x_fit, y_fit = psychometric_fitting(unique_stimuli, lick_rates,
+                                                   N_Boundaries = n_b,
+                                                   log2_x = True)
 
-        if n_b == 1:
-            # Fit the psychometric curve
-            x0, slope_at_midpoint, slope_at_boundary, x_fit, y_fit = psychometric_fitting(unique_stimuli, lick_rates)
+        # st.text(f"x0: {b}, Slope at Boundary: {sm}")
 
-            # Display results
-            if plot:
-                st.subheader("Psychometric Curve with Fit")
-                st.text(f"x0: {round(x0, 2)}, Slope at Boundary: {round(slope_at_boundary, 2)}")
-                plot_psychometric_curve(unique_stimuli, lick_rates, x_fit, y_fit, x0, slope_at_boundary)
-            return [x0, np.nan], [slope_at_midpoint, np.nan], [slope_at_boundary, np.nan]
+        boudaries = [1, 1.5]
 
-        if n_b == 2:
-            unique_stimuli_low = unique_stimuli[unique_stimuli <= 1.5]
-            unique_stimuli_high = unique_stimuli[unique_stimuli > 1]
-            lick_rates_low = lick_rates[unique_stimuli <= 1.5]
-            lick_rates_high = lick_rates[unique_stimuli > 1]
-            # Fit the psychometric curve for low and high stimuli
-            x0_low, slope_at_midpoint_low, slope_at_boundary_low, x_fit_low, y_fit_low = psychometric_fitting(unique_stimuli_low, lick_rates_low)
-            x0_high, slope_at_midpoint_high, slope_at_boundary_high, x_fit_high, y_fit_high = psychometric_fitting(unique_stimuli_high, lick_rates_high)
+        # Plot the psychometric curve
+        if plot:
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=unique_stimuli, y=lick_rates/100, mode='markers', name='Data Points'))
+            fig.add_trace(go.Scatter(x=x_fit, y=y_fit, mode='lines', name='Fitted Curve'))
+            fig.update_layout(title="Psychometric Curve", xaxis_title="Stimulus Intensity", yaxis_title="Lick Rate")
+            for bs in boudaries:
+                fig.add_trace(go.Scatter(x=[bs, bs], y=[0, 1], mode='lines', name='Boundary', line=dict(dash='dash', color=colors.COLOR_GRAY), fillcolor = colors.COLOR_GRAY))
+            st.plotly_chart(fig)
 
-            # Display results
-            if plot:
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.subheader("Psychometric Curve with Low Fit")
-                    st.text(f"x0: {round(x0_low, 5)}, Slope at Boundary: {round(slope_at_boundary_low, 5)}")
-                    plot_psychometric_curve(unique_stimuli_low, lick_rates_low, x_fit_low, y_fit_low, x0_low, slope_at_boundary_low)
-                with col2:
-                    st.subheader("Psychometric Curve with hij Fit")
-                    st.text(f"x0: {round(x0_high, 5)}, Slope at Boundary: {round(slope_at_boundary_high, 5)}")
-                    plot_psychometric_curve(unique_stimuli_high, lick_rates_high, x_fit_high, y_fit_high, x0_high, slope_at_boundary_high)
-
-            x0s = [x0_low, x0_high]
-            slopes_at_midpoint = [slope_at_midpoint_low, slope_at_midpoint_high]
-            slopes_at_boundary = [slope_at_boundary_low, slope_at_boundary_high]
-
-            return x0s, slopes_at_midpoint, slopes_at_boundary
-
+        return None, None, None
 
     except Exception as e:
 
@@ -115,6 +211,7 @@ def psychometric_curve_multiple_sessions(selected_data, animal_name = "None", pl
 
     low_slopes, high_slopes, tones, n_bounds = [], [], [], []
     for idx in session_indices:
+        N_Boundaries =selected_data.at[idx, "N_Boundaries"]
         _, _, slope_bd = psychometric_curve(selected_data, idx, plot = False)
 
         # accept None, scalar or (low, high) iterable
@@ -628,4 +725,6 @@ def double_psychometric_fitting(unique_stims, data_points, *,
             np.array([slope_b1, slope_b3]),
             x_fit,
             y_fit)
+
+
 

@@ -9,6 +9,9 @@ COLOR_SUBTLE   = "#9699A7"   # Muted Gray-Blue
 COLOR_LOW_BD   = COLOR_BLUE
 COLOR_HIGH_BD  = COLOR_ACCENT
 
+c_go = "#006837"  # Dark Green
+c_nogo = "#A50026"  # Dark Red
+
 COLOR_D_PRIME = "#FF7F0E"  # Orange
 # ─── Line Width ─────────────────────────────────────────────────
 LINE_WIDTH_THIN     = 0.5
