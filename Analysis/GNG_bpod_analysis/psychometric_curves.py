@@ -1,5 +1,8 @@
 from Analysis.GNG_bpod_analysis.licking_and_outcome import *
 from Analysis.GNG_bpod_analysis.metric import *
+from Analysis.GNG_bpod_analysis.psychometric_curves_plotting import *
+
+
 import Analysis.GNG_bpod_analysis.colors as colors
 import plotly.graph_objects as go
 import numpy as np
@@ -16,10 +19,6 @@ from scipy.optimize import curve_fit
 # -------------------------------------------------------------------
 # LOW-LEVEL HELPERS
 # -------------------------------------------------------------------
-def _σ(x, b, k):
-    """Simple logistic with asymptotes 0…1."""
-    return 1.0 / (1.0 + np.exp(-k * (x - b)))
-
 
 def _single_sigmoid_fit(x, y, *, x_boundary=1):
     """
@@ -53,49 +52,6 @@ def _single_sigmoid_fit(x, y, *, x_boundary=1):
         y_fit,
     )
 
-
-def _double_sigmoid_fit(x, y, *, b_fixed=None, lam_fixed=0.0):
-    """
- *Double-boundary* model (phenology style):
-
-            y = p₀ − p₁ · [ 1/(1+e^{p₂(x−p₃)}) + 1/(1+e^{−p₄(x−p₅)}) − 1 ]
-
-      where p₃≈left boundary, p₅≈right boundary.
-    """
-
-    # Phenology double sigmoid model
-    def dbl_sigmoid(t, p0, p1, p2, p3, p4, p5):
-        sigma1 = 1.0 / (1.0 + np.exp(p2 * (t - p3)))
-        sigma2 = 1.0 / (1.0 + np.exp(-p4 * (t - p5)))
-        return p0 - p1 * (sigma1 + sigma2 - 1.0)
-
-    # ----- bounds & guesses -----
-    if b_fixed is None:
-        q25, q75 = np.percentile(x, [25, 75])
-        p0 = [q25, q75, 2.0, 2.0]
-        lo, hi = [x.min(), x.min(), 0.1, 0.1], [x.max(), x.max(), 20.0, 20.0]
-    else:
-        b1, b2 = b_fixed
-        p0 = [2.0, 2.0]
-        lo, hi = [0.1, 0.1], [20.0, 20.0]
-
-    # ----- fit -----
-    # initial guesses
-    p0_guess = [100, 100, 5, 1, 5, 1.5]
-
-    popt, _ = curve_fit(dbl_sigmoid, x, y, p0 = p0_guess, maxfev = 20000)
-    x_fit = np.linspace(x.min(), x.max(), 300)
-    y_fit = dbl_sigmoid(x_fit, *popt)
-
-    p0, p1, p2, p3, p4, p5 = popt
-
-    boundaries = np.array([p3, p5])
-    slopes_midpoint = np.array([p2, p4]) / 4.0
-
-
-    return boundaries, slopes_midpoint, x_fit, y_fit
-
-
 # -------------------------------------------------------------------
 # MAIN FRONT-END FUNCTION
 # -------------------------------------------------------------------
@@ -111,9 +67,9 @@ def psychometric_fitting(unique_stims,
 
     Parameters
     ----------
-    unique_stims, data_points : 1-D arrays
+    unique_stims, data_points: 1-D arrays
         Stimulus axis and lick probability.
-    N_Boundaries : 1 or 2
+    N_Boundaries: 1 or 2
         • 1 → monotone single sigmoid
         • 2 → rise–fall model (two boundaries)
     log2_x : bool
@@ -148,13 +104,15 @@ def psychometric_fitting(unique_stims,
     else:
         b_fixed_log = b_fixed
 
-    # ── choose model ─────────────────────────────────────────────────
+    # ── fit the data to the model───────────────────────────────────────
     if N_Boundaries == 1:
         b, sm, sb, x_fit, y_fit = _single_sigmoid_fit(x, y)
+
     elif N_Boundaries == 2:
-        b, sm, x_fit, y_fit = _double_sigmoid_fit(
-            x, y, b_fixed=b_fixed_log, lam_fixed=lapse_fixed
-        )
+        st.error("Double sigmoid fit is not implemented yet")
+        raise NotImplementedError("Double sigmoid fit is not implemented yet")
+        # TODO: implement double sigmoid fit
+
     else:
         raise ValueError("N_Boundaries must be 1 or 2")
 
@@ -175,11 +133,12 @@ def psychometric_curve(selected_data, index, plot=True):
         unique_stimuli, lick_rates = compute_lick_rate(stimuli, outcomes)
 
         n_b = selected_data.loc[index, 'N_Boundaries']
+        # return boundaries, slopes_mid, slopes_at_bnds, x_fit, y_fit
         b, sm, x_fit, y_fit = psychometric_fitting(unique_stimuli, lick_rates,
                                                    N_Boundaries = n_b,
                                                    log2_x = True)
 
-        # st.text(f"x0: {b}, Slope at Boundary: {sm}")
+        st.text(f"x0: {b}, Slope at Boundary: {sm}")
 
         boudaries = [1, 1.5]
 
@@ -193,11 +152,19 @@ def psychometric_curve(selected_data, index, plot=True):
                 fig.add_trace(go.Scatter(x=[bs, bs], y=[0, 1], mode='lines', name='Boundary', line=dict(dash='dash', color=colors.COLOR_GRAY), fillcolor = colors.COLOR_GRAY))
             st.plotly_chart(fig)
 
-        return None, None, None
+        return b, sm, x_fit, y_fit
 
     except Exception as e:
 
         return None, None, None
+
+
+
+
+# -------------------------------------------------------------------
+# MULTIPLE SESSIONS
+# -------------------------------------------------------------------
+
 
 def psychometric_curve_multiple_sessions(selected_data, animal_name = "None", plot=False):
     """
@@ -212,16 +179,16 @@ def psychometric_curve_multiple_sessions(selected_data, animal_name = "None", pl
     low_slopes, high_slopes, tones, n_bounds = [], [], [], []
     for idx in session_indices:
         N_Boundaries =selected_data.at[idx, "N_Boundaries"]
-        _, _, slope_bd = psychometric_curve(selected_data, idx, plot = False)
+        boundaries, slopes_mid, x_fit, y_fit = psychometric_curve(selected_data, idx, plot = False)
 
         # accept None, scalar or (low, high) iterable
-        if slope_bd is None:
+        if slopes_at_bnds is None:
             low, high = np.nan, np.nan
         else:
             try:  # iterable (two‑boundary session)
-                low, high = slope_bd
+                low, high = slopes_at_bnds
             except TypeError:  # scalar (single‑boundary session)
-                low, high = slope_bd, np.nan
+                low, high = slopes_at_bnds, np.nan
 
         low_slopes.append(low)
         high_slopes.append(high)
@@ -373,358 +340,3 @@ def multi_animal_psychometric_slope_progression(selected_data, N_Boundaries=1):
 
 
     return long_df, avg_df
-
-def plot_psychometric_curves_with_boundaries(project_data, N_Boundaries, n_indices = 2):
-    """
-    Plots psychometric curves for individual trials in grayscale and an average curve in blue.
-
-    Parameters:
-    - project_data: DataFrame containing preprocessed data.
-    - stimulus_range: Tuple (min_value, max_value) defining the stimulus range to include.
-    """
-
-
-
-    # Initialize a single figure
-    fig = go.Figure()
-
-    # Define a grayscale color palette
-    gray_shades = [colors.COLOR_GRAY]
-
-    # Filter rows where N_Boundaries matches
-    filtered_df_reset = project_data[project_data["N_Boundaries"] == N_Boundaries].reset_index(drop = True)
-
-    # Parse stringified stimulus arrays into numeric NumPy arrays
-    def parse_stimuli(stim_str):
-        try:
-            return np.fromstring(stim_str.strip("[]"), sep = " ")
-        except Exception:
-            return np.array([])
-
-    filtered_df_reset["Parsed_Stimuli"] = filtered_df_reset["Unique_Stimuli_Values"].apply(parse_stimuli)
-
-    # Further filter if N_Boundaries == 1 (exclude rows with any stimulus > 1.5)
-    if N_Boundaries == 1:
-        filtered_df_reset = filtered_df_reset[filtered_df_reset["Parsed_Stimuli"].apply(lambda x: np.all(x <= 1.5))].reset_index(drop = True)
-
-
-    # Get the sessions for each mouse
-    mouse_sessions = {}
-    for index, row in filtered_df_reset.iterrows():
-        name, session = getNameAndSession(filtered_df_reset, index)
-        if name not in mouse_sessions:
-            mouse_sessions[name] = []
-        mouse_sessions[name].append((session, index))
-
-
-    # Keep only the last n sessions for each mouse
-
-    last_n_indices = []
-    for name, sessions in mouse_sessions.items():
-        # Sort sessions by session number and take last n_indices
-        sorted_sessions = sorted(sessions, key = lambda x: x[0])[-n_indices:]
-        last_n_indices.extend([idx for _, idx in sorted_sessions])
-
-    # Filter the dataframe to keep only the last n sessions per mouse
-    filtered_df_reset = filtered_df_reset.iloc[last_n_indices].reset_index()
-
-    # Store data for computing the average line
-    all_lick_rates = []
-    all_stimuli = []
-
-    #
-    # Loop over the filtered dataframe
-    for i, (index, row) in enumerate(filtered_df_reset.iterrows()):
-        try:
-            name, session = getNameAndSession(filtered_df_reset, index)
-            stimuli, outcomes = preprocess_stimuli_outcomes(filtered_df_reset, index)
-            unique_stimuli, lick_rates = compute_lick_rate(stimuli, outcomes)
-
-
-            # Store data for averaging
-            all_stimuli.append(unique_stimuli)
-            all_lick_rates.append(lick_rates)
-
-            # Line plot with markers (grayscale)
-            fig.add_trace(go.Scatter(
-                x = unique_stimuli, y = lick_rates,
-                mode = 'lines+markers',
-                line = dict(width = colors.LINE_WIDTH_MEDIUM, color = gray_shades[i % len(gray_shades)]),  # Cycle through grayscale colors
-                marker = dict(size = 6, color = gray_shades[i % len(gray_shades)]),
-                name = f"{name}, #{session}",
-                hovertemplate = "Stimulus: %{x:.2f} kHz<br>Lick Rate: %{y:.2f}%<extra></extra>"
-            ))
-
-        except Exception as e:
-            print(f"Error processing index {index}: {e}")
-
-    # Compute the average lick rate for each unique stimulus
-    if all_stimuli and all_lick_rates:
-        # Find common stimulus values (union of all)
-        common_stimuli = sorted(set(np.concatenate(all_stimuli)))
-
-        # Interpolate individual lick rates onto the common stimulus values
-        interpolated_lick_rates = np.array([
-            np.interp(common_stimuli, unique_stimuli, lick_rates)
-            for unique_stimuli, lick_rates in zip(all_stimuli, all_lick_rates)
-        ])
-
-        # Compute the average lick rate across all trials
-        avg_lick_rate = np.mean(interpolated_lick_rates, axis = 0)
-
-        # Add the average line
-        fig.add_trace(go.Scatter(
-            x = common_stimuli, y = avg_lick_rate,
-            mode = 'lines',
-            line = dict(width = colors.LINE_WIDTH_THICK, color = colors.COLOR_LOW_BD if N_Boundaries == 1 else colors.COLOR_HIGH_BD),
-            name = "Average Response",
-            hovertemplate = "Stimulus: %{x:.2f} kHz<br>Avg Lick Rate: %{y:.2f}%<extra></extra>"
-        ))
-
-    if N_Boundaries == 2:
-        # Add vertical boundary lines
-        for x_val, name in zip([1, 1.5], ["Low Boundary", "High Boundary"]):
-            if x_val > 0:
-                fig.add_trace(go.Scatter(
-                    x = [x_val, x_val], y = [0, 100],
-                    mode = "lines", line = dict(dash = "dash", width = colors.LINE_WIDTH_MEDIUM, color = 'gray'),
-                    name = name,
-                    hoverinfo = "skip"
-                ))
-
-        # Layout settings
-        fig.update_layout(
-            title = "Psychometric Curve, Two Boundaries",
-            xaxis = dict(
-                title = "Stimulus Value [kHz] <br> (log scale)", type = "log",
-                tickmode = "array", tickvals = [1, 1.5] + sorted(np.round(common_stimuli, 2).tolist()),
-                showgrid = True
-            ),
-            yaxis = dict(title = "Lick Rate (%)", range = [-5, 110]),
-            legend = dict(x = 1.01, y = 0.99, bgcolor = "rgba(255,255,255,0.4)"),
-            margin = dict(l = 40, r = 40, t = 60, b = 40),
-            hovermode = "x unified"
-        )
-
-    elif N_Boundaries == 1:
-        # Add vertical boundary line at 1.5 kHz
-        fig.add_trace(go.Scatter(
-            x = [1, 1], y = [0, 100],
-            mode = "lines", line = dict(dash = "dash", width = colors.LINE_WIDTH_MEDIUM, color = 'gray'),
-            name = "Low Boundary",
-            hoverinfo = "skip"
-        ))
-
-        # Layout settings
-        fig.update_layout(
-            title = "Psychometric Curve, One Boundary",
-            xaxis = dict(
-                title = "Stimulus Value [kHz] <br> (log scale)", type = "log",
-                tickmode = "array", tickvals = [1.5] + sorted(np.round(common_stimuli, 2).tolist()),
-                showgrid = True
-            ),
-            yaxis = dict(title = "Lick Rate (%)", range = [-5, 110]),
-            legend = dict(x = 1.01, y = 0.99, bgcolor = "rgba(255,255,255,0.4)"),
-            margin = dict(l = 40, r = 40, t = 60, b = 40),
-            hovermode = "x unified"
-        )
-    # Display final figure
-    st.plotly_chart(fig, use_container_width = False)
-
-
-def plot_psychometric_curve(unique_stimuli, lick_rates, x_fit, y_fit, x0, slope_at_midpoint):
-    """
-    Creates an interactive Plotly graph of the psychometric curve with:
-    - A log-scaled x-axis.
-    - Scatter points for actual data.
-    - A fitted sigmoid curve.
-    - Vertical dashed lines for x0, x=1, and x=1.5.
-    - Interactive legend (toggle data series).
-    """
-    try:
-        # Ensure unique_stimuli and x_fit are valid (positive for log scale)
-        if np.any(unique_stimuli <= 0):
-            st.error("Error: unique_stimuli contains non-positive values. Log scale requires all values > 0.")
-            return
-
-        if np.any(x_fit <= 0):
-            st.error("Error: x_fit contains non-positive values. Log scale requires all values > 0.")
-            return
-
-        # st.table(pd.DataFrame({
-        #     "x": unique_stimuli,
-        #     "y": lick_rates,
-        # }))
-
-        max_dp, min_dp = lick_rates.max(), lick_rates.min()
-
-        # Define figure
-        fig = go.Figure()
-
-        # Scatter plot for actual data
-        fig.add_trace(go.Scatter(
-            x = unique_stimuli, y = lick_rates,
-            mode = 'markers', marker = dict(size = 8, color = '#1E90FA'),
-            name = "Data Points",
-            hovertemplate = "Stimulus: %{x:.2f} kHz<br>Lick Rate: %{y:.2f}%<extra></extra>"
-        ))
-        # ((data_points - min_dp) / (max_dp - min_dp)) * 100
-        # Fitted sigmoid curve
-        fig.add_trace(go.Scatter(
-            x = x_fit, y = ((y_fit+min_dp)/(max_dp+min_dp)*100),
-            mode = 'lines', line = dict(width = colors.LINE_WIDTH_THICK, color = '#9699A7'),
-            name = "Fitted Curve",
-            hovertemplate = "Stimulus: %{x:.2f} kHz<br>Fitted Lick Rate: %{y:.2f}%<extra></extra>"
-        ))
-
-        # Vertical lines at x=1, x=1.5, and x0
-        for x_val, name in zip([1, 1.5], ["Boundary Low", "Boundary High"]):
-            if x_val > 0:  # Avoid issues with log scale
-                fig.add_trace(go.Scatter(
-                    x = [x_val, x_val], y = [0, 100],
-                    mode = "lines", line = dict(dash = "dash", width = colors.LINE_WIDTH_THICK, color = 'gray'),
-                    name = name,
-                    hoverinfo = "skip"
-                ))
-
-        # Layout settings
-        fig.update_layout(
-            title = "Psychometric Curve",
-            xaxis = dict(
-                title = "Stimulus Value [kHz] <br> (log scale)", type = "log",
-                tickmode = "array", tickvals = [1, 1.5] + sorted(np.round(unique_stimuli,2).tolist()),
-                showgrid = True
-            ),
-            yaxis = dict(title = "Lick Rate (%)", range = [-5, 110]),
-            legend = dict(x = 1.01, y = 0.99, bgcolor = "rgba(255,255,255,0.4)"),
-            margin = dict(l = 40, r = 40, t = 60, b = 40),
-            hovermode = "x unified"
-        )
-
-        # Display in Streamlit
-        st.plotly_chart(fig, use_container_width = False)
-
-    except Exception as e:
-        st.error(f"Unexpected error in plot_psychometric_curve: {e}")
-
-# ------------------------------------------------------------------
-# Double‑logistic psychometric fit (three decision boundaries)
-# ------------------------------------------------------------------
-def double_psychometric_fitting(unique_stims, data_points, *,
-                                log2_x=True, lapse_fixed=0.0):
-    """
-    Fits a non‑monotonic (rise–fall–rise) psychometric function of the form
-        P(Go) = σ(f; b1,k1) · [1 − σ(f; b2,k2)] + σ(f; b3,k3)
-    with an optional symmetric lapse rate λ.
-
-    Parameters
-    ----------
-    unique_stims : array‑like
-        1‑D stimulus axis (e.g. tone frequency in kHz).
-    data_points : array‑like
-        1‑D hit‑rate (or lick‑probability) values, same length as `unique_stims`.
-    log2_x : bool, default True
-        Apply log2 transform to the x‑axis before fitting (recommended for octaves).
-    lapse_fixed : float in [0,0.5), default 0
-        Fix the lapse rate to this value.  Pass `None` to fit λ as an extra param.
-
-    Returns
-    -------
-    boundaries : ndarray shape (3,)
-        Fitted boundary locations [b1, b2, b3] (on *log2* scale if `log2_x`).
-    slopes_mid  : ndarray shape (3,)
-        Maximal slopes of each logistic component (L*k/4, here equal to k/4).
-    slopes_at_b1b2 : ndarray shape (2,)
-        Slope of the composite curve exactly at b1 and b3 (optional diagnostic).
-    x_fit, y_fit : ndarrays
-        Smooth fitted curve for plotting (100 points, ascending x).
-
-    Notes
-    -----
-    • If you later want asymmetric lapses (different Go/No‑Go ceiling/floor),
-      extend the model with separate upper and lower asymptotes.
-    • All preprocessing (NaN removal, normalisation) mirrors the original function.
-    """
-
-    # ----- helpers -----
-    def σ(x, b, k):
-        # logistic with asymptotes 0..1
-        return 1.0 / (1.0 + np.exp(-k * (x - b)))
-
-    def model(x, b1, b2, b3, k1, k2, k3, λ=0.0):
-        p = σ(x, b1, k1) * (1.0 - σ(x, b2, k2)) + σ(x, b3, k3)
-        return λ * 0.5 + (1.0 - λ) * p
-
-    # ----- clean & normalise -----
-    unique_stims = np.asarray(unique_stims, dtype=float)
-    data_points  = np.asarray(data_points,  dtype=float)
-    mask         = np.isfinite(unique_stims) & np.isfinite(data_points)
-    x, y         = unique_stims[mask], data_points[mask]
-
-    if len(x) < 5:
-        raise ValueError("Insufficient valid data for double‑logistic fitting.")
-
-    # map y to 0..1 (monotonic rescale like your original code)
-    y = (y - y.min()) / (y.max() - y.min())
-
-    # optional log2 transform of x (better for frequency tasks)
-    if log2_x:
-        x = np.log2(x)
-
-    # ----- initial guesses -----
-    # crude: boundaries at 25‑, 50‑, 75‑percentiles of x; slopes = 2
-    q25, q50, q75 = np.percentile(x, [25, 50, 75])
-    p0 = [q25, q50, q75, 2.0, 2.0, 2.0]           # b1, b2, b3, k1..k3
-    bounds_lo = [x.min(), x.min(), x.min(), 0.1, 0.1, 0.1]
-    bounds_hi = [x.max(), x.max(), x.max(), 20,  20,  20]
-
-    if lapse_fixed is None:
-        p0.append(0.02)             # start λ at 2 %
-        bounds_lo.append(0.0)
-        bounds_hi.append(0.3)
-
-    # ----- curve fit -----
-    try:
-        popt, _ = curve_fit(
-            lambda _x, *pars: model(_x, *pars) if lapse_fixed is None
-            else model(_x, *pars, λ=lapse_fixed),
-            x, y, p0=p0, bounds=(bounds_lo, bounds_hi), maxfev=20000
-        )
-    except RuntimeError as e:
-        raise RuntimeError(f"Double‑logistic fitting failed: {e}")
-
-    if lapse_fixed is None:
-        *popt_core, λ_hat = popt
-    else:
-        popt_core, λ_hat = popt, lapse_fixed
-
-    b1, b2, b3, k1, k2, k3 = popt_core
-
-    # ----- derived slopes -----
-    slopes_mid = np.array([k1, k2, k3]) / 4.0
-
-    # slope of *composite* curve exactly at b1 and b3 (optional check)
-    def composite_slope_at(b, which):
-        eps  = 1e-6
-        if which == "low":
-            return (model(b+eps, b1,b2,b3,k1,k2,k3, λ_hat)
-                    - model(b-eps, b1,b2,b3,k1,k2,k3, λ_hat)) / (2*eps)
-        else:
-            return (model(b+eps, b1,b2,b3,k1,k2,k3, λ_hat)
-                    - model(b-eps, b1,b2,b3,k1,k2,k3, λ_hat)) / (2*eps)
-
-    slope_b1 = composite_slope_at(1, "low")
-    slope_b3 = composite_slope_at(1.5, "high")
-
-    # ----- smooth curve for plotting -----
-    x_fit = np.linspace(x.min(), x.max(), 100)
-    y_fit = model(x_fit, b1, b2, b3, k1, k2, k3, λ_hat)
-
-    return (np.array([k1, k2, k3]),
-            slopes_mid,
-            np.array([slope_b1, slope_b3]),
-            x_fit,
-            y_fit)
-
-
-

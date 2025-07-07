@@ -36,9 +36,9 @@ def cb_add_new_project(df, path):
     st.success("Changes saved!")
 
 st.title("Hey There 🧠")
-path = r"G:\My Drive\Study\Lab\Projects\Code_temp"
+path =  st.session_state.path
 user = "Amichai"
-user_path = os.path.join(path, 'users_data', user)
+user_path =st.session_state.user_path
 # Set up the project list
 Project_type_options = ["", "Behavior-Bpod GUI", "Behavior-GNG GUI", "Npxls"]
 

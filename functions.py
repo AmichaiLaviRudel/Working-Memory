@@ -13,7 +13,7 @@ def init_session_states():
     # Set session state variables (if not already set)
     # -----------------------------------------------------------------------------
     if "path" not in st.session_state:
-        st.session_state.path = r"G:\My Drive\Study\Lab\Projects\Code_temp"
+        st.session_state.path = r"Z:\Shared\Amichai\Code\DB"
     if "user_path" not in st.session_state:
         st.session_state.user_path = os.path.join(st.session_state.path, "users_data", "Amichai")
     if "Project_type_options" not in st.session_state:
@@ -137,8 +137,7 @@ def load_bpod_data(uploaded_file):
         raw_events = session_data_content['RawEvents']
 
         # Convert 'TrialTypes' to a DataFrame
-        trial_types_df = pd.DataFrame(trial_types[0], columns=['TrialType'])
-
+        trial_types_df = pd.DataFrame({'TrialType': trial_types[0]})
         # Function to extract states and timestamps from 'Trial' data in 'RawEvents'
         def extract_states_timestamps(trial_data):
             states_info = []

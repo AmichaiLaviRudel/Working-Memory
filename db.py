@@ -35,8 +35,7 @@ with st.sidebar.container():
     if st.button("Open Source Folder"):
         try:
             import subprocess
-            path = os.path.normpath("G:\\My Drive\\Study\\Lab\\Projects\\Code_temp\\users_data\\Amichai")
-            subprocess.Popen(f'explorer "{path}"')
+            subprocess.Popen(f'explorer "{st.session_state.user_path}"')
         except Exception as e:
             st.error(f"Error opening folder: {e}")
 pg.run()
