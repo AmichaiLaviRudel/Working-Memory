@@ -18,3 +18,7 @@ LINE_WIDTH_THIN     = 0.5
 LINE_WIDTH_MEDIUM  = 1.0
 LINE_WIDTH_THICK    = 5
 LINE_WIDTH_VERY_THICK = 7
+
+# Colors for double sigmoid fits
+COLOR_FIT_LOW = '#1f77b4'   # Blue for Sigmoid A (<=1.5)
+COLOR_FIT_HIGH = '#d62728'  # Red for Sigmoid B (>=1.0)
