@@ -68,34 +68,33 @@ def current_project_overview(existing_projects, selected_project, path, types):
                 "Analyse?", help = "Select rows for analysis", default = False,
             ),
             "SessionDate":      st.column_config.Column(
-                width = 100, help = "Date of the session", disabled = True
+                width = "small", help = "Date of the session", disabled = True
             ),
             "SessionTime":      st.column_config.Column(
-                width = 100, help = "Time of the session", disabled = True
+                width = "small", help = "Time of the session", disabled = True
             ),
             "TrialTypes":       st.column_config.Column(
-                width = 150, help = "Types of trials", disabled = True
+                width = "medium", help = "Types of trials", disabled = True
             ),
             "Outcomes":         st.column_config.Column(
-                width = 150, help = "Outcomes of trials", disabled = True
-            ),
+                width = "medium", help = "Outcomes of trials", disabled = True            ),
             "Stimuli":          st.column_config.Column(
-                width = 150, help = "Stimuli used in trials", disabled = True
+                width = "medium", help = "Stimuli used in trials", disabled = True
             ),
             "FilePath":         st.column_config.Column(
-                width = 100, help = "Path to the file", disabled = True
+                width = "small", help = "Path to the file", disabled = True
             ),
             "WaterConsumption": st.column_config.Column(
-                width = 60, help = "Water consumption in mL", disabled = True
+                width = "small", help = "Water consumption in mL", disabled = True
             ),
             "Notes":            st.column_config.Column(
-                width = 200, help = "Editable notes field", disabled = False
+                width = "medium", help = "Editable notes field", disabled = False
             ),
             "Animal":           st.column_config.Column(
-                width = 250, help = "Editable animal field", disabled = False
+                width = "large", help = "Editable animal field", disabled = False
             ),
             "Date":             st.column_config.Column(
-                width = 250, help = "Editable date field", disabled = False
+                width = "large", help = "Editable date field", disabled = False
             ),
         }
     )
@@ -182,8 +181,15 @@ st.session_state.selected_project = st.sidebar.radio("Select Project", project_l
 
 # Process the project types for the selected project
 project_types_str = existing_projects[
-                        existing_projects["Project Name"] == st.session_state.selected_project
-                        ]["Project Type"].values[0][1:-1]  # Remove brackets if present
+    existing_projects["Project Name"] == st.session_state.selected_project
+]["Project Type"]
+if isinstance(project_types_str, pd.Series):
+    project_types_str = project_types_str.iloc[0]
+elif hasattr(project_types_str, 'item'):
+    project_types_str = project_types_str.item(0)
+else:
+    project_types_str = str(project_types_str)
+project_types_str = str(project_types_str)[1:-1]  # Remove brackets if present
 project_types = [x.strip().strip("'") for x in project_types_str.split(",")]
 
 # Display the current project overview and get edited project data

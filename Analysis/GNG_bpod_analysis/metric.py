@@ -8,13 +8,13 @@ import altair as alt
 from scipy.stats import norm
 from sklearn.metrics import roc_auc_score, roc_curve, confusion_matrix
 import streamlit as st
+import plotly.graph_objects as go
 
 # Function to calculate the d prime
 def d_prime(selected_data, index=0, t=10, plot=False):
     from Analysis.GNG_bpod_analysis.licking_and_outcome import licking_rate
     rates, frac = licking_rate(selected_data, index, t=t, plot=False)
     # Calculate hits, misses, false alarms, and correct rejections
-
     hit = rates["Hit"]
     miss = rates["Miss"]
     fa = rates["FA"]
@@ -45,29 +45,28 @@ def d_prime(selected_data, index=0, t=10, plot=False):
 
     if plot:
         st.subheader("d' over trials")
-
-        # Create an Altair line chart
-        line_chart = alt.Chart(df).mark_line().encode(
-            x = alt.X("index:Q", title = "Trial Index"),
-            y = alt.Y("d_prime:Q", title = "d'"),
-            tooltip = ["index", "d_prime"]
-        ).interactive().properties(
-
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=df['index'], y=df['d_prime'], mode='lines',
+            name="Overall",
+            line=dict(color=colors.COLOR_ACCENT),
+            hovertemplate="Trial: %{x}<br>d': %{y:.3f}<extra></extra>"
+        ))
+        fig.add_trace(go.Scatter(
+            x=[df['index'].min(), df['index'].max()], y=[1, 1],
+            mode='lines', name="Learning Threshold",
+            line=dict(color=colors.COLOR_GRAY, dash='dash'),
+            hoverinfo='skip', showlegend=True
+        ))
+        fig.update_layout(
+            xaxis_title="Trial Index",
+            yaxis_title="d'",
+            title="d' over trials",
+            legend=dict(title="Legend"),
+            height=400,
+            width=700
         )
-
-        # Add a horizontal line at y=1
-        horizontal_line = alt.Chart(pd.DataFrame({"y": [1]})).mark_rule(
-            color = colors.COLOR_GRAY,
-            strokeDash = [4, 4]
-        ).encode(
-            y = "y:Q"
-        )
-
-        # Combine the charts
-        final_chart = line_chart + horizontal_line
-
-        # Display the Altair chart
-        st.altair_chart(final_chart, use_container_width = True)
+        st.plotly_chart(fig, use_container_width=True)
     return d
 
 def d_prime_multiple_sessions(selected_data, t=10, animal_name='None', plot = True):
@@ -190,7 +189,7 @@ def multi_animal_d_prime_progression(selected_data, N_Boundaries = None):
 
     # Add average line data
     avg_list = []
-    for session, d_prime in enumerate(avg_d_prime):
+    for session, d_prime in enumerate(np.asarray(avg_d_prime)):
         if not np.isnan(d_prime):
             avg_list.append({"Session": session + 1, "d_prime": d_prime, "Mouse": "Average"})
 
@@ -323,8 +322,8 @@ def classifier_metric(project_data, index):
     # ---- CONFUSION MATRIX ----
 
     conf_matrix = np.array([[hit, miss], [fa, cr]])
-    df_cm = pd.DataFrame(conf_matrix, columns = ["Go", "No-Go"],
-                         index = ["Go", "No-Go"])
+    df_cm = pd.DataFrame(conf_matrix, columns = pd.Index(["Go", "No-Go"]),
+                         index = pd.Index(["Go", "No-Go"]))
 
     # Heatmap with text overlay
     base = alt.Chart(df_cm.reset_index().melt(id_vars = "index")).encode(
@@ -410,67 +409,5 @@ def d_prime_multiple_sessions_divde_oneNtwo(selected_data, t=10, animal_name='No
 
     st.table(selected_data)
 
-        # d_low = d[stimuli < 1.5]
-        # d_high = d[stimuli > 1]
-                    # Calculate d' for each condition
-    #     ds[idx, 0] = np.nanmean(d)
-    #     ds[idx, 1] = np.nanstd(d)
-    #     ds[idx, 2] = np.nanmax(d)
-    #     # Retrieve session metadata
-    #     tones_per_class.append(selected_data.loc[sess_idx, 'Tones_per_class'])
-    #     boundaries.append(selected_data.loc[sess_idx, 'N_Boundaries'])
-    #
-    # # Build DataFrame for plotting
-    # data = pd.DataFrame({
-    #     'Session Index':   np.arange(1, len(session_indices) + 1),
-    #     'SessionDate':     session_dates,
-    #     'd_prime': ds[:, 0],
-    #     'Error': ds[:, 1],
-    #     'Max_d_prime': ds[:, 2],
-    #     'tones_per_class': tones_per_class,
-    #     'Boundaries':      boundaries
-    # })
-    #
-    #
-    #
-    # chart = alt.Chart(data).mark_line().encode(
-    #     x=alt.X('Session Index:Q', title='Session Index', axis=alt.Axis(format='.0f', tickCount=len(session_indices))),  # Use session index
-    #     y=alt.Y('d_prime:Q', title="Mean d'", scale=alt.Scale(domain=[-2, 6])),  # Set y-limit between -2 and 6
-    #     tooltip=['Session Index:Q', 'd_prime', 'Error']
-    # ).properties(
-    #     width=600,
-    #     height=300
-    # )
-    #
-    # # Adding error bars
-    # error_bars = chart.mark_errorbar().encode(
-    #     x='Session Index:Q',
-    #     y='d_prime:Q',
-    #     yError='Error:Q'
-    # )
-    # # Adding a horizontal line at y = 1
-    # horizontal_line = alt.Chart(pd.DataFrame({'y': [1]})).mark_rule(color='gray').encode(
-    #     y='y:Q'
-    # )
-    #
-    # # Annotations: empty circle for Boundaries==1, filled circle for Boundaries==2
-    # annotations = alt.Chart(data).mark_point(size = 50).encode(
-    #     x = 'Session Index:Q',
-    #     y = 'd_prime:Q',
-    #     fill = alt.condition(alt.datum.Boundaries == 2, alt.value('black'), alt.value('white')),
-    #     stroke = alt.value('black'),
-    #     tooltip = [
-    #         alt.Tooltip('Session Index', title = 'Session Index'),
-    #         alt.Tooltip('tones_per_class', title = 'tones_per_class'),
-    #         alt.Tooltip('Boundaries', title = 'Boundaries'),
-    #         alt.Tooltip('d_prime', title = "d'")
-    #     ]
-    # )
-    #
-    # if plot:
-    #     # Plot using Altair with session index
-    #     st.title(f"d' Progress for {animal_name}")
-    #     # Combine the line chart, error bars, and the horizontal line
-    #     st.altair_chart(chart + error_bars + horizontal_line+annotations, use_container_width=True)
 
     return data

@@ -162,8 +162,8 @@ def psychometric_curve(selected_data, index, plot=True):
                 # Overlay both fitted sigmoids
                 x_fit_A, x_fit_B = x_fit
                 y_fit_A, y_fit_B = y_fit
-                fig.add_trace(go.Scatter(x=x_fit_A, y=y_fit_A, mode='lines', name='Sigmoid A (<=1.5)', line=dict(color=colors.COLOR_LOW_BD)))
-                fig.add_trace(go.Scatter(x=x_fit_B, y=y_fit_B, mode='lines', name='Sigmoid B (>=1.0)', line=dict(color=colors.COLOR_HIGH_BD)))
+                fig.add_trace(go.Scatter(x=x_fit_A, y=y_fit_A, mode='lines', name='Sigmoid Low', line=dict(color=colors.COLOR_LOW_BD)))
+                fig.add_trace(go.Scatter(x=x_fit_B, y=y_fit_B, mode='lines', name='Sigmoid High', line=dict(color=colors.COLOR_HIGH_BD)))
                 # Boundaries
                 fig.add_trace(go.Scatter(x=[1.0, 1.0], y=[0, 100], mode='lines', name='Boundary 1.0', line=dict(dash='dash', color=colors.COLOR_GRAY)))
                 fig.add_trace(go.Scatter(x=[1.5, 1.5], y=[0, 100], mode='lines', name='Boundary 1.5', line=dict(dash='dash', color=colors.COLOR_GRAY)))
@@ -184,7 +184,7 @@ def psychometric_curve(selected_data, index, plot=True):
         st.error(str(e))
         return None, None, None, None, None
     except Exception as e:
-        st.error(f"Error in psychometric_curve: {e}")
+        # st.error(f"Error in psychometric_curve: {e}")
         return None, None, None, None, None
 
 # -------------------------------------------------------------------
