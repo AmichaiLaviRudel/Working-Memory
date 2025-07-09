@@ -9,6 +9,7 @@ from scipy.stats import norm
 from sklearn.metrics import roc_auc_score, roc_curve, confusion_matrix
 import streamlit as st
 import plotly.graph_objects as go
+import ast
 
 # Function to calculate the d prime
 def d_prime(selected_data, index=0, t=10, plot=False):
@@ -220,6 +221,17 @@ def multi_animal_d_prime_progression(selected_data, N_Boundaries = None):
     # Display chart in Streamlit
     st.altair_chart(final_chart, use_container_width=True)
 
+    # --- Calculate and display mean and std for low (first) and high (last) session across animals ---
+    low_session_vals = d_prime_df.iloc[:, 0].dropna()
+    high_session_vals = d_prime_df.iloc[:, -1].dropna()
+    mean_low = np.nanmean(low_session_vals)
+    std_low = np.nanstd(low_session_vals)
+    mean_high = np.nanmean(high_session_vals)
+    std_high = np.nanstd(high_session_vals)
+    st.text(f"Low (first) session d': {mean_low:.3f}, ± {std_low:.3f}")
+    st.text(f"High (last) session d': {mean_high:.3f}, ± {std_high:.3f}")
+
+
 def classifier_metric(project_data, index):
     from Analysis.GNG_bpod_analysis.licking_and_outcome import responses, licking_rate
 
@@ -411,3 +423,114 @@ def d_prime_multiple_sessions_divde_oneNtwo(selected_data, t=10, animal_name='No
 
 
     return data
+
+
+def d_prime_low_high_boundary_sessions(selected_data, idx, t=10, plot=True):
+    """
+    Calculates d' over trials in bins of t for low and high boundary trials (low: Stimuli < 1.5, high: Stimuli > 1)
+    for a single session (selected_data should be a DataFrame with one row).
+    Plots both d' curves on the same Plotly figure and returns the d' arrays/DataFrames for both boundaries.
+    """
+
+    # Get the stimuli for this session
+    stimuli = parse_stimuli(selected_data.loc[idx, 'Stimuli'])
+    # Low boundary: stimuli < 1.5
+    low_mask = stimuli < 1.5
+    # High boundary: stimuli > 1
+    high_mask = stimuli > 1
+
+    # Prepare filtered data for low boundary
+    filtered_trials_low = to_array(selected_data.loc[idx, 'TrialTypes'])[low_mask]
+    filtered_outcomes_low = to_array(selected_data.loc[idx, 'Outcomes'])[low_mask]
+    selected_data_low = selected_data.copy()
+    selected_data_low.at[idx, 'TrialTypes'] = str(filtered_trials_low.tolist())
+    selected_data_low.at[idx, 'Outcomes'] = str(filtered_outcomes_low.tolist())
+
+    # Prepare filtered data for high boundary
+    filtered_trials_high = to_array(selected_data.loc[idx, 'TrialTypes'])[high_mask]
+    filtered_outcomes_high = to_array(selected_data.loc[idx, 'Outcomes'])[high_mask]
+    selected_data_high = selected_data.copy()
+    selected_data_high.at[idx, 'TrialTypes'] = str(filtered_trials_high.tolist())
+    selected_data_high.at[idx, 'Outcomes'] = str(filtered_outcomes_high.tolist())
+
+    # Calculate d' for low and high boundary
+    d_low = d_prime(selected_data_low, index=idx, t=t, plot=False)
+    d_high = d_prime(selected_data_high, index=idx, t=t, plot=False)
+
+    # Prepare DataFrames for plotting/return
+    df_low = pd.DataFrame({
+        'Bin': range(len(d_low)),
+        "d_prime": d_low,
+        'Type': 'Low Boundary'
+    })
+    df_high = pd.DataFrame({
+        'Bin': range(len(d_high)),
+        "d_prime": d_high,
+        'Type': 'High Boundary'
+    })
+
+    if plot:
+        import plotly.graph_objects as go
+        # Display mean and std for each boundary (as plotly annotation)
+        mean_low = np.nanmean(df_low['d_prime'])
+        std_low = np.nanstd(df_low['d_prime'])
+        mean_high = np.nanmean(df_high['d_prime'])
+        std_high = np.nanstd(df_high['d_prime'])
+        subtitle = (
+            f"<span style='color:black'>"
+            f"Low Boundary d': {mean_low:.3f}, ± {std_low:.3f} | "
+            f"High Boundary d': {mean_high:.3f} ± {std_high:.3f}"
+            f"</span>"
+        )
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=df_low['Bin'], y=df_low['d_prime'], mode='lines',
+            name="Low Boundary",
+            line=dict(color=colors.COLOR_LOW_BD),
+            marker=dict(symbol='circle')
+        ))
+        fig.add_trace(go.Scatter(
+            x=df_high['Bin'], y=df_high['d_prime'], mode='lines',
+            name="High Boundary",
+            line=dict(color=colors.COLOR_HIGH_BD),
+            marker=dict(symbol='square')
+        ))
+        fig.add_trace(go.Scatter(
+            x=[0, max(len(d_low), len(d_high)) - 1], y=[1, 1],
+            mode='lines', name="Learning Threshold",
+            line=dict(color=colors.COLOR_GRAY, dash='dash'),
+            hoverinfo='skip', showlegend=True
+        ))
+        fig.update_layout(
+            xaxis_title="Bin Index",
+            yaxis_title="d'",
+            title=f"d' Progression (Low vs High Boundary)",
+            legend=dict(title="Boundary Type"),
+            height=400,
+            width=700
+        )
+        fig.add_annotation(
+            text=subtitle,
+            xref="paper", yref="paper",
+            x=0.01, y=1.08,
+            showarrow=False,
+            font=dict(size=14),
+            xanchor='left',
+            yanchor='top'
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+
+
+    return df_low, df_high
+
+def to_array(val):
+    if isinstance(val, str):
+        try:
+            return np.array(ast.literal_eval(val))
+        except Exception:
+            return np.array([])
+    elif isinstance(val, (list, np.ndarray)):
+        return np.array(val)
+    else:
+        return np.array([])

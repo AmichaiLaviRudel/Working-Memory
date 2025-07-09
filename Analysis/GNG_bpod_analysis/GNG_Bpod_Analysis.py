@@ -19,7 +19,7 @@ def gng_bpod_analysis(project_data, index):
         try:
             classifier_metric(project_data, index)
             d_prime(project_data, index, t=bin, plot=True)
-
+            d_prime_low_high_boundary_sessions(project_data, index, t=bin, plot=True)
         except Exception as e:
             st.warning(f"something went wrong with this graph :|\n\n{e}")
             st.text(traceback.format_exc())
