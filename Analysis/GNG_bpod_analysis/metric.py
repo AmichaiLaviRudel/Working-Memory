@@ -82,6 +82,11 @@ def d_prime_multiple_sessions(selected_data, t=10, animal_name='None', plot = Tr
     tones_per_class = []
     boundaries = []
 
+    # For low/high boundary overlays
+    low_boundary_means = []
+    high_boundary_means = []
+    low_boundary_stds = []
+    high_boundary_stds = []
 
     # Compute d' statistics and collect metadata
     for idx, sess_idx in enumerate(session_indices):
@@ -93,6 +98,21 @@ def d_prime_multiple_sessions(selected_data, t=10, animal_name='None', plot = Tr
         tones_per_class.append(selected_data.loc[sess_idx, 'Tones_per_class'])
         boundaries.append(selected_data.loc[sess_idx, 'N_Boundaries'])
 
+        # If N_Boundaries==2, get low/high boundary d' for this session
+        if selected_data.loc[sess_idx, 'N_Boundaries'] == 2:
+            df_low, df_high = d_prime_low_high_boundary_sessions(selected_data.loc[[sess_idx]], sess_idx, t=t, plot=False)
+            # Store mean d' for each boundary for this session
+            low_boundary_means.append(np.nanmean(df_low['d_prime']))
+            high_boundary_means.append(np.nanmean(df_high['d_prime']))
+            # Store std d' for each boundary for this session
+            low_boundary_stds.append(np.nanstd(df_low['d_prime']))
+            high_boundary_stds.append(np.nanstd(df_high['d_prime']))
+        else:
+            low_boundary_means.append(np.nan)
+            high_boundary_means.append(np.nan)
+            low_boundary_stds.append(np.nan)
+            high_boundary_stds.append(np.nan)
+
     # Build DataFrame for plotting
     data = pd.DataFrame({
         'Session Index':   np.arange(1, len(session_indices) + 1),
@@ -101,50 +121,112 @@ def d_prime_multiple_sessions(selected_data, t=10, animal_name='None', plot = Tr
         'Error': ds[:, 1],
         'Max_d_prime': ds[:, 2],
         'tones_per_class': tones_per_class,
-        'Boundaries':      boundaries
+        'Boundaries':      boundaries,
+        'Low Boundary d_prime': low_boundary_means,
+        'High Boundary d_prime': high_boundary_means,
+        'Low Boundary Error': low_boundary_stds,
+        'High Boundary Error': high_boundary_stds
     })
 
-
-
-    chart = alt.Chart(data).mark_line().encode(
-        x=alt.X('Session Index:Q', title='Session Index', axis=alt.Axis(format='.0f', tickCount=len(session_indices))),  # Use session index
-        y=alt.Y('d_prime:Q', title="Mean d'", scale=alt.Scale(domain=[-2, 6])),  # Set y-limit between -2 and 6
-        tooltip=['Session Index:Q', 'd_prime', 'Error']
-    ).properties(
-        width=600,
-        height=300
-    )
-
-    # Adding error bars
-    error_bars = chart.mark_errorbar().encode(
-        x='Session Index:Q',
-        y='d_prime:Q',
-        yError='Error:Q'
-    )
-    # Adding a horizontal line at y = 1
-    horizontal_line = alt.Chart(pd.DataFrame({'y': [1]})).mark_rule(color='gray').encode(
-        y='y:Q'
-    )
-
-    # Annotations: empty circle for Boundaries==1, filled circle for Boundaries==2
-    annotations = alt.Chart(data).mark_point(size = 50).encode(
-        x = 'Session Index:Q',
-        y = 'd_prime:Q',
-        fill = alt.condition(alt.datum.Boundaries == 2, alt.value('black'), alt.value('white')),
-        stroke = alt.value('black'),
-        tooltip = [
-            alt.Tooltip('Session Index', title = 'Session Index'),
-            alt.Tooltip('tones_per_class', title = 'tones_per_class'),
-            alt.Tooltip('Boundaries', title = 'Boundaries'),
-            alt.Tooltip('d_prime', title = "d'")
-        ]
-    )
+    # Clean up isolated std values (replace with NaN if surrounded by NaN)
+    for col in ['Low Boundary Error', 'High Boundary Error']:
+        for i in range(1, len(data) - 1):
+            if pd.isna(data.loc[i, col]):
+                continue
+            if pd.isna(data.loc[i-1, col]) and pd.isna(data.loc[i+1, col]):
+                data.loc[i, col] = np.nan
 
     if plot:
-        # Plot using Altair with session index
-        st.title(f"d' Progress for {animal_name}")
-        # Combine the line chart, error bars, and the horizontal line
-        st.altair_chart(chart + error_bars + horizontal_line+annotations, use_container_width=True)
+        import plotly.graph_objects as go
+        fig = go.Figure()
+        # Main overall d' line
+        fig.add_trace(go.Scatter(
+            x=data['Session Index'], y=data['d_prime'], mode='lines',
+            name="Overall d'",
+            line=dict(color=colors.COLOR_SUBTLE),
+            marker=dict(symbol='circle')
+        ))
+        # Overall d' error band
+        fig.add_trace(go.Scatter(
+            x=data['Session Index'], y=data['d_prime'] + data['Error'],
+            mode='lines', line=dict(width=0),  # invisible line
+            showlegend=False,
+            hoverinfo='skip',
+            name='+1 Std'
+        ))
+        fig.add_trace(go.Scatter(
+            x=data['Session Index'], y=data['d_prime'] - data['Error'],
+            mode='lines', line=dict(width=0),  # invisible line
+            fill='tonexty',
+            fillcolor='rgba(128, 128, 128, 0.2)',  # transparent version of COLOR_SUBTLE
+            showlegend=False,
+            hoverinfo='skip',
+            name='-1 Std'
+        ))
+        # Low boundary overlay and error band
+        fig.add_trace(go.Scatter(
+            x=data['Session Index'], y=data['Low Boundary d_prime'],
+            mode='lines+markers', name="Low Boundary d'",
+            line=dict(color=colors.COLOR_LOW_BD),
+            marker=dict(symbol='triangle-up')
+        ))
+        fig.add_trace(go.Scatter(
+            x=data['Session Index'], y=data['Low Boundary d_prime'] + data['Low Boundary Error'],
+            mode='lines', line=dict(width=0),
+            showlegend=False,
+            hoverinfo='skip',
+            name='+1 Std Low',
+        ))
+        fig.add_trace(go.Scatter(
+            x=data['Session Index'], y=data['Low Boundary d_prime'] - data['Low Boundary Error'],
+            mode='lines', line=dict(width=0),
+            fill='tonexty',
+            fillcolor=colors.COLOR_BLUE_TRANSPARENT,  
+            showlegend=False,
+            hoverinfo='skip',
+            name='-1 Std Low',
+        ))
+
+        # High boundary overlay and error band
+        fig.add_trace(go.Scatter(
+            x=data['Session Index'], y=data['High Boundary d_prime'],
+            mode='lines+markers', name="High Boundary d'",
+            line=dict(color=colors.COLOR_HIGH_BD),
+            marker=dict(symbol='triangle-down')
+        ))
+        fig.add_trace(go.Scatter(
+            x=data['Session Index'], y=data['High Boundary d_prime'] + data['High Boundary Error'],
+            mode='lines', line=dict(width=0),
+            showlegend=False,
+            hoverinfo='skip',
+            name='+1 Std High',
+        ))
+        fig.add_trace(go.Scatter(
+            x=data['Session Index'], y=data['High Boundary d_prime'] - data['High Boundary Error'],
+            mode='lines', line=dict(width=0),
+            fill='tonexty',
+            fillcolor=colors.COLOR_ACCENT_TRANSPARENT,
+            showlegend=False,
+            hoverinfo='skip',
+            name='-1 Std High',
+        ))
+
+        # Learning threshold
+        fig.add_trace(go.Scatter(
+            x=[data['Session Index'].min(), data['Session Index'].max()], y=[1, 1],
+            mode='lines', name="Learning Threshold",
+            line=dict(color=colors.COLOR_GRAY, dash='dash'),
+            hoverinfo='skip', showlegend=True
+        ))
+        fig.update_layout(
+            xaxis_title="Session Index",
+            yaxis_title="d'",
+            title=f"d' Progress for {animal_name}",
+            legend=dict(title="Legend"),
+            height=400,
+            width=700
+        )
+        st.plotly_chart(fig, use_container_width=True)
 
     return data
 
@@ -454,8 +536,8 @@ def d_prime_low_high_boundary_sessions(selected_data, idx, t=10, plot=True):
     selected_data_high.at[idx, 'Outcomes'] = str(filtered_outcomes_high.tolist())
 
     # Calculate d' for low and high boundary
-    d_low = d_prime(selected_data_low, index=idx, t=t, plot=False)
-    d_high = d_prime(selected_data_high, index=idx, t=t, plot=False)
+    d_low = d_prime(selected_data_low, index=0, t=t, plot=False)
+    d_high = d_prime(selected_data_high, index=0, t=t, plot=False)
 
     # Prepare DataFrames for plotting/return
     df_low = pd.DataFrame({
