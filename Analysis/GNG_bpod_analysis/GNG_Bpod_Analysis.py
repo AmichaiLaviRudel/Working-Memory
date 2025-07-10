@@ -81,3 +81,7 @@ def gng_bpod_analysis_multipule(project_data, index):
 
 
 
+# TODO:
+# - add a bias tab that shows the lick bias and the stimulus bias
+# - at the lick rate tab, add a function that shows the lick rate for each tone
+# - at the psychometric curve tab, add a function that measure the goodness of fit of the psychometric curve

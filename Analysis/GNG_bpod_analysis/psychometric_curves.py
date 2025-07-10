@@ -206,16 +206,22 @@ def psychometric_curve_multiple_sessions(selected_data, animal_name = "None", pl
     for idx in session_indices:
         N_Boundaries = selected_data.at[idx, "N_Boundaries"]
         boundaries, slopes_mid, slopes_at_bnds, x_fit, y_fit = psychometric_curve(selected_data, idx, plot = False)
-        if slopes_at_bnds is None:
-            low, high = np.nan, np.nan
-        elif np.isscalar(slopes_at_bnds) or np.size(slopes_at_bnds) == 1:
-            val = np.real_if_close(slopes_at_bnds)
-            low, high = float(val) if np.isreal(val) else np.nan, np.nan
+        # Robustly ensure slopes_mid is always a numpy array of length 2 for safe indexing
+        if slopes_mid is None:
+            slopes_mid = np.array([np.nan, np.nan])
+        elif isinstance(slopes_mid, float):
+            slopes_mid = np.array([slopes_mid, np.nan])
+        elif isinstance(slopes_mid, (list, np.ndarray)):
+            slopes_mid = np.array(slopes_mid, dtype=float)
+            if slopes_mid.size == 1:
+                slopes_mid = np.array([slopes_mid[0], np.nan])
+            elif slopes_mid.size == 0:
+                slopes_mid = np.array([np.nan, np.nan])
+            elif slopes_mid.size > 2:
+                slopes_mid = np.concatenate([slopes_mid[:2], np.full(slopes_mid.size-2, np.nan)])[:2]
         else:
-            if len(slopes_at_bnds) == 1:
-                low, high = slopes_at_bnds, np.nan
-            else:
-                low, high = slopes_at_bnds
+            slopes_mid = np.array([np.nan, np.nan])
+        low, high = slopes_mid[0], slopes_mid[1]
 
         low_slopes.append(low)
         high_slopes.append(high)
@@ -254,7 +260,7 @@ def psychometric_curve_multiple_sessions(selected_data, animal_name = "None", pl
             alt.Chart(df)
             .encode(
                 x = alt.X("Session:Q", title = "Session index"),
-                y = alt.Y("Slope:Q", title = "Slope at boundary"),
+                y = alt.Y("Slope:Q", scale=alt.Scale(type='log'), title = "Slope at boundary"),
                 color = alt.Color("Boundary:N", scale=COLOR_BOUNDARY_SCALE, title = "Boundary"),
             )
         )
@@ -322,47 +328,58 @@ def multi_animal_psychometric_slope_progression(selected_data, N_Boundaries=1):
         .mean()
         .assign(Mouse="Average")
     )
-    # ─── define a two‐color scale for Low vs High ──────────────────────
-    two_color = alt.Scale(
-        domain=["Low","High"],
-        range=[colors.COLOR_LOW_BD,colors.COLOR_HIGH_BD]
-    )
 
-    # ─── individual subjects colored by boundary ───────────────────────
-    subj_lines = (
-        alt.Chart(long_df)
-        .mark_line(opacity=0.3)
-        .encode(
-            x="Session:Q",
-            y="Slope:Q",
-            color=alt.Color("Boundary:N", scale=two_color, legend=alt.Legend(title="Boundary")),
-            detail="Mouse:N",
-            tooltip=["Mouse","Session","Boundary","Slope"],
-        )
+    import plotly.graph_objects as go
+    fig = go.Figure()
+    # Plot all animals (gray lines, log y)
+    for subj in df["MouseName"].unique():
+        for boundary, color in zip(["Low", "High"], [colors.COLOR_LOW_BD, colors.COLOR_HIGH_BD]):
+            subj_data = long_df[(long_df["Mouse"] == subj) & (long_df["Boundary"] == boundary)]
+            if not subj_data.empty:
+                fig.add_trace(go.Scatter(
+                    x=subj_data["Session"],
+                    y=subj_data["Slope"],
+                    mode='lines',
+                    line=dict(color=colors.COLOR_GRAY, width=2, dash='solid'),
+                    name=f'{subj} {boundary}',
+                    showlegend=False,
+                    opacity=0.3
+                ))
+    # Plot average lines (bold)
+    for boundary, color in zip(["Low", "High"], [colors.COLOR_LOW_BD, colors.COLOR_HIGH_BD]):
+        avg_data = avg_df[avg_df["Boundary"] == boundary]
+        if not avg_data.empty:
+            fig.add_trace(go.Scatter(
+                x=avg_data["Session"],
+                y=avg_data["Slope"],
+                mode='lines',
+                line=dict(color=color, width=4),
+                name=f'Average {boundary}',
+                marker=dict(symbol='circle')
+            ))
+    # Reference at y=1 (log scale)
+    fig.add_trace(go.Scatter(
+        x=[long_df["Session"].min(), long_df["Session"].max()],
+        y=[1, 1],
+        mode='lines',
+        name="Learning Threshold",
+        line=dict(color=colors.COLOR_GRAY, dash='dash'),
+        showlegend=True
+    ))
+    fig.update_layout(
+        xaxis_title="Session Index",
+        yaxis_title="log(| Slope at x0 |)",
+        yaxis_type='log',
+        title="Psychometric Slope Progression - all animals",
+        legend=dict(title="Legend"),
+        height=400,
+        width=700
     )
-
-    # ─── average lines, same colors but bolder ─────────────────────────
-    avg_line = (
-        alt.Chart(avg_df)
-        .mark_line(strokeWidth=colors.LINE_WIDTH_THICK)
-        .encode(
-            x="Session:Q",
-            y="Slope:Q",
-            color=alt.Color("Boundary:N", scale=two_color, legend=None),
-        )
-    )
-
-    # ─── reference at y=0 ──────────────────────────────────────────────
-    zero_rule = (
-        alt.Chart(pd.DataFrame({"y":[0]}))
-        .mark_rule(color="black", strokeDash=[5,5], )
-        .encode(y="y:Q")
-    )
-
-    chart = (subj_lines + avg_line + zero_rule).properties(
-        width=700, height=400,
-        title=f"Psychometric Slope Progression - all animals"
-    )
-    st.altair_chart(chart, use_container_width=True)
+    fig.update_yaxes(autorange=True)
+    st.plotly_chart(fig, use_container_width=True)
 
     return long_df, avg_df
+
+
+# TODO:
+# - Add a function that measure the distance between X0 and the true boundary

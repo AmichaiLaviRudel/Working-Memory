@@ -558,25 +558,38 @@ def d_prime_low_high_boundary_sessions(selected_data, idx, t=10, plot=True):
     # High boundary
     high_mask = stimuli > st.session_state.low_boundary
 
-    # Prepare filtered data for low boundary
-    filtered_trials_low = to_array(selected_data.loc[idx, 'TrialTypes'])[low_mask]
-    filtered_outcomes_low = to_array(selected_data.loc[idx, 'Outcomes'])[low_mask]
+
+    # Get the raw values
+    trialtypes = selected_data.loc[idx, 'TrialTypes']
+    outcomes = selected_data.loc[idx, 'Outcomes']
+
+    # Convert to array if needed
+    if isinstance(trialtypes, str):
+        trialtypes = to_array(trialtypes)
+    if isinstance(outcomes, str):
+        outcomes = to_array(outcomes)
+
+    trialtypes = np.array(trialtypes)
+    outcomes = np.array(outcomes)
+
+    # Now mask
+    filtered_trials_low = trialtypes[low_mask]
+    filtered_outcomes_low = outcomes[low_mask]
+    filtered_trials_high = trialtypes[high_mask]
+    filtered_outcomes_high = outcomes[high_mask]
+
     selected_data_low = selected_data.copy()
     selected_data_low.at[idx, 'TrialTypes'] = str(filtered_trials_low.tolist())
     selected_data_low.at[idx, 'Outcomes'] = str(filtered_outcomes_low.tolist())
 
-    # Prepare filtered data for high boundary
-    filtered_trials_high = to_array(selected_data.loc[idx, 'TrialTypes'])[high_mask]
-    filtered_outcomes_high = to_array(selected_data.loc[idx, 'Outcomes'])[high_mask]
     selected_data_high = selected_data.copy()
     selected_data_high.at[idx, 'TrialTypes'] = str(filtered_trials_high.tolist())
     selected_data_high.at[idx, 'Outcomes'] = str(filtered_outcomes_high.tolist())
-    
+
 
     # Calculate d' for low and high boundary
     d_low = d_prime(selected_data_low, index=0, t=t, plot=False)
     d_high = d_prime(selected_data_high, index=0, t=t, plot=False)
-
 
     # Prepare DataFrames for plotting/return
     df_low = pd.DataFrame({
