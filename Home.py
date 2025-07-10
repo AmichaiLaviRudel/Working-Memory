@@ -2,8 +2,9 @@ import streamlit as st
 import os
 import pandas as pd
 from functions import *
+from Analysis.session_states import initialize_session_state
 
-init_session_states()
+initialize_session_state()
 
 
 def fisrt_section(existing_projects, user, Project_type_options):

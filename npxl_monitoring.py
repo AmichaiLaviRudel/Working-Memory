@@ -3,7 +3,7 @@ import streamlit as st
 import time
 
 # Path to CSV file
-NPXL_MONITORING_PATH = r"G:\My Drive\Study\Lab\Projects\Code_temp\users_data\Amichai\NPXL recordings _experimental_data.csv"
+NPXL_MONITORING_PATH = r"Z:\Shared\Amichai\Code\DB\users_data\Amichai\NPXL recordings _experimental_data.csv"
 
 # Load the experimental data
 project_data = pd.read_csv(NPXL_MONITORING_PATH, delimiter=',', low_memory=False)

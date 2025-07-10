@@ -25,17 +25,17 @@ def single_sigmoid_fit(x, y, *, x_boundary: float = 1.0):
     """
     def sig(x, L, x0, k):
         return L / (1. + np.exp(-k * (x - x0)))
-
-    # initial guess: midpoint = median(x), slope = 2
-    p0 = [y.max(), np.median(x), 2.0]
-    popt, _ = curve_fit(sig, x, y, p0=p0, maxfev=10000)
+    # Improved initial guess for slope
+    slope_guess = 1.0 if x[-1] > x[0] else -1.0
+    p0 = [y.max(), np.median(x), slope_guess]
+    try:
+        popt, _ = curve_fit(sig, x, y, p0=p0, maxfev=20000)
+    except RuntimeError:
+        return np.nan, np.nan, np.nan, np.nan, np.nan
     L, x0, k = popt
     slope_mid = (L * k) / 4.0
-    slope_at_boundary = (L * k * np.exp(-k * (x_boundary - x0))) / (
-        (1 + np.exp(-k * (x_boundary - x0))) ** 2
-    )
+    slope_at_boundary = (L * k * np.exp(-k * (x_boundary - x0))) / ((1 + np.exp(-k * (x_boundary - x0))) ** 2)
     x_fit = np.linspace(x.min(), x.max(), 200)
-    # Avoid division by zero
     y_fit = sig(x_fit, *popt) / L if L != 0 else np.zeros_like(x_fit)
     return (
         np.array([x0]),
@@ -82,7 +82,7 @@ def psychometric_fitting(unique_stims,
     y = np.asarray(data_points,  float)
     mask = np.isfinite(x) & np.isfinite(y)
     x, y = x[mask], y[mask]
-    if len(x) < 4:
+    if len(x) < 2:
         raise ValueError("Insufficient data for fitting.")
     y_min, y_max = np.min(data_points), np.max(data_points)
     # Map y to 0…1
@@ -102,18 +102,18 @@ def psychometric_fitting(unique_stims,
         # Fit two sigmoids: A (x <= 1.5), B (x >= 1.0)
         x_orig = x if not log2_x else np.power(2.0, x)
         # Sigmoid A: fit to data from lowest up to upper boundary (x <= 1.5)
-        mask_A = x_orig <= 1.5
+        mask_A = x_orig <= st.session_state.high_boundary
         x_A, y_A = x[mask_A], y[mask_A]
         if len(x_A) < 4:
             raise ValueError("Insufficient data for Sigmoid A fit.")
         x0_A, k_A, slope_A_at_boundary, x_fit_A, y_fit_A = None, None, None, None, None
-        x0s_A, slopes_mid_A, slopes_at_A, x_fit_A, y_fit_A = single_sigmoid_fit(x_A, y_A, x_boundary=(np.log2(1.5) if log2_x else 1.5))
+        x0s_A, slopes_mid_A, slopes_at_A, x_fit_A, y_fit_A = single_sigmoid_fit(x_A, y_A, x_boundary=(np.log2(st.session_state.high_boundary) if log2_x else st.session_state.high_boundary))
         # Sigmoid B: fit to data from highest down to lower boundary (x >= 1.0)
-        mask_B = x_orig >= 1.0
+        mask_B = x_orig >= st.session_state.low_boundary
         x_B, y_B = x[mask_B], y[mask_B]
         if len(x_B) < 4:
             raise ValueError("Insufficient data for Sigmoid B fit.")
-        x0s_B, slopes_mid_B, slopes_at_B, x_fit_B, y_fit_B = single_sigmoid_fit(x_B, y_B, x_boundary=(np.log2(1.0) if log2_x else 1.0))
+        x0s_B, slopes_mid_B, slopes_at_B, x_fit_B, y_fit_B = single_sigmoid_fit(x_B, y_B, x_boundary=(np.log2(st.session_state.low_boundary) if log2_x else st.session_state.low_boundary))
         # Rescale y_fit_A and y_fit_B to original y scale
         y_fit_A = y_fit_A * (y_max - y_min) + y_min
         y_fit_B = y_fit_B * (y_max - y_min) + y_min
@@ -165,26 +165,31 @@ def psychometric_curve(selected_data, index, plot=True):
                 fig.add_trace(go.Scatter(x=x_fit_A, y=y_fit_A, mode='lines', name='Sigmoid Low', line=dict(color=colors.COLOR_LOW_BD)))
                 fig.add_trace(go.Scatter(x=x_fit_B, y=y_fit_B, mode='lines', name='Sigmoid High', line=dict(color=colors.COLOR_HIGH_BD)))
                 # Boundaries
-                fig.add_trace(go.Scatter(x=[1.0, 1.0], y=[0, 100], mode='lines', name='Boundary 1.0', line=dict(dash='dash', color=colors.COLOR_GRAY)))
-                fig.add_trace(go.Scatter(x=[1.5, 1.5], y=[0, 100], mode='lines', name='Boundary 1.5', line=dict(dash='dash', color=colors.COLOR_GRAY)))
-                fig.update_layout(title='Psychometric Curve (Double Sigmoid)', xaxis_title='Stimulus Intensity (log2)', yaxis_title='Lick Rate (normalized)', xaxis_type='log', yaxis_range=[0, 100])
+                fig.add_trace(go.Scatter(x=[st.session_state.low_boundary, st.session_state.low_boundary], y=[0, 100], mode='lines', name='Low Boundary', line=dict(dash='dash', color=colors.COLOR_GRAY)))
+                fig.add_trace(go.Scatter(x=[st.session_state.high_boundary, st.session_state.high_boundary], y=[0, 100], mode='lines', name='High Boundary', line=dict(dash='dash', color=colors.COLOR_GRAY)))
+                fig.update_layout(title='Psychometric Curve (Double Sigmoid)', xaxis_title='Stimulus Intensity (log2)', xaxis_type='log', yaxis_title='Lick Rate (normalized)', yaxis_range=[0, 100])
                 st.plotly_chart(fig)
             else:
                 st.text(f"Single sigmoid fit:\nx0: {model_boundaries}, Slope at Boundary: {slopes_mid}")
-                boundaries = [1, 1.5]
                 fig = go.Figure()
                 fig.add_trace(go.Scatter(x=unique_stimuli, y=lick_rates, mode='markers', name='Data Points'))
                 fig.add_trace(go.Scatter(x=x_fit, y=y_fit, mode='lines', name='Fitted Curve'))
-                fig.update_layout(title="Psychometric Curve", xaxis_title="Stimulus Intensity (log2)", yaxis_title="Lick Rate", xaxis_type='log', yaxis_range=[0, 100])
-                for bs in boundaries:
-                    fig.add_trace(go.Scatter(x=[bs, bs], y=[0, 100], mode='lines', name='Boundary', line=dict(dash='dash', color=colors.COLOR_GRAY), fillcolor = colors.COLOR_GRAY))
+                # Only plot the relevant boundary line
+                boundary = st.session_state.low_boundary
+                fig.add_trace(go.Scatter(x=[boundary, boundary], y=[0, 100], mode='lines', name='Boundary', line=dict(dash='dash', color=colors.COLOR_GRAY)))
+                # Only use log axis if all x > 0
+                x_fit_arr = np.array(x_fit) if isinstance(x_fit, (list, tuple)) else x_fit
+                if np.all(unique_stimuli > 0) and np.all(x_fit_arr > 0):
+                    fig.update_layout(title="Psychometric Curve", xaxis_title="Stimulus Intensity (log2)", yaxis_title="Lick Rate", xaxis_type='log', yaxis_range=[0, 100])
+                else:
+                    fig.update_layout(title="Psychometric Curve", xaxis_title="Stimulus Intensity (log2)", yaxis_title="Lick Rate", yaxis_range=[0, 100])
                 st.plotly_chart(fig)
         return model_boundaries, slopes_mid, slopes_at_model_boundaries, x_fit, y_fit
     except NotImplementedError as e:
         st.error(str(e))
         return None, None, None, None, None
     except Exception as e:
-        # st.error(f"Error in psychometric_curve: {e}")
+        st.error(f"Error in psychometric_curve: {e}")
         return None, None, None, None, None
 
 # -------------------------------------------------------------------
@@ -212,14 +217,12 @@ def psychometric_curve_multiple_sessions(selected_data, animal_name = "None", pl
             else:
                 low, high = slopes_at_bnds
 
-
         low_slopes.append(low)
         high_slopes.append(high)
         tones.append(selected_data.at[idx, "Tones_per_class"])
         n_bounds.append(selected_data.at[idx, "N_Boundaries"])
 
     # ── tidy dataframe for Altair ────────────────────────────────────────────────
-
     df = (
         pd.DataFrame(
             dict(
@@ -239,10 +242,14 @@ def psychometric_curve_multiple_sessions(selected_data, animal_name = "None", pl
      )
     # ── plotting ────────────────────────────────────────────────────────────────
     if plot:
-        COLOR_BOUNDARY_SCALE = alt.Scale(
-            domain = ["Low", "High"],
-            range = [colors.COLOR_LOW_BD, colors.COLOR_HIGH_BD]
-        )
+        # Blue for single boundary, otherwise use the two-color scale
+        if df['Boundary'].nunique() == 1:
+            COLOR_BOUNDARY_SCALE = alt.Scale(domain=["Low"], range=["#1E90FA"])
+        else:
+            COLOR_BOUNDARY_SCALE = alt.Scale(
+                domain = ["Low", "High"],
+                range = [colors.COLOR_LOW_BD, colors.COLOR_HIGH_BD]
+            )
         base = (
             alt.Chart(df)
             .encode(
@@ -254,9 +261,8 @@ def psychometric_curve_multiple_sessions(selected_data, animal_name = "None", pl
 
         lines = base.mark_line(point = True)
 
-
         anno = (
-            base.mark_point(size = 30, stroke = "black")
+            base.mark_point(size = 60, stroke = "black")
             .encode(
                 shape = alt.Shape(
                     "Boundaries:N",
@@ -349,13 +355,13 @@ def multi_animal_psychometric_slope_progression(selected_data, N_Boundaries=1):
     # ─── reference at y=0 ──────────────────────────────────────────────
     zero_rule = (
         alt.Chart(pd.DataFrame({"y":[0]}))
-        .mark_rule(color="black", strokeDash=[5,5])
+        .mark_rule(color="black", strokeDash=[5,5], )
         .encode(y="y:Q")
     )
 
     chart = (subj_lines + avg_line + zero_rule).properties(
         width=700, height=400,
-        title=f"Psychometric Slope Progression"
+        title=f"Psychometric Slope Progression - all animals"
     )
     st.altair_chart(chart, use_container_width=True)
 

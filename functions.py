@@ -8,30 +8,6 @@ import os
 import matplotlib.pyplot as plt
 import altair as alt
 
-def init_session_states():
-    # -----------------------------------------------------------------------------
-    # Set session state variables (if not already set)
-    # -----------------------------------------------------------------------------
-    if "path" not in st.session_state:
-        st.session_state.path = r"Z:\Shared\Amichai\Code\DB"
-    if "user_path" not in st.session_state:
-        st.session_state.user_path = os.path.join(st.session_state.path, "users_data", "Amichai")
-    if "Project_type_options" not in st.session_state:
-        st.session_state.Project_type_options = ["", "Behavior-Bpod GUI", "Behavior-GNG GUI", "Npxls"]
-
-    # Change working directory
-
-    os.chdir(st.session_state.path)
-
-
-    # -----------------------------------------------------------------------------
-    # Load existing projects and project list
-    # -----------------------------------------------------------------------------
-    existing_projects = pd.read_csv(os.path.join(st.session_state.user_path, "projects_list.csv"))
-    project_list = existing_projects["Project Name"].unique().tolist()
-    if "project_list" not in st.session_state:
-        st.session_state.project_list = project_list
-    return st.session_state
 
 
 def read_results_file(file, type):

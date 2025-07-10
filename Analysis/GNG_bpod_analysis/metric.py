@@ -143,7 +143,7 @@ def d_prime_multiple_sessions(selected_data, t=10, animal_name='None', plot = Tr
         fig.add_trace(go.Scatter(
             x=data['Session Index'], y=data['d_prime'], mode='lines',
             name="Overall d'",
-            line=dict(color=colors.COLOR_SUBTLE),
+            line=dict(color=colors.COLOR_ACCENT),
             marker=dict(symbol='circle')
         ))
         # Overall d' error band
@@ -158,7 +158,7 @@ def d_prime_multiple_sessions(selected_data, t=10, animal_name='None', plot = Tr
             x=data['Session Index'], y=data['d_prime'] - data['Error'],
             mode='lines', line=dict(width=0),  # invisible line
             fill='tonexty',
-            fillcolor='rgba(128, 128, 128, 0.2)',  # transparent version of COLOR_SUBTLE
+            fillcolor=colors.COLOR_ACCENT_TRANSPARENT,  # transparent version of COLOR_SUBTLE
             showlegend=False,
             hoverinfo='skip',
             name='-1 Std'
@@ -181,7 +181,7 @@ def d_prime_multiple_sessions(selected_data, t=10, animal_name='None', plot = Tr
             x=data['Session Index'], y=data['Low Boundary d_prime'] - data['Low Boundary Error'],
             mode='lines', line=dict(width=0),
             fill='tonexty',
-            fillcolor=colors.COLOR_BLUE_TRANSPARENT,  
+            fillcolor=colors.COLOR_LOW_BD_TRANSPARENT,  
             showlegend=False,
             hoverinfo='skip',
             name='-1 Std Low',
@@ -205,7 +205,7 @@ def d_prime_multiple_sessions(selected_data, t=10, animal_name='None', plot = Tr
             x=data['Session Index'], y=data['High Boundary d_prime'] - data['High Boundary Error'],
             mode='lines', line=dict(width=0),
             fill='tonexty',
-            fillcolor=colors.COLOR_ACCENT_TRANSPARENT,
+            fillcolor=colors.COLOR_HIGH_BD_TRANSPARENT,
             showlegend=False,
             hoverinfo='skip',
             name='-1 Std High',
@@ -244,15 +244,21 @@ def multi_animal_d_prime_progression(selected_data, N_Boundaries = None):
     # Initialize arrays to store d' values
     d_prime_data = []
     session_counts = []
+    low_boundary_data = []
+    high_boundary_data = []
 
     for subject in subjects:
         # Compute d' for each subject
         d_prime_result = d_prime_multiple_sessions(selected_data, animal_name=subject, plot=False)
         d_prime_values = d_prime_result["d_prime"]
-
-        # Store d' progression
         d_prime_data.append(d_prime_values)
         session_counts.append(len(d_prime_values))
+        # If N_Boundaries == 2, collect low/high boundary d' as well
+        if N_Boundaries == 2:
+            low_vals = d_prime_result['Low Boundary d_prime']
+            high_vals = d_prime_result['High Boundary d_prime']
+            low_boundary_data.append(np.array(low_vals))
+            high_boundary_data.append(np.array(high_vals))
 
     # Determine max number of sessions for alignment
     max_sessions = max(session_counts)
@@ -279,39 +285,70 @@ def multi_animal_d_prime_progression(selected_data, N_Boundaries = None):
     df_altair = pd.DataFrame(data_list)
     df_avg = pd.DataFrame(avg_list)
 
-    line_chart = alt.Chart(df_altair).mark_line(opacity = 0.7, strokeWidth=1).encode(
-        x = alt.X("Session:Q", title = "Session"),
-        y = alt.Y("d_prime:Q", title = "d'"),
-        color=alt.Color("Mouse:N", scale=alt.Scale(scheme="greys"), legend=alt.Legend(title="Subject")),  # ✅ Gray palette
-        tooltip = ["Mouse", "Session", "d_prime"]
-    ).properties(title = "d' Progression Across Animals", width = 700, height = 400)
+    # If N_Boundaries == 2, compute average low/high boundary d' across animals
+    if N_Boundaries == 2 and low_boundary_data and high_boundary_data:
+        low_df = pd.DataFrame([np.pad(d, (0, max_sessions - len(d)), constant_values=np.nan) for d in low_boundary_data])
+        high_df = pd.DataFrame([np.pad(d, (0, max_sessions - len(d)), constant_values=np.nan) for d in high_boundary_data])
+        avg_low = low_df.mean(axis=0, skipna=True)
+        avg_high = high_df.mean(axis=0, skipna=True)
 
-    # Create Altair line chart for the average line
-    avg_line = alt.Chart(df_avg).mark_line(strokeWidth=3).encode(
-        x="Session:Q",
-        y="d_prime:Q"
+    import plotly.graph_objects as go
+    fig = go.Figure()
+    # Plot all animals (gray lines)
+    for i, subject in enumerate(subjects):
+        fig.add_trace(go.Scatter(
+            x=np.arange(1, max_sessions + 1),
+            y=d_prime_df.iloc[i],
+            mode='lines',
+            line=dict(color=colors.COLOR_VERY_SUBTLE, width=1),
+            name=f'{subject}',
+            showlegend=False
+        ))
+    # Plot average overall d'
+    fig.add_trace(go.Scatter(
+        x=np.arange(1, max_sessions + 1),
+        y=avg_d_prime,
+        mode='lines',
+        name="Average Overall d'",
+        line=dict(color=colors.COLOR_ACCENT, width=7),
+        marker=dict(symbol='circle')
+    ))
+    # Plot average low/high boundary d' if N_Boundaries == 2
+    if N_Boundaries == 2 and low_boundary_data and high_boundary_data:
+        fig.add_trace(go.Scatter(
+            x=np.arange(1, max_sessions + 1),
+            y=avg_low,
+            mode='lines+markers',
+            name="Average Low Boundary d'",
+            line=dict(color=colors.COLOR_LOW_BD, width=2, dash='solid'),
+            marker=dict(symbol='triangle-up')
+        ))
+        fig.add_trace(go.Scatter(
+            x=np.arange(1, max_sessions + 1),
+            y=avg_high,
+            mode='lines+markers',
+            name="Average High Boundary d'",
+            line=dict(color=colors.COLOR_HIGH_BD, width=2, dash='solid'),
+            marker=dict(symbol='triangle-down')
+        ))
+    # Learning threshold
+    fig.add_trace(go.Scatter(
+        x=[1, max_sessions], y=[1, 1],
+        mode='lines', name="Learning Threshold",
+        line=dict(color=colors.COLOR_GRAY, dash='dash'),
+        hoverinfo='skip', showlegend=True
+    ))
+    fig.update_layout(
+        xaxis_title="Session Index",
+        yaxis_title="d'",
+        title="d' Progression Across Animals",
+        legend=dict(title="Legend"),
+        height=400,
+        width=700
     )
+    st.plotly_chart(fig, use_container_width=True)
 
-    # Add horizontal reference line at y = 1 (dashed black)
-    ref_line = alt.Chart(pd.DataFrame({"y": [1]})).mark_rule(color="black", strokeDash=[5, 5]).encode(
-        y="y:Q"
-    )
 
-    # Combine charts
-    final_chart = (line_chart + avg_line + ref_line).properties(title="d' Progression Across Animals")
-
-    # Display chart in Streamlit
-    st.altair_chart(final_chart, use_container_width=True)
-
-    # --- Calculate and display mean and std for low (first) and high (last) session across animals ---
-    low_session_vals = d_prime_df.iloc[:, 0].dropna()
-    high_session_vals = d_prime_df.iloc[:, -1].dropna()
-    mean_low = np.nanmean(low_session_vals)
-    std_low = np.nanstd(low_session_vals)
-    mean_high = np.nanmean(high_session_vals)
-    std_high = np.nanstd(high_session_vals)
-    st.text(f"Low (first) session d': {mean_low:.3f}, ± {std_low:.3f}")
-    st.text(f"High (last) session d': {mean_high:.3f}, ± {std_high:.3f}")
 
 
 def classifier_metric(project_data, index):
@@ -490,7 +527,7 @@ def d_prime_multiple_sessions_divde_oneNtwo(selected_data, t=10, animal_name='No
     # Compute d' statistics and collect metadata
     for idx, sess_idx in enumerate(session_indices):
         stimuli = parse_stimuli(selected_data.loc[sess_idx, 'Stimuli'])
-        stimuli_mask = stimuli < 1.5
+        stimuli_mask = stimuli < st.session_state.high_boundary
 
         # Filter relevant columns using the same mask
         filtered_trials = selected_data.loc[sess_idx, 'TrialTypes'][stimuli_mask]
@@ -509,17 +546,17 @@ def d_prime_multiple_sessions_divde_oneNtwo(selected_data, t=10, animal_name='No
 
 def d_prime_low_high_boundary_sessions(selected_data, idx, t=10, plot=True):
     """
-    Calculates d' over trials in bins of t for low and high boundary trials (low: Stimuli < 1.5, high: Stimuli > 1)
+    Calculates d' over trials in bins of t for low and high boundary trials (low: Stimuli < st.session_state.high_boundary, high: Stimuli > st.session_state.low_boundary)
     for a single session (selected_data should be a DataFrame with one row).
     Plots both d' curves on the same Plotly figure and returns the d' arrays/DataFrames for both boundaries.
     """
 
     # Get the stimuli for this session
     stimuli = parse_stimuli(selected_data.loc[idx, 'Stimuli'])
-    # Low boundary: stimuli < 1.5
-    low_mask = stimuli < 1.5
-    # High boundary: stimuli > 1
-    high_mask = stimuli > 1
+    # Low boundary
+    low_mask = stimuli < st.session_state.high_boundary
+    # High boundary
+    high_mask = stimuli > st.session_state.low_boundary
 
     # Prepare filtered data for low boundary
     filtered_trials_low = to_array(selected_data.loc[idx, 'TrialTypes'])[low_mask]
@@ -534,10 +571,12 @@ def d_prime_low_high_boundary_sessions(selected_data, idx, t=10, plot=True):
     selected_data_high = selected_data.copy()
     selected_data_high.at[idx, 'TrialTypes'] = str(filtered_trials_high.tolist())
     selected_data_high.at[idx, 'Outcomes'] = str(filtered_outcomes_high.tolist())
+    
 
     # Calculate d' for low and high boundary
     d_low = d_prime(selected_data_low, index=0, t=t, plot=False)
     d_high = d_prime(selected_data_high, index=0, t=t, plot=False)
+
 
     # Prepare DataFrames for plotting/return
     df_low = pd.DataFrame({

@@ -81,7 +81,7 @@ def plot_psychometric_curves_with_boundaries(project_data, N_Boundaries, n_indic
             # Line plot with markers (grayscale)
             fig.add_trace(go.Scatter(
                 x = unique_stimuli, y = lick_rates,
-                mode = 'lines+markers',
+                mode = 'lines',
                 line = dict(width = colors.LINE_WIDTH_MEDIUM, color = gray_shades[i % len(gray_shades)]),  # Cycle through grayscale colors
                 marker = dict(size = 6, color = gray_shades[i % len(gray_shades)]),
                 name = f"{name}, #{session}",

@@ -2,6 +2,9 @@ from functions import *  # Assumes common helper functions are defined here
 import pandas as pd
 import streamlit as st
 import traceback
+import os
+from Analysis.session_states import initialize_session_state
+initialize_session_state()
 
 
 # =============================================================================

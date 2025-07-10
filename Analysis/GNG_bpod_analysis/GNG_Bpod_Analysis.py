@@ -68,8 +68,6 @@ def gng_bpod_analysis_multipule(project_data, index):
         # d_prime_multiple_sessions_divde_oneNtwo(project_data, t = 10, animal_name = 'None', plot = True)
 
         multi_animal_d_prime_progression(project_data)
-
-        multi_animal_d_prime_progression(project_data, N_Boundaries = 1)
         multi_animal_d_prime_progression(project_data, N_Boundaries = 2)
 
 

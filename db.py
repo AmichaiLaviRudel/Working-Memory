@@ -1,9 +1,8 @@
 from functions import *
 import streamlit as st
+from Analysis.session_states import initialize_session_state
 
-
-
-init_session_states()
+initialize_session_state()
 
 # Set up the page layout
 st.set_page_config(page_title="Working Memory", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
