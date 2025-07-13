@@ -2,6 +2,7 @@ from Analysis.GNG_bpod_analysis.psychometric_curves import *
 from Analysis.GNG_bpod_analysis.metric import *
 from Analysis.GNG_bpod_analysis.GNG_bpod_general import *
 from Analysis.GNG_bpod_analysis.licking_and_outcome import *
+from Analysis.GNG_bpod_analysis.biases import plot_bias_analysis, bias_multiple_sessions
 
 import traceback
 import streamlit as st
@@ -13,7 +14,7 @@ def gng_bpod_analysis(project_data, index):
     bin = st.slider("Choose bin size", 5, 50, 15, 5)
 
 
-    tab1, tab2, tab3, tab4 = st.tabs([ "👨‍🎓Matrices", "👅 Lick Rate", "📈 Learning Curve", "👂 Psychometric Curve"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([ "👨‍🎓Matrices", "👅 Lick Rate", "📈 Learning Curve", "👂 Psychometric Curve", "🎯 Bias Analysis"])
 
     with tab1:
         try:
@@ -52,13 +53,21 @@ def gng_bpod_analysis(project_data, index):
             st.warning(f"something went wrong with this graph :|\n\n{e}")
             st.text(traceback.format_exc())
 
+    with tab5:
+        try:
+            n_previous_trials = st.slider("Number of previous trials to consider", 1, 10, 3, 1)
+            plot_bias_analysis(project_data, index, n_previous_trials=n_previous_trials, plot=True)
+        except Exception as e:
+            st.warning(f"something went wrong with bias analysis :|\n\n{e}")
+            st.text(traceback.format_exc())
+
 
 def gng_bpod_analysis_multipule(project_data, index):
     bin = st.slider("Choose bin size", 5, 50, 30, 5)
     animal_name = st.selectbox("Choose an Animal",
         sorted(project_data["MouseName"].unique()),  # Convert to list and sort
         key = "animal_select")
-    tab1, tab2, tab3 = st.tabs(["👅 Lick Rate", "👨‍🎓 D Prime", "👂 Psychometric Slope"])
+    tab1, tab2, tab3, tab4 = st.tabs(["👅 Lick Rate", "👨‍🎓 D Prime", "👂 Psychometric Slope", "🎯 Bias Analysis"])
 
 
     with tab1:
@@ -77,6 +86,14 @@ def gng_bpod_analysis_multipule(project_data, index):
         # multi_animal_psychometric_slope_progression(project_data,  N_Boundaries = 2)
         plot_psychometric_curves_with_boundaries(project_data, N_Boundaries = 1, n_indices = 2)
         plot_psychometric_curves_with_boundaries(project_data,  N_Boundaries = 2, n_indices = 2)
+
+    with tab4:
+        try:
+            n_previous_trials = st.slider("Number of previous trials to consider", 1, 10, 3, 1, key="bias_prev_trials")
+            bias_multiple_sessions(project_data, animal_name=animal_name, n_previous_trials=n_previous_trials)
+        except Exception as e:
+            st.warning(f"Something went wrong with bias analysis :|\n\n{e}")
+            st.text(traceback.format_exc())
 
 
 
