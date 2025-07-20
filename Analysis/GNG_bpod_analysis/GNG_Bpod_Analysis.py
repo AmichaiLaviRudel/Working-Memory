@@ -86,6 +86,8 @@ def gng_bpod_analysis_multipule(project_data, index):
         # multi_animal_psychometric_slope_progression(project_data,  N_Boundaries = 2)
         plot_psychometric_curves_with_boundaries(project_data, N_Boundaries = 1, n_indices = 2)
         plot_psychometric_curves_with_boundaries(project_data,  N_Boundaries = 2, n_indices = 2)
+        plot_psychometric_curves_with_boundaries(project_data,  N_Boundaries = 0, n_indices = 2)
+
 
     with tab4:
         try:

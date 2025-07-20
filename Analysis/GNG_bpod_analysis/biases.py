@@ -203,7 +203,7 @@ def plot_bias_analysis(selected_data, index, n_previous_trials=3, plot=False):
         fig_choice.add_trace(go.Scatter(
             x=list(range(len(choice_bias['bias_scores']))),
             y=choice_bias['bias_scores'],
-            mode='lines+markers',
+            mode='lines',
             name='Choice Bias',
             line=dict(color=colors.COLOR_ACCENT),
             marker=dict(size=4)
@@ -232,7 +232,7 @@ def plot_bias_analysis(selected_data, index, n_previous_trials=3, plot=False):
         fig_stimulus.add_trace(go.Scatter(
             x=list(range(len(stimulus_bias['bias_scores']))),
             y=stimulus_bias['bias_scores'],
-            mode='lines+markers',
+            mode='lines',
             name='Stimulus Bias',
             line=dict(color=colors.COLOR_LOW_BD),
             marker=dict(size=4)
@@ -331,7 +331,7 @@ def bias_multiple_sessions(selected_data, animal_name="None", n_previous_trials=
         fig.add_trace(go.Scatter(
             x=session_numbers,
             y=choice_bias_means,
-            mode='lines+markers',
+            mode='lines',
             name='Choice Bias',
             line=dict(color=colors.COLOR_ACCENT),
             marker=dict(symbol='circle')
@@ -362,7 +362,7 @@ def bias_multiple_sessions(selected_data, animal_name="None", n_previous_trials=
         fig.add_trace(go.Scatter(
             x=session_numbers,
             y=stimulus_bias_means,
-            mode='lines+markers',
+            mode='lines',
             name='Stimulus Bias',
             line=dict(color=colors.COLOR_LOW_BD),
             marker=dict(symbol='square')
