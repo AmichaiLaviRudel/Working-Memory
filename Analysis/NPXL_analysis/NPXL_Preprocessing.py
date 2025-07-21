@@ -1,3 +1,7 @@
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
+
 from load_data.load_bpod_data import load_mat_file, create_single_row_with_outcome
 
 import streamlit as st
@@ -6,7 +10,6 @@ import numpy as np
 import pandas as pd
 from scipy.stats import norm
 
-import os
 import pandas as pd
 import matplotlib.pyplot as plt
 
@@ -111,13 +114,15 @@ def bin_spike_matrix(spike_matrix, bins):
             binned[i, :] = counts
     return binned
 
-def save_spike_matrices(good, mua, non_somatic, good_path, mua_path, non_somatic_path):
+def save_spike_matrices(good, mua, non_somatic, good_path, mua_path, non_somatic_path, spike_matrix, spike_matrix_path, stimuli_outcome_df, stimuli_outcome_csv_path):
     """
-    Saves the good, MUA, and non-somatic spike matrices as numpy object arrays to the specified paths.
+    Saves the good, MUA, non-somatic spike matrices, the full spike_matrix, and the stimuli_outcome_df to the specified paths.
     """
     np.save(good_path, np.array(good, dtype=object))
     np.save(mua_path, np.array(mua, dtype=object))
     np.save(non_somatic_path, np.array(non_somatic, dtype=object))
+    np.save(spike_matrix_path, np.array(spike_matrix, dtype=object))
+    stimuli_outcome_df.to_csv(stimuli_outcome_csv_path, index=False)
 
 def load_spike_matrices(good_path, mua_path, non_somatic_path):
     """
@@ -130,33 +135,6 @@ def load_spike_matrices(good_path, mua_path, non_somatic_path):
     non_somatic = np.load(non_somatic_path, allow_pickle=True)
     return good, mua, non_somatic
 
-def peri_event_spike_matrix(spike_matrix, events_times, pre_event_ms=500, post_event_ms=500, bin_size_ms=1):
-    """
-    Extracts peri-event spike counts for each unit and event.
-    Parameters:
-        spike_matrix (list of np.ndarray): List of spike times for each unit.
-        events_times (np.ndarray): Array of event times (seconds).
-        pre_event_ms (int): Time before event (ms).
-        post_event_ms (int): Time after event (ms).
-        bin_size_ms (int): Bin size in ms.
-    Returns:
-        np.ndarray: Array of shape (n_units, n_events, n_timepoints) with spike counts per ms bin.
-    """
-    peri_event_window_ms = pre_event_ms + post_event_ms
-    n_timepoints = peri_event_window_ms // bin_size_ms
-    n_units = len(spike_matrix)
-    n_events = len(events_times)
-    peri_event_spikes = np.zeros((n_units, n_events, n_timepoints), dtype=int)
-    for unit_idx, spike_times in enumerate(spike_matrix):
-        for event_idx, event_time in enumerate(events_times):
-            window_start = event_time - pre_event_ms / 1000
-            window_end = event_time + post_event_ms / 1000
-            spikes_in_window = spike_times[(spike_times >= window_start) & (spike_times < window_end)]
-            spike_times_ms = ((spikes_in_window - event_time) * 1000).astype(int) + pre_event_ms
-            spike_times_ms = spike_times_ms[(spike_times_ms >= 0) & (spike_times_ms < n_timepoints)]
-            for t in spike_times_ms:
-                peri_event_spikes[unit_idx, event_idx, t] += 1
-    return peri_event_spikes
 
 def load_spike_data(data_dir, sr):
     """
@@ -175,15 +153,25 @@ def couple_stimuli_outcome_and_times(directory, stimuli_values, outcomes):
     """
     Finds the file ending with 'nidq.xd_0_1_100.txt' in the directory, loads times, and couples with stimuli values and outcomes.
     Trims all arrays to the shortest length if they mismatch.
+    Also stores the path to the found txt file in Streamlit session state under the key 'nidq_txt_path'.
     """
+    # Store the path in Streamlit session state
+    try:
+        import streamlit as st
+        if 'nidq_events_times_path' not in st.session_state:
+            st.session_state['nidq_events_times_path'] = "nidq.xd_0_1_100.txt"
+    except ImportError:
+        pass  # If Streamlit is not available, skip
     # Find the file
     txt_file = None
     for fname in os.listdir(directory):
-        if fname.endswith("nidq.xd_0_1_100.txt"):
+        if fname.endswith(st.session_state['nidq_events_times_path']):
             txt_file = os.path.join(directory, fname)
             break
     if txt_file is None:
-        raise FileNotFoundError("No file ending with 'nidq.xd_0_1_100.txt' found in directory.")
+        raise FileNotFoundError(f"No file ending with {st.session_state['nidq_events_times_path']} found in directory.")
+
+
 
     import numpy as np
     times = np.loadtxt(txt_file)
@@ -201,20 +189,22 @@ def couple_stimuli_outcome_and_times(directory, stimuli_values, outcomes):
     return df
 
 # --- Behavioral File Copy Function  ---
-def copy_behavioral_file_for_dir(parent_dir, df, spike_glx_col='spike glx file', behavioral_file_col='behavioral file'):
+def copy_behavioral_file_for_dir(parent_dir, df, spike_glx_col='spike glx file', behavioral_file_col='behavioral file', csv_path=None):
     """
     For a given parent_dir, check if any spikeglx file in the CSV is present in that directory.
     If so, find the corresponding behavioral file and copy it to parent_dir if not already present.
+    Also updates the 'parent_dir' column in the DataFrame for the corresponding row and saves the DataFrame if csv_path is provided.
     Parameters:
         parent_dir (str): Directory to check for spikeglx file and to copy behavioral file into.
         df (pd.DataFrame): DataFrame containing experiment metadata.
         spike_glx_col (str): Column name for spikeglx file in df.
         behavioral_file_col (str): Column name for behavioral file in df.
-        root_directory (str): Root directory to search for behavioral files.
+        csv_path (str, optional): Path to save the updated DataFrame.
     Returns:
         str: Path to the behavioral file in the parent_dir (if copied or found).
     """
-    
+    import os
+    behav_file = None
     for idx, row in df.iterrows():
         spikeglx_base = str(row[spike_glx_col]).strip()
         spikeglx_name = f"catgt_{spikeglx_base}"
@@ -225,7 +215,6 @@ def copy_behavioral_file_for_dir(parent_dir, df, spike_glx_col='spike glx file',
         if any(spikeglx_name in entry for entry in os.listdir(parent_dir)):
             print(f"Spikeglx file found in {parent_dir}")
 
-            behav_file = None
             for dirpath, _, filenames in os.walk(parent_dir):
                 if behavioral_name in filenames:
                     behav_file = os.path.join(dirpath, behavioral_name)
@@ -236,8 +225,15 @@ def copy_behavioral_file_for_dir(parent_dir, df, spike_glx_col='spike glx file',
                 shutil.copy2(behavioral_full_name, dest_path)
                 print(f"Copied {behavioral_full_name} to {dest_path}")
                 behav_file = os.path.join(dest_path, behavioral_name)
-                break
-
+            # Update the parent_dir column for this row
+            if 'current_dir' in df.columns:
+                df.at[idx, 'current_dir'] = parent_dir
+            else:
+                df.loc[idx, 'current_dir'] = parent_dir
+            # Save the DataFrame if a path is provided
+            if csv_path is not None:
+                df.to_csv(csv_path, index=False)
+            break
     return behav_file
 
 
@@ -252,29 +248,27 @@ def main():
     ks_folders = find_ks_folders(root_directory)
     for working_dir in ks_folders:
         try:
-            working_dir = ks_folders[3]
             os.chdir(working_dir)
-            print(working_dir)
-            import glob
             parent_dir = os.path.dirname(working_dir)
             probe_id = working_dir[-1]
             data_dir = os.path.join(working_dir, f"imec{probe_id}_ks4")
-            behavioral_file_path = copy_behavioral_file_for_dir(parent_dir, df_csv)
+            behavioral_file_path = copy_behavioral_file_for_dir(parent_dir, df_csv, csv_path=csv_path)
+
             try:
                 trial_types_df, raw_events_df, session_date, session_time, trial_settings, notes , licks, states, stimuli, Unique_Stimuli_Values, tones_per_class, boundaries = load_mat_file(behavioral_file_path)
                 combined_row_df = create_single_row_with_outcome(behavioral_file_path, trial_types_df, raw_events_df, session_date,
                                                              session_time, trial_settings, notes, licks, states,
                                                              Unique_Stimuli_Values, tones_per_class, boundaries)
-                print(combined_row_df)
             except Exception as e:
                 print(f"Error processing {behavioral_file_path}: {e}")
 
             # --- Load Spikeglx Data ---
             sr = read_sample_rate(working_dir)
             spike_times, spike_clusters = load_spike_data(data_dir, sr)
+            cluster_info = load_cluster_info(working_dir, data_dir)
             spike_matrix, good_spike_matrix, mua_spike_matrix, non_somatic_spike_matrix, all_cluster_indices = extract_spike_matrices(spike_times, spike_clusters, cluster_info)
-            stimuli_outcome_df = couple_stimuli_outcome_and_times(parent_dir, stimuli,  combined_row_df["Outcomes"].iloc[0])
-
+            stimuli_outcome_df = couple_stimuli_outcome_and_times(parent_dir, stimuli, combined_row_df["Outcomes"].iloc[0])
+            save_spike_matrices(good_spike_matrix, mua_spike_matrix, non_somatic_spike_matrix, data_dir, data_dir, data_dir, spike_matrix, os.path.join(data_dir, 'spike_matrix.npy'), stimuli_outcome_df, os.path.join(data_dir, 'stimuli_outcome_df.csv'))
         except Exception as e:
             print(f"Error processing {working_dir}: {e}")
             continue

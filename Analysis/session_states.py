@@ -39,8 +39,8 @@ def initialize_session_state():
     if 'high_boundary' not in st.session_state:
         st.session_state.high_boundary = 1.5
 
-    # Add any other custom session state variables here as needed
-    # Example: st.session_state['some_key'] = default_value
+    st.session_state['nidq_events_times_path'] = 'nidq.xd_0_1_100.txt'
+
 
     # Optionally: change working directory
     try:
