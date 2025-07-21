@@ -171,6 +171,35 @@ def load_spike_data(data_dir, sr):
     spike_clusters = np.load(os.path.join(data_dir, 'spike_clusters.npy'))
     return spike_times_ms, spike_clusters
 
+def couple_stimuli_outcome_and_times(directory, stimuli_values, outcomes):
+    """
+    Finds the file ending with 'nidq.xd_0_1_100.txt' in the directory, loads times, and couples with stimuli values and outcomes.
+    Trims all arrays to the shortest length if they mismatch.
+    """
+    # Find the file
+    txt_file = None
+    for fname in os.listdir(directory):
+        if fname.endswith("nidq.xd_0_1_100.txt"):
+            txt_file = os.path.join(directory, fname)
+            break
+    if txt_file is None:
+        raise FileNotFoundError("No file ending with 'nidq.xd_0_1_100.txt' found in directory.")
+
+    import numpy as np
+    times = np.loadtxt(txt_file)
+    if times.ndim > 1:
+        times = times.flatten()
+
+    # Find the minimum length
+    min_len = min(len(times), len(stimuli_values), len(outcomes))
+    times = times[:min_len]
+    stimuli_values = stimuli_values[:min_len]
+    outcomes = outcomes[:min_len]
+
+    import pandas as pd
+    df = pd.DataFrame({'time': times, 'stimulus': stimuli_values, 'outcome': outcomes})
+    return df
+
 # --- Behavioral File Copy Function  ---
 def copy_behavioral_file_for_dir(parent_dir, df, spike_glx_col='spike glx file', behavioral_file_col='behavioral file'):
     """
@@ -210,7 +239,8 @@ def copy_behavioral_file_for_dir(parent_dir, df, spike_glx_col='spike glx file',
                 break
 
     return behav_file
-# /ems/elsc-labs/mizrahi-a/Shared/
+
+
 # --- Main Analysis Loop ---
 def main():
     """
@@ -243,8 +273,7 @@ def main():
             sr = read_sample_rate(working_dir)
             spike_times, spike_clusters = load_spike_data(data_dir, sr)
             spike_matrix, good_spike_matrix, mua_spike_matrix, non_somatic_spike_matrix, all_cluster_indices = extract_spike_matrices(spike_times, spike_clusters, cluster_info)
-            peri_event_spikes = peri_event_spike_matrix(spike_matrix, stimuli['stimulus_onset'], pre_event_ms=500, post_event_ms=500, bin_size_ms=1)
-            print(peri_event_spikes)
+            stimuli_outcome_df = couple_stimuli_outcome_and_times(parent_dir, stimuli,  combined_row_df["Outcomes"].iloc[0])
 
         except Exception as e:
             print(f"Error processing {working_dir}: {e}")
