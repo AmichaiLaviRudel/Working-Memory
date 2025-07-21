@@ -1,384 +1,255 @@
-from functions import *
+from load_data.load_bpod_data import load_mat_file, create_single_row_with_outcome
 
 import streamlit as st
 import scipy.io as spio
 import numpy as np
 import pandas as pd
 from scipy.stats import norm
-import os
 
+import os
+import pandas as pd
 import matplotlib.pyplot as plt
-import tqdm
-import os
+
+import plotly.graph_objects as go
+
+import shutil
 
 
-
-def preprocess(working_dir, spike_sample_rate=30000, events_sample_rate=20000, active_unit_threshold=15,
-               window_in_sec=1, rerun=False):
-    """this function takes the data from phy and the GNG for each working directory and preprocess it to a matrix of
-    spikes for each cluster and event. the function saves the matrix in the analysis_output folder"""
-    import numpy as np
-    from tqdm import tqdm
-    import os
-    root_directory = r"Z:\Shared\Amichai\NPXL\Recs\Group2"
+# --- Utility Functions ---
+def find_ks_folders(root_directory, target_dir="bombcell"):
+    """
+    Recursively search for all folders within root_directory that contain a subdirectory named target_dir (default: 'bombcell').
+    Returns a list of paths to these parent folders.
+    """
     ks_folders = []
-    # Walk through all directories and files
     for dirpath, dirnames, filenames in os.walk(root_directory):
-        try:
-            # Check if params.py and phy.log exist in the current directory
-            if 'params.py' in filenames and 'phy.log' in filenames:
-                working_dir = dirpath
-                print(working_dir)
+        if target_dir in dirnames:
+            ks_folders.append(dirpath)
+    return ks_folders
 
-                # Path to b_file.txt
-                b_file_path = os.path.join(working_dir, 'b_file.txt')
-
-                while True:
-                    # If b_file.txt exists, read its content
-                    if os.path.exists(b_file_path):
-                        with open(b_file_path, 'r') as f:
-                            behavior_dir = f.read().strip()  # Read and strip whitespace
-
-                        # If the stored path is not a valid .mat file, delete b_file.txt and ask again
-                        if not os.path.isfile(behavior_dir) or not behavior_dir.lower().endswith('.mat'):
-                            os.remove(b_file_path)
-                            print("Invalid or missing .mat file. b_file.txt deleted.")
-                        else:
-                            break  # Valid file, exit loop
-
-                    # Prompt user for a valid MATLAB behavior file
-                    behavior_file = input("Enter the full path to the MATLAB behavior file (*.mat): ").strip()
-
-                    if os.path.isfile(behavior_file) and behavior_file.lower().endswith('.mat'):
-                        with open(b_file_path, 'w') as f:
-                            f.write(behavior_file)  # Save the path inside b_file.txt
-                        print(f"Behavior file saved in: {b_file_path}")
-                        behavior_dir = behavior_file
-                        break
-                    else:
-                        print("Invalid file. Please enter a valid MATLAB file (*.mat).")
-
-                # Load the MATLAB behavior file
-                behavior_data = load_mat_file(behavior_dir)
-
-                meta_columns = ['group', 'animal', 'recording', 'acronym', 'event']  # columns to add to the psth data
-
-                # Change to the directory where the data is located
-                os.chdir(working_dir)
-
-                # checking if the analysis folder exist or not.
-                if not os.path.exists("analysis_output"):
-                    # Create a new directory because it does not exist
-                    os.makedirs("analysis_output")
-
-                # load the data
-                spikes_times = np.load(r"spike_times.npy").flatten()
-                spikes_clusters = np.load(r"spike_clusters.npy").flatten()
-                cluster_group = pd.read_csv(r"cluster_group.tsv", sep = '\t')
-                # border_table = pd.read_csv(r"border_table.csv")
-                cluster_info = pd.read_csv(r"cluster_info.tsv", sep = '\t')
-                channel_positions = np.load(r"channel_positions.npy")
-
-                spikes_times_in_sec = spikes_times / spike_sample_rate
-
-                # Parameters:
-                ms = 1000
-
-                # ___________________________________________________________________________#
-                # Find unique clusters and their maximum time
-                n_clusters = np.max(spikes_clusters)
-
-                # Find the good clusters
-                good_clusters = cluster_info[cluster_info['group'] == 'good'].to_numpy()[:, 0]
-                mua_clusters = cluster_info[cluster_info['group'] == 'mua'].to_numpy()[:, 0]
-
-                all_clusters_size = len(good_clusters) + len(mua_clusters)
-                # create an array of zeros with the size of the number of good clusters that can be in different sizes
-                spike_matrix = np.empty(all_clusters_size, dtype = object)
-
-                # fill the spike matrix with the spike times of each cluster
-                for i in range(all_clusters_size):
-                    if i < len(good_clusters):
-                        query = np.argwhere(spikes_clusters == good_clusters[i]).flatten()
-                    else:
-                        query = np.argwhere(spikes_clusters == mua_clusters[i - len(good_clusters)]).flatten()
-
-                    spike_matrix[i] = spikes_times_in_sec[query]
-
-                # ___________________________________________________________________________#
-                # get units position and acronym
-
-                # Here I am assume that the max depth is approximatly the length of the probe
-                cluster_info['depth_corr'] = np.abs(cluster_info['depth'] - cluster_info['depth'].max())
-
-                # get the acronym of the good clusters
-                good_clusters_acronym = cluster_info[cluster_info['group'] == 'good'].to_numpy()[:, -1]
-                np.save(f"analysis_output/good_units_acronym.npy", good_clusters_acronym)
-
-                # ___________________________________________________________________________#
-
-                # Ensure output directory exists
-                os.makedirs("analysis_output", exist_ok = True)
-
-                # Loop through each unique outcome type
-                for outcome in behavior_data["Outcome"].unique():
-                    # Filter events based on the current outcome and reset index
-                    outcome_matrix = behavior_data[behavior_data["Outcome"] == outcome].reset_index(drop = True)
-
-                    if outcome_matrix.empty:
-                        continue  # Skip empty outcome matrices
-
-                    outcome_name = outcome_matrix["OutcomeName"][0][0]
-
-                    # Define the window size in seconds and the number of time points (assuming ms is defined)
-                    window_in_sec = 1
-                    num_timepoints = window_in_sec  # Ensure ms is correctly defined
-
-                    try:
-                        # Pre-allocate a NaN-filled array for spike data
-                        spikes_matrix_window = np.full((all_clusters_size, len(outcome_matrix), num_timepoints), np.nan)
-                    except Exception as error:
-                        print(f"An error occurred while initializing spike matrix for {outcome_name}: {error}")
-                        continue  # Skip this outcome if an error occurs
-
-                    # Process each event
-                    for i, row in tqdm(outcome_matrix.iterrows(), total = len(outcome_matrix),
-                                       desc = f"Processing {outcome_name}"):
-                        # Compute event time
-                        event_time = (row["TrialStartTimestamp"] + row[
-                            "ToneOnset"]) / 60  # Ensure correct unit conversion
-                        window_floor = event_time - window_in_sec
-                        window_ceil = event_time + window_in_sec
-
-                        # Loop over each cluster
-                        for j in range(all_clusters_size):  # Fix iteration over clusters
-                            cluster_spikes = spike_matrix[j]  # Assume spike times are sorted
-
-                            # Efficiently find spikes within the time window using searchsorted
-                            start_idx = np.searchsorted(cluster_spikes, window_floor, side = 'left')
-                            end_idx = np.searchsorted(cluster_spikes, window_ceil, side = 'right')
-                            spikes_in_window = cluster_spikes[start_idx:end_idx]
-
-                            # Compute relative spike times
-                            relative_spikes = spikes_in_window - event_time
-
-                            # Clip to available window length
-                            n_spikes = min(len(relative_spikes), num_timepoints)
-                            if n_spikes > 0:
-                                spikes_matrix_window[j, i, :n_spikes] = relative_spikes[:n_spikes]
-
-                    # Save the matrix locally
-                    spikes_matrix_good_units = spikes_matrix_window[:len(good_clusters), :, :]
-                    np.save(f"analysis_output/{outcome_name}_matrix.npy", spikes_matrix_window)
-                    np.save(f"analysis_output/{outcome_name}_good_units_matrix.npy", spikes_matrix_good_units)
-
-                    significant_good_units = np.full((len(good_clusters), 3), np.nan)
-                    for j in range(len(good_clusters)):
-                        p_value, response_higher = analyze_aligned_neuron(spikes_matrix_good_units[j, :, :], j)
-                        significant_good_units[j] = int(j), p_value, response_higher
-                    np.save(f"analysis_output/{outcome_name}_significant_good_units.npy", significant_good_units)
-        except Exception as error:
-            print(f"An error occurred in {dirpath}: {error}")
-            continue  # Skip this outcome if an error occurs
-
-
-# ___________________________________________________________________________#
-
-
-def load_mat_file(file_path):
-    import numpy as np
-    import scipy
-    import pandas as pd
-    # Load the .mat file
-    mat_contents = scipy.io.loadmat(file_path)
-
-    # Extract the 'SessionData' field
-    session_data_content = mat_contents['SessionData'][0, 0]
-    trial_settings = session_data_content['TrialSettings'][0]
-
-    # Extract the date and time information
-    session_date = session_data_content['Info']['SessionDate'][0][0]
-    session_time = session_data_content['Info']['SessionStartTime_UTC'][0][0]
-
-    # Extract 'TrialTypes' and 'RawEvents'
-    trial_types = session_data_content['TrialTypes'][0]
-    raw_events = session_data_content['RawEvents'][0, 0]
-
-    try:
-        # Extract 'Stimulus' field from 'session_data_content'
-        stimuli = session_data_content['stimulus']
-        outcomeName = session_data_content['OutcomeName'].flatten()
-        outcome = session_data_content['Outcome'].flatten()
-        trialStartTimestamp = session_data_content['TrialStartTimestamp'].flatten()
-
-        # If 'stimulus' is a NumPy structured array or void object, convert it
-        if isinstance(stimuli, np.void):
-            stimuli = stimuli.tolist()  # Convert structured array to a list
-
-        # If 'stimulus' is a nested array, extract the first element
-        if isinstance(stimuli, (list, np.ndarray)) and len(stimuli) > 0:
-            stimuli = stimuli[0]
-
-        # Ensure stimuli is a proper NumPy array for further operations
-        stimuli = np.array(stimuli)
-
-    except Exception as e:
-        print(f"Error extracting 'stimulus': {e}")
-        stimuli = np.array([])  # Default to empty NumPy array
-
-    # Initialize arrays
-    trials = raw_events['Trial']
-    n_trials = len(trial_types)
-    licks = [None] * n_trials
-    play_tone_time = [None] * n_trials
-
-    for i in range(n_trials):
-        try:
-            trial_element = trials[0, i]
-            nested_structure = trial_element[0, 0]
-            trial_states = nested_structure['States'][0, 0]
-            states_array = np.empty((len(trial_states.dtype.names), 2), dtype = object)
-            for s, state in enumerate(trial_states.dtype.names):
-                states_array[s, 0] = state
-                states_array[s, 1] = np.ravel(trial_states[state])
-
-            # Convert to numpy array and remove rows where any element is NaN
-            states = np.array([row for row in states_array if not any(np.isnan(np.ravel(row[1])))])
-            play_tone_time
-            if 'Events' in nested_structure.dtype.names:
-                events = nested_structure['Events'][0, 0]
-
-                if 'HiFi1_1' in events.dtype.names:
-                    stim_t = np.min(events['HiFi1_1'][0])
-                else:
-                    stim_t = None
-                play_tone_time[i] = stim_t
-                if 'Port1In' in events.dtype.names and stim_t is not None:
-                    lick = events['Port1In'][0]
-                    lick_after_stim = lick[lick > stim_t]
-
-                    if lick_after_stim.size > 0:
-                        licks[i] = lick_after_stim - stim_t
-        except Exception as e:
-            print(f"Error processing trial {i}: {e}")
-
-    # Convert 'TrialTypes' and stimuli to a DataFrame
-    toneOnset_df = pd.DataFrame(play_tone_time, columns = ['ToneOnset'])
-    trialStartTimestamp_df = pd.DataFrame(trialStartTimestamp, columns = ['TrialStartTimestamp'])
-    trial_types_df = pd.DataFrame(trial_types, columns = ['TrialType'])
-    stimuli_df = pd.DataFrame(stimuli, columns = ['Stimuli'])
-    outcome_df = pd.DataFrame(outcome, columns = ['Outcome'])
-    outcomeName_df = pd.DataFrame(outcomeName, columns = ['OutcomeName'])
-
-    # Convert licks to a DataFrame, handling None values properly
-    licks_array = np.array([x if isinstance(x, np.ndarray) else np.nan for x in licks], dtype = object)
-    licks_df = pd.DataFrame(licks_array, columns = ['licks'])
-
-    trial_df = pd.concat(
-        [trialStartTimestamp_df, trial_types_df, stimuli_df, outcome_df, outcomeName_df, toneOnset_df, licks_df],
-        axis = 1)
-
-    return trial_df
-
-
-import numpy as np
-import matplotlib.pyplot as plt
-from scipy.stats import ttest_rel
-
-
-def analyze_aligned_neuron(aligned_spike_trials, unit_idx,
-                           baseline_window=(-1, 0), response_window=(0, 1),
-                           bin_size=0.01, alpha=0.05):
+def read_sample_rate(folder):
     """
-    Analyzes a single neuron's response using spikes that are already aligned to event onset (time 0).
-
+    Reads the sample rate from a .meta file in the given folder. If not found, returns a default of 30000 Hz.
     Parameters:
-        aligned_spike_trials : list of 1D arrays or lists
-            Each element contains the spike times (in seconds) for one trial, already aligned
-            so that event onset is at 0.
-        baseline_window : tuple
-            Time window (in seconds) for the baseline period (default is (-1, 0)).
-        response_window : tuple
-            Time window (in seconds) for the response period (default is (0, 1)).
-        bin_size : float
-            Bin size in seconds for the PSTH (default is 0.01 sec).
-        alpha : float
-            Significance level for the test (default is 0.05).
-
+        folder (str): Path to the folder containing the .meta file.
     Returns:
-        p_value : float
-            The p-value from the paired t-test comparing response and baseline firing rates.
-        response_higher : str
-            "higher" if response firing rate is greater, "lower" if less, "no significant difference" if p > alpha.
+        float: The sample rate in Hz.
     """
-    baseline_rates = []
-    response_rates = []
+    import glob
+    meta_files = glob.glob(os.path.join(folder, "*.meta"))
+    if meta_files:
+        with open(meta_files[0], 'r') as f:
+            for line in f:
+                if 'imSampRate' in line:
+                    return float(line.strip().split('=')[-1])
+    return 30000  # fallback default
 
-    # Loop over each trial
-    for trial_spikes in aligned_spike_trials:
-        trial_spikes = np.array(trial_spikes)
-        # Count spikes in the baseline and response windows
-        baseline_count = np.sum((trial_spikes >= baseline_window[0]) & (trial_spikes < baseline_window[1]))
-        response_count = np.sum((trial_spikes >= response_window[0]) & (trial_spikes < response_window[1]))
+def load_cluster_info(working_dir, data_dirs):
+    """
+    Loads cluster information from a unit_labels.tsv or cluster_info.tsv file in the working directory.
+    Parameters:
+        working_dir (str): Path to the working directory.
+        data_dirs (str): Path to the data directory (used as fallback).
+    Returns:
+        pd.DataFrame or None: DataFrame with cluster info, or None if not found.
+    """
+    try:
+        label_dir = os.path.join(working_dir, "bombcell", "unit_labels.tsv")
+    except Exception:
+        label_dir = os.path.join(data_dirs, "cluster_info.tsv")
+    if os.path.isfile(label_dir):
+        return pd.read_csv(label_dir, sep='\t')
+    return None
 
-        # Convert counts to firing rates (Hz) by dividing by the window duration
-        baseline_rate = baseline_count / (baseline_window[1] - baseline_window[0])
-        response_rate = response_count / (response_window[1] - response_window[0])
+def extract_spike_matrices(spikes_times, spikes_clusters, cluster_info):
+    """
+    Extracts spike times for good, MUA, and non-somatic clusters from the provided cluster info.
+    Parameters:
+        spikes_times (np.ndarray): Array of spike times (seconds).
+        spikes_clusters (np.ndarray): Array of cluster assignments for each spike.
+        cluster_info (pd.DataFrame): DataFrame with cluster metadata and UnitType.
+    Returns:
+        tuple: (spike_matrix, good_spike_matrix, mua_spike_matrix, non_somatic_spike_matrix, all_cluster_indices)
+    """
+    good_clusters_index = cluster_info[cluster_info['UnitType'] == 1].index
+    mua_clusters_index = cluster_info[cluster_info['UnitType'] == 2].index
+    non_somatioc_index = cluster_info[cluster_info['UnitType'] == 3].index
+    all_cluster_indices = (
+        list(good_clusters_index) +
+        list(mua_clusters_index) +
+        list(non_somatioc_index)
+    )
+    spike_matrix = []
+    good_spike_matrix = []
+    mua_spike_matrix = []
+    non_somatic_spike_matrix = []
+    for idx, cluster_id in enumerate(all_cluster_indices):
+        cluster_spike_times = spikes_times[spikes_clusters == cluster_id]
+        spike_matrix.append(cluster_spike_times)
+        if idx < len(good_clusters_index):
+            good_spike_matrix.append(cluster_spike_times)
+        elif idx < len(good_clusters_index) + len(mua_clusters_index):
+            mua_spike_matrix.append(cluster_spike_times)
+        else:
+            non_somatic_spike_matrix.append(cluster_spike_times)
+    return spike_matrix, good_spike_matrix, mua_spike_matrix, non_somatic_spike_matrix, all_cluster_indices
 
-        baseline_rates.append(baseline_rate)
-        response_rates.append(response_rate)
+def bin_spike_matrix(spike_matrix, bins):
+    """
+    Bins spike times for each cluster into the provided time bins.
+    Parameters:
+        spike_matrix (list of np.ndarray): List of spike time arrays for each cluster.
+        bins (np.ndarray): Array of bin edges (seconds).
+    Returns:
+        np.ndarray: 2D array (clusters x bins) of spike counts.
+    """
+    n_bins = len(bins) - 1
+    binned = np.zeros((len(spike_matrix), n_bins), dtype=int)
+    for i, cluster_spikes in enumerate(spike_matrix):
+        if len(cluster_spikes) > 0:
+            counts, _ = np.histogram(cluster_spikes, bins=bins)
+            binned[i, :] = counts
+    return binned
 
-    baseline_rates = np.array(baseline_rates)
-    response_rates = np.array(response_rates)
+def save_spike_matrices(good, mua, non_somatic, good_path, mua_path, non_somatic_path):
+    """
+    Saves the good, MUA, and non-somatic spike matrices as numpy object arrays to the specified paths.
+    """
+    np.save(good_path, np.array(good, dtype=object))
+    np.save(mua_path, np.array(mua, dtype=object))
+    np.save(non_somatic_path, np.array(non_somatic, dtype=object))
 
-    # Perform a paired t-test comparing response and baseline firing rates
-    t_stat, p_value = ttest_rel(response_rates, baseline_rates)
+def load_spike_matrices(good_path, mua_path, non_somatic_path):
+    """
+    Loads the good, MUA, and non-somatic spike matrices from the specified numpy files.
+    Returns:
+        tuple: (good, mua, non_somatic) spike matrices as numpy arrays.
+    """
+    good = np.load(good_path, allow_pickle=True)
+    mua = np.load(mua_path, allow_pickle=True)
+    non_somatic = np.load(non_somatic_path, allow_pickle=True)
+    return good, mua, non_somatic
 
-    # Determine if response rate is higher or lower
-    if p_value < alpha:
-        response_higher = "1" if np.mean(response_rates) > np.mean(baseline_rates) else "-1"
-    else:
-        response_higher = "0"
+def peri_event_spike_matrix(spike_matrix, events_times, pre_event_ms=500, post_event_ms=500, bin_size_ms=1):
+    """
+    Extracts peri-event spike counts for each unit and event.
+    Parameters:
+        spike_matrix (list of np.ndarray): List of spike times for each unit.
+        events_times (np.ndarray): Array of event times (seconds).
+        pre_event_ms (int): Time before event (ms).
+        post_event_ms (int): Time after event (ms).
+        bin_size_ms (int): Bin size in ms.
+    Returns:
+        np.ndarray: Array of shape (n_units, n_events, n_timepoints) with spike counts per ms bin.
+    """
+    peri_event_window_ms = pre_event_ms + post_event_ms
+    n_timepoints = peri_event_window_ms // bin_size_ms
+    n_units = len(spike_matrix)
+    n_events = len(events_times)
+    peri_event_spikes = np.zeros((n_units, n_events, n_timepoints), dtype=int)
+    for unit_idx, spike_times in enumerate(spike_matrix):
+        for event_idx, event_time in enumerate(events_times):
+            window_start = event_time - pre_event_ms / 1000
+            window_end = event_time + post_event_ms / 1000
+            spikes_in_window = spike_times[(spike_times >= window_start) & (spike_times < window_end)]
+            spike_times_ms = ((spikes_in_window - event_time) * 1000).astype(int) + pre_event_ms
+            spike_times_ms = spike_times_ms[(spike_times_ms >= 0) & (spike_times_ms < n_timepoints)]
+            for t in spike_times_ms:
+                peri_event_spikes[unit_idx, event_idx, t] += 1
+    return peri_event_spikes
 
-    # # --- Plotting ---
-    # if p_value < 0.00005:
-    #     fig, (ax1, ax2) = plt.subplots(2, 1, figsize = (10, 8), sharex = True)
-    #
-    #     # Raster Plot
-    #     for i, trial_spikes in enumerate(aligned_spike_trials):
-    #         ax1.vlines(trial_spikes, i + 0.5, i + 1.5)
-    #     ax1.axvline(0, color = 'red', linestyle = '--', label = 'Event onset')
-    #     ax1.set_ylabel('Trial')
-    #     ax1.set_title(f'Raster Plot, unit: {unit_idx}')
-    #     ax1.legend()
-    #
-    #     # PSTH (Peri-Stimulus Time Histogram)
-    #     t_min = baseline_window[0]
-    #     t_max = response_window[1]
-    #     bins = np.arange(t_min, t_max + bin_size, bin_size)
-    #
-    #     # Concatenate spikes from all trials
-    #     all_spikes = np.concatenate([np.array(trial) for trial in aligned_spike_trials])
-    #     counts, edges = np.histogram(all_spikes, bins = bins)
-    #     # Convert counts to firing rate (Hz)
-    #     psth = counts / (len(aligned_spike_trials) * bin_size)
-    #
-    #     ax2.bar(edges[:-1], psth, width = bin_size, align = 'edge')
-    #     ax2.axvline(0, color = 'red', linestyle = '--', label = 'Event onset')
-    #     ax2.set_xlabel('Time (s)')
-    #     ax2.set_ylabel('Firing Rate (Hz)')
-    #     ax2.set_title(f'PSTH (p = {p_value:.3g}, {response_higher})')
-    #     ax2.legend()
-    #
-    #     plt.tight_layout()
-    #     plt.show()
+def load_spike_data(data_dir, sr):
+    """
+    Loads spike_times.npy and spike_clusters.npy from the given data_dir.
+    Args:
+        data_dir (str): Directory containing spike_times.npy and spike_clusters.npy
+        sr (float): Sample rate (not used here, but kept for compatibility)
+    Returns:
+        tuple: (spike_times, spike_clusters) as numpy arrays
+    """
+    spike_times_ms = np.load(os.path.join(data_dir, 'spike_times.npy')) / sr
+    spike_clusters = np.load(os.path.join(data_dir, 'spike_clusters.npy'))
+    return spike_times_ms, spike_clusters
 
-    return p_value, response_higher
+# --- Behavioral File Copy Function  ---
+def copy_behavioral_file_for_dir(parent_dir, df, spike_glx_col='spike glx file', behavioral_file_col='behavioral file'):
+    """
+    For a given parent_dir, check if any spikeglx file in the CSV is present in that directory.
+    If so, find the corresponding behavioral file and copy it to parent_dir if not already present.
+    Parameters:
+        parent_dir (str): Directory to check for spikeglx file and to copy behavioral file into.
+        df (pd.DataFrame): DataFrame containing experiment metadata.
+        spike_glx_col (str): Column name for spikeglx file in df.
+        behavioral_file_col (str): Column name for behavioral file in df.
+        root_directory (str): Root directory to search for behavioral files.
+    Returns:
+        str: Path to the behavioral file in the parent_dir (if copied or found).
+    """
+    
+    for idx, row in df.iterrows():
+        spikeglx_base = str(row[spike_glx_col]).strip()
+        spikeglx_name = f"catgt_{spikeglx_base}"
+        behavioral_full_name = str(row[behavioral_file_col]).strip()
+        behavioral_name = os.path.basename(behavioral_full_name)
+        if not spikeglx_name or not behavioral_full_name:
+            continue
+        if any(spikeglx_name in entry for entry in os.listdir(parent_dir)):
+            print(f"Spikeglx file found in {parent_dir}")
 
+            behav_file = None
+            for dirpath, _, filenames in os.walk(parent_dir):
+                if behavioral_name in filenames:
+                    behav_file = os.path.join(dirpath, behavioral_name)
+                    print(f"Behavioral file found in {dirpath}")
+                    break
+            if not behav_file:
+                dest_path = parent_dir
+                shutil.copy2(behavioral_full_name, dest_path)
+                print(f"Copied {behavioral_full_name} to {dest_path}")
+                behav_file = os.path.join(dest_path, behavioral_name)
+                break
 
-working_dir = r"Z:\Shared\Amichai\NPXL\Recs\Group3"
+    return behav_file
+# /ems/elsc-labs/mizrahi-a/Shared/
+# --- Main Analysis Loop ---
+def main():
+    """
+    Main analysis workflow. Finds KS folders, copies behavioral files, and (optionally) runs further analysis for each folder.
+    """
+    root_directory = r"Z:\Shared\Amichai\NPXL\Recs\group5"
+    csv_path = r"Z:\Shared\Amichai\Code\DB\users_data\Amichai\NPXL recordings _experimental_data.csv"
+    df_csv = pd.read_csv(csv_path)
+    ks_folders = find_ks_folders(root_directory)
+    for working_dir in ks_folders:
+        try:
+            working_dir = ks_folders[3]
+            os.chdir(working_dir)
+            print(working_dir)
+            import glob
+            parent_dir = os.path.dirname(working_dir)
+            probe_id = working_dir[-1]
+            data_dir = os.path.join(working_dir, f"imec{probe_id}_ks4")
+            behavioral_file_path = copy_behavioral_file_for_dir(parent_dir, df_csv)
+            try:
+                trial_types_df, raw_events_df, session_date, session_time, trial_settings, notes , licks, states, stimuli, Unique_Stimuli_Values, tones_per_class, boundaries = load_mat_file(behavioral_file_path)
+                combined_row_df = create_single_row_with_outcome(behavioral_file_path, trial_types_df, raw_events_df, session_date,
+                                                             session_time, trial_settings, notes, licks, states,
+                                                             Unique_Stimuli_Values, tones_per_class, boundaries)
+                print(combined_row_df)
+            except Exception as e:
+                print(f"Error processing {behavioral_file_path}: {e}")
 
-preprocess(working_dir, spike_sample_rate = 30000, events_sample_rate = 20000, active_unit_threshold = 15,
-           window_in_sec = 1, rerun = False)
+            # --- Load Spikeglx Data ---
+            sr = read_sample_rate(working_dir)
+            spike_times, spike_clusters = load_spike_data(data_dir, sr)
+            spike_matrix, good_spike_matrix, mua_spike_matrix, non_somatic_spike_matrix, all_cluster_indices = extract_spike_matrices(spike_times, spike_clusters, cluster_info)
+            peri_event_spikes = peri_event_spike_matrix(spike_matrix, stimuli['stimulus_onset'], pre_event_ms=500, post_event_ms=500, bin_size_ms=1)
+            print(peri_event_spikes)
 
+        except Exception as e:
+            print(f"Error processing {working_dir}: {e}")
+            continue
+
+if __name__ == "__main__":
+    main()
 

@@ -6,7 +6,7 @@ import os as os
 from tqdm import tqdm
 import re as re
 
-file_path = "Z:/Shared/Amichai/Behavior/data/Group_4\A6\GNG\Session Data\A6_GNG_20250408_085814.mat"
+# file_path = "Z:/Shared/Amichai/Behavior/data/Group_4\A6\GNG\Session Data\A6_GNG_20250408_085814.mat"
 def load_mat_file(file_path):
     # Load the .mat file
 
@@ -325,59 +325,60 @@ def get_csv_path(directory_path):
     # if there is a underscore in the group name, replace it with a space
     if '_' in group_name:
         group_name = group_name.replace('_', ' ')
-    csv_path = fr'G:\My Drive\Study\Lab\Projects\Code_temp\users_data\Amichai\{group_name}_experimental_data.csv'
+    csv_path = fr'Z:\Shared\Amichai\Code\DB\users_data\Amichai\{group_name}_experimental_data.csv'
     return group_name, csv_path
 
 
 
-group_name, csv_path = get_csv_path(directory_path)
-# Load the existing CSV into a DataFrame
-if os.path.exists(csv_path):
-    df = pd.read_csv(csv_path)
-else:
-    # Create an empty DataFrame with a 'file_path' column if the CSV doesn't exist
-    df = pd.DataFrame(columns = ['Checkbox'])
-
-    # add the group to the project list
-    project_list = pd.read_csv(r"G:\My Drive\Study\Lab\Projects\Code_temp\users_data\Amichai\projects_list.csv")
-
-    # check if the group is already in the project list
-    if group_name in project_list['Project Name'].values:
-        pass
+if __name__ == "__main__":
+    group_name, csv_path = get_csv_path(directory_path)
+    # Load the existing CSV into a DataFrame
+    if os.path.exists(csv_path):
+        df = pd.read_csv(csv_path)
     else:
-        new_project = pd.DataFrame({'Project Name':        group_name, 'Project Type': "['Behavior-Bpod GUI']",
-                                    'Project Description': 'Automatically added group'}, index = [0])
-        project_list = pd.concat([project_list, new_project], ignore_index = True)
-        project_list.to_csv(r"G:\My Drive\Study\Lab\Projects\Code_temp\users_data\Amichai\projects_list.csv",
-                            index = False)
+        # Create an empty DataFrame with a 'file_path' column if the CSV doesn't exist
+        df = pd.DataFrame(columns = ['Checkbox'])
 
-# Get all .mat files in 'Session Data' directories
-mat_files_list = find_mat_files_in_session_data(directory_path)
+        # add the group to the project list
+        project_list = pd.read_csv(r"Z:\Shared\Amichai\Code\DB\users_data\Amichai\\projects_list.csv")
 
-# Process each .mat file if not already done
-for mat_file in tqdm(mat_files_list, desc = "Processing .mat files"):
-    if not is_processed(mat_file):
-        trial_types_df, raw_events_df, session_date, session_time, trial_settings, notes, licks, states,  stimuli, Unique_Stimuli_Values, tones_per_class, boundaries = load_mat_file(mat_file)
-        if len(trial_types_df) < 50 or "Fake" in mat_file:
-            continue
+        # check if the group is already in the project list
+        if group_name in project_list['Project Name'].values:
+            pass
+        else:
+            new_project = pd.DataFrame({'Project Name':        group_name, 'Project Type': "['Behavior-Bpod GUI']",
+                                        'Project Description': 'Automatically added group'}, index = [0])
+            project_list = pd.concat([project_list, new_project], ignore_index = True)
+            project_list.to_csv(r"Z:\Shared\Amichai\Code\DB\users_data\Amichai\projects_list.csv",
+                                index = False)
 
-        combined_row_df = create_single_row_with_outcome(mat_file, trial_types_df, raw_events_df, session_date,
-                                                         session_time, trial_settings, notes, licks, states,
-                                                         Unique_Stimuli_Values, tones_per_class, boundaries)
-        df = save_combined_data_to_df(df, combined_row_df)
-        mark_as_processed(mat_file)  # Mark the file as processed
-#
-# Drop rows that have NaN values in the 'SessionDate' column
-df = df.dropna(subset = ['SessionDate'])
-# Convert 'SessionDate' to regular Python string type before converting to datetime
-df['SessionDate'] = df['SessionDate'].apply(lambda x: str(x))
+    # Get all .mat files in 'Session Data' directories
+    mat_files_list = find_mat_files_in_session_data(directory_path)
 
-# Convert to datetime
-df['SessionDate'] = pd.to_datetime(df['SessionDate'])
+    # Process each .mat file if not already done
+    for mat_file in tqdm(mat_files_list, desc = "Processing .mat files"):
+        if not is_processed(mat_file):
+            trial_types_df, raw_events_df, session_date, session_time, trial_settings, notes, licks, states,  stimuli, Unique_Stimuli_Values, tones_per_class, boundaries = load_mat_file(mat_file)
+            if len(trial_types_df) < 50 or "Fake" in mat_file:
+                continue
 
-# Sort the DataFrame by session date and time
-df = df.sort_values(by = ['SessionDate', 'SessionTime']).reset_index(drop = True)
+            combined_row_df = create_single_row_with_outcome(mat_file, trial_types_df, raw_events_df, session_date,
+                                                             session_time, trial_settings, notes, licks, states,
+                                                             Unique_Stimuli_Values, tones_per_class, boundaries)
+            df = save_combined_data_to_df(df, combined_row_df)
+            mark_as_processed(mat_file)  # Mark the file as processed
+    #
+    # Drop rows that have NaN values in the 'SessionDate' column
+    df = df.dropna(subset = ['SessionDate'])
+    # Convert 'SessionDate' to regular Python string type before converting to datetime
+    df['SessionDate'] = df['SessionDate'].apply(lambda x: str(x))
 
-# Save the updated DataFrame back to the CSV
-df.to_csv(csv_path, index = False)
+    # Convert to datetime
+    df['SessionDate'] = pd.to_datetime(df['SessionDate'])
+
+    # Sort the DataFrame by session date and time
+    df = df.sort_values(by = ['SessionDate', 'SessionTime']).reset_index(drop = True)
+
+    # Save the updated DataFrame back to the CSV
+    df.to_csv(csv_path, index = False)
 
