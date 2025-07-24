@@ -18,6 +18,20 @@ c_go = "#006837"  # Dark Green
 c_nogo = "#A50026"  # Dark Red
 
 COLOR_D_PRIME = "#FF7F0E"  # Orange
+# ─── Outcome Colors ─────────────────────────────────────────────
+COLOR_HIT = "#008000"      # Green
+COLOR_CR = "#1E90FA"       # Dodger Blue
+COLOR_FA = "#FF9100"       # Orange
+COLOR_MISS = "#B22222"     # Firebrick Red
+
+OUTCOME_COLOR_MAP = {
+    "Hit": COLOR_HIT,
+    "CR": COLOR_CR,
+    "FA": COLOR_FA,
+    "False Alarm": COLOR_FA,
+    "Miss": COLOR_MISS,
+}
+
 # ─── Line Width ─────────────────────────────────────────────────
 LINE_WIDTH_THIN     = 0.5
 LINE_WIDTH_MEDIUM  = 1.0

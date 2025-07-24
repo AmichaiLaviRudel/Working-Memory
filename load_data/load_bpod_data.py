@@ -246,7 +246,7 @@ def find_mat_files_in_session_data(directory):
     # Walk through the directory
     for root, dirs, files in os.walk(directory):
         # Check if 'Session Data' is in the current directory path
-        if 'Session Data' in root:
+        if 'Session Data' in root and 'GNG' in os.path.dirname(root):
             for file in files:
                 if file.endswith('.mat'):
                     # Add the full path of the .mat file to the list

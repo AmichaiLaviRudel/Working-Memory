@@ -1,4 +1,20 @@
 Project Name,Project Type,Project Description,Status - traning,Status - histology,Status - recs
+Group 5,['Behavior-Bpod GUI'],"Date of Birth: ----
+
+Subjects: 3 Male C57 mice
+
+Age at Arrival: from the breading
+
+Headbar Implantation: Performed at 6 weeks of age
+
+Post-Surgery Break: 2 week recovery period due age
+
+System Calibration: Done - first time at the acostic chamber
+
+Novice Recordings: 16-17/7
+
+1B Recordings:
+",,,
 Group 4,['Behavior-Bpod GUI'],"Date of Birth: 12/01/25
 
 Subjects: 6 Male C57 mice
@@ -18,12 +34,12 @@ Novice Recordings:
 Conducted on 26–27/03: A2, A3, A4, A5
 
 1B Recordings:
-A3: 1/4",,,
+A3: 1/4",,,in the bad drive
 Group 3,['Behavior-Bpod GUI'],"DOB: 22/9/24; 4 Males; C57; I got them at 7 weeks;
 all the monitoring was earaesd :(
 16/2 - m4 carniotomy
-17/2 - m5 carniotomy",Ended,Waiting for perfusion,in the hive
-Group 1,['Behavior-Bpod GUI'],DOB:XXX 5 Males; C57; I got them at 7 weeks;,End,Socruse,spike GLX file
+17/2 - m5 carniotomy",Ended,Waiting for perfusion,in the bad drive
+Group 1,['Behavior-Bpod GUI'],DOB:XXX 5 Males; C57; I got them at 7 weeks;,End,Socruse,in the bad drive
 Group 2,['Behavior-Bpod GUI'],"DOB: 27/10/24. ; 4 Males; C57;
 1 mouse died at the headbar installation
 3 mice start the training at 1/5/25
@@ -33,4 +49,3 @@ Group 2,['Behavior-Bpod GUI'],"DOB: 27/10/24. ; 4 Males; C57;
 21/1: Coulden't learn - End of trianing
 22/1: G2A1 - anesthetized recordings OFC and ACx",Finish - 21/1/25,in PFA,
 the dream team,['Behavior-Bpod GUI'],Automatically added group,,,
-data,['Behavior-Bpod GUI'],Automatically added group,,,

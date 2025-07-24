@@ -67,35 +67,37 @@ def load_cluster_info(working_dir, data_dirs):
 def extract_spike_matrices(spikes_times, spikes_clusters, cluster_info):
     """
     Extracts spike times for good, MUA, and non-somatic clusters from the provided cluster info.
+    Returns a [cluster x spike times] matrix, padded with 0 (not np.nan), and the cluster metadata for each row.
     Parameters:
         spikes_times (np.ndarray): Array of spike times (seconds).
         spikes_clusters (np.ndarray): Array of cluster assignments for each spike.
         cluster_info (pd.DataFrame): DataFrame with cluster metadata and UnitType.
     Returns:
-        tuple: (spike_matrix, good_spike_matrix, mua_spike_matrix, non_somatic_spike_matrix, all_cluster_indices)
+        np.ndarray: [n_clusters x max_spikes] array, padded with 0.
+        list of dict: cluster metadata (including index) for each row of the spike_matrix.
     """
+    # Get cluster indices for each type
     good_clusters_index = cluster_info[cluster_info['UnitType'] == 1].index
     mua_clusters_index = cluster_info[cluster_info['UnitType'] == 2].index
-    non_somatioc_index = cluster_info[cluster_info['UnitType'] == 3].index
-    all_cluster_indices = (
-        list(good_clusters_index) +
-        list(mua_clusters_index) +
-        list(non_somatioc_index)
-    )
-    spike_matrix = []
-    good_spike_matrix = []
-    mua_spike_matrix = []
-    non_somatic_spike_matrix = []
-    for idx, cluster_id in enumerate(all_cluster_indices):
-        cluster_spike_times = spikes_times[spikes_clusters == cluster_id]
-        spike_matrix.append(cluster_spike_times)
-        if idx < len(good_clusters_index):
-            good_spike_matrix.append(cluster_spike_times)
-        elif idx < len(good_clusters_index) + len(mua_clusters_index):
-            mua_spike_matrix.append(cluster_spike_times)
-        else:
-            non_somatic_spike_matrix.append(cluster_spike_times)
-    return spike_matrix, good_spike_matrix, mua_spike_matrix, non_somatic_spike_matrix, all_cluster_indices
+    non_somatic_index = cluster_info[cluster_info['UnitType'] == 3].index
+    ordered_indices = list(good_clusters_index) + list(mua_clusters_index) + list(non_somatic_index)
+    # Collect spike times for each cluster
+    spike_lists = []
+    all_cluster_indices = []
+    for idx in ordered_indices:
+        cluster_spike_times = spikes_times[spikes_clusters == idx]
+        spike_lists.append(cluster_spike_times)
+        meta = cluster_info.loc[idx].to_dict()
+        meta['cluster_index'] = idx
+        all_cluster_indices.append(meta)
+    # Find the maximum number of spikes in any cluster
+    max_len = max((len(s) for s in spike_lists), default=0)
+    # Pad each cluster's spike times with 0 to max_len
+    spike_matrix = np.zeros((len(spike_lists), max_len))
+    for i, spikes in enumerate(spike_lists):
+        if len(spikes) > 0:
+            spike_matrix[i, :len(spikes)] = spikes
+    return spike_matrix, all_cluster_indices
 
 def bin_spike_matrix(spike_matrix, bins):
     """
@@ -114,29 +116,57 @@ def bin_spike_matrix(spike_matrix, bins):
             binned[i, :] = counts
     return binned
 
-def save_spike_matrices(good, mua, non_somatic, good_path, mua_path, non_somatic_path, spike_matrix, spike_matrix_path, stimuli_outcome_df, stimuli_outcome_csv_path):
+def save_spike_matrices(folder, spike_matrix, stimuli_outcome_df, all_cluster_indices):
     """
-    Saves the good, MUA, non-somatic spike matrices, the full spike_matrix, and the stimuli_outcome_df to the specified paths.
+    Splits the spike_matrix into good, MUA, and non-somatic cell types based on all_cluster_indices (list of dicts),
+    and saves each as a separate .npy file. Also saves the full spike_matrix and the stimuli_outcome_df.
     """
-    np.save(good_path, np.array(good, dtype=object))
-    np.save(mua_path, np.array(mua, dtype=object))
-    np.save(non_somatic_path, np.array(non_somatic, dtype=object))
-    np.save(spike_matrix_path, np.array(spike_matrix, dtype=object))
-    stimuli_outcome_df.to_csv(stimuli_outcome_csv_path, index=False)
+    if not os.path.exists(folder):
+        os.makedirs(folder)
 
-def load_spike_matrices(good_path, mua_path, non_somatic_path):
+    # Convert all_cluster_indices to DataFrame for easy filtering
+    import pandas as pd
+    meta_df = pd.DataFrame(all_cluster_indices)
+    good_mask = meta_df['UnitType'] == 1
+    mua_mask = meta_df['UnitType'] == 2
+    non_somatic_mask = meta_df['UnitType'] == 3
+
+    good_matrix = spike_matrix[good_mask.values, :] if good_mask.any() else np.empty((0, spike_matrix.shape[1]))
+    mua_matrix = spike_matrix[mua_mask.values, :] if mua_mask.any() else np.empty((0, spike_matrix.shape[1]))
+    non_somatic_matrix = spike_matrix[non_somatic_mask.values, :] if non_somatic_mask.any() else np.empty((0, spike_matrix.shape[1]))
+
+    np.save(os.path.join(folder, "good_matrix.npy"), good_matrix)
+    np.save(os.path.join(folder, "mua_matrix.npy"), mua_matrix)
+    np.save(os.path.join(folder, "non_somatic_matrix.npy"), non_somatic_matrix)
+    np.save(os.path.join(folder, "spike_matrix.npy"), spike_matrix)
+    stimuli_outcome_df.to_csv(os.path.join(folder, "stimuli_outcome_df.csv"), index=False)
+
+def load_spike_matrices(folder, type="good"):
     """
-    Loads the good, MUA, and non-somatic spike matrices from the specified numpy files.
+    Loads the good, MUA, non-somatic spike matrices, the full spike_matrix, and the stimuli_outcome DataFrame from the specified files.
     Returns:
-        tuple: (good, mua, non_somatic) spike matrices as numpy arrays.
+        tuple: (good, mua, non_somatic, spike_matrix, stimuli_outcome_df)
     """
-    good = np.load(good_path, allow_pickle=True)
-    mua = np.load(mua_path, allow_pickle=True)
-    non_somatic = np.load(non_somatic_path, allow_pickle=True)
-    return good, mua, non_somatic
+    if type == "good":
+        load_path   = os.path.join(folder, "good.npy")
+    elif type == "mua":
+        load_path = os.path.join(folder, "mua.npy")
+    elif type == "non_somatic":
+        load_path = os.path.join(folder, "non_somatic.npy")
+    elif type == "all":
+        load_path = os.path.join(folder, "spike_matrix.npy")
+    else:
+        raise ValueError(f"Invalid type: {type}, the only options are 'good', 'mua', 'non_somatic', 'all'")
+    
+    stimuli_outcome_df = pd.read_csv(os.path.join(folder, "stimuli_outcome_df.csv"))
+    if os.path.isfile(load_path):
+        spike_matrix = np.load(load_path, allow_pickle=True)
+    else:
+        spike_matrix = None
+    return spike_matrix, stimuli_outcome_df 
 
 
-def load_spike_data(data_dir, sr):
+def load_spike_data(data_dir):
     """
     Loads spike_times.npy and spike_clusters.npy from the given data_dir.
     Args:
@@ -145,7 +175,7 @@ def load_spike_data(data_dir, sr):
     Returns:
         tuple: (spike_times, spike_clusters) as numpy arrays
     """
-    spike_times_ms = np.load(os.path.join(data_dir, 'spike_times.npy')) / sr
+    spike_times_ms = np.load(os.path.join(data_dir, 'spike_times.npy')) 
     spike_clusters = np.load(os.path.join(data_dir, 'spike_clusters.npy'))
     return spike_times_ms, spike_clusters
 
@@ -213,17 +243,15 @@ def copy_behavioral_file_for_dir(parent_dir, df, spike_glx_col='spike glx file',
         if not spikeglx_name or not behavioral_full_name:
             continue
         if any(spikeglx_name in entry for entry in os.listdir(parent_dir)):
-            print(f"Spikeglx file found in {parent_dir}")
 
             for dirpath, _, filenames in os.walk(parent_dir):
                 if behavioral_name in filenames:
                     behav_file = os.path.join(dirpath, behavioral_name)
-                    print(f"Behavioral file found in {dirpath}")
                     break
             if not behav_file:
                 dest_path = parent_dir
                 shutil.copy2(behavioral_full_name, dest_path)
-                print(f"Copied {behavioral_full_name} to {dest_path}")
+                print(f"Copied {behavioral_name} to {spikeglx_name}")
                 behav_file = os.path.join(dest_path, behavioral_name)
             # Update the parent_dir column for this row
             if 'current_dir' in df.columns:
@@ -236,14 +264,69 @@ def copy_behavioral_file_for_dir(parent_dir, df, spike_glx_col='spike glx file',
             break
     return behav_file
 
+def spike_times_to_binary_matrix(spike_matrix, t_start, t_end, bin_size=0.001):
+    """
+    Converts a list of spike times per unit to a binary matrix [units x time_bins].
+    Each entry is 1 if there is a spike in the bin, 0 otherwise.
+
+    Args:
+        spike_matrix (list of np.ndarray): List of arrays, each with spike times for a unit (in seconds).
+        t_start (float): Start time (in seconds).
+        t_end (float): End time (in seconds).
+        bin_size (float): Bin size in seconds (default: 1 ms).
+
+    Returns:
+        np.ndarray: Binary matrix of shape [units x time_bins].
+        np.ndarray: The bin edges.
+    """
+    n_units = len(spike_matrix)
+    bins = np.arange(t_start, t_end + bin_size, bin_size)
+    n_bins = len(bins) - 1
+    binary_matrix = np.zeros((n_units, n_bins), dtype=int)
+    for i, spikes in enumerate(spike_matrix):
+        if len(spikes) > 0:
+            counts, _ = np.histogram(spikes, bins=bins)
+            binary_matrix[i, :] = (counts > 0).astype(int)
+    return binary_matrix, bins
+
+def spike_times_to_firing_rate_matrix(spike_matrix, t_start, t_end, bin_size=0.01):
+    """
+    Converts a list of spike times per unit to a firing rate matrix [units x time_bins].
+    Each entry is the firing rate (spikes per second) in that bin.
+
+    Args:
+        spike_matrix (list of np.ndarray): List of arrays, each with spike times for a unit (in seconds).
+        t_start (float): Start time (in seconds).
+        t_end (float): End time (in seconds).
+        bin_size (float): Bin size in seconds.
+
+    Returns:
+        np.ndarray: Firing rate matrix of shape [units x time_bins].
+        np.ndarray: The bin edges.
+    """
+    n_units = len(spike_matrix)
+    bins = np.arange(t_start, t_end + bin_size, bin_size)
+    n_bins = len(bins) - 1
+    firing_rate_matrix = np.zeros((n_units, n_bins), dtype=float)
+    for i, spikes in enumerate(spike_matrix):
+        if len(spikes) > 0:
+            counts, _ = np.histogram(spikes, bins=bins)
+            firing_rate_matrix[i, :] = counts / bin_size  # spikes per second
+    return firing_rate_matrix, bins
+
+
 
 # --- Main Analysis Loop ---
 def main():
     """
     Main analysis workflow. Finds KS folders, copies behavioral files, and (optionally) runs further analysis for each folder.
     """
+    rerun = True
     root_directory = r"Z:\Shared\Amichai\NPXL\Recs\group5"
-    csv_path = r"Z:\Shared\Amichai\Code\DB\users_data\Amichai\NPXL recordings _experimental_data.csv"
+    try:
+        csv_path = st.session_state.npxl_monitoring_path
+    except Exception:
+        csv_path = r"Z:\Shared\Amichai\Code\DB\users_data\Amichai\NPXL recordings _experimental_data.csv"
     df_csv = pd.read_csv(csv_path)
     ks_folders = find_ks_folders(root_directory)
     for working_dir in ks_folders:
@@ -252,23 +335,33 @@ def main():
             parent_dir = os.path.dirname(working_dir)
             probe_id = working_dir[-1]
             data_dir = os.path.join(working_dir, f"imec{probe_id}_ks4")
+            output_dir = os.path.join(working_dir, "analysis_output")
             behavioral_file_path = copy_behavioral_file_for_dir(parent_dir, df_csv, csv_path=csv_path)
+            
+            if not os.path.exists(output_dir) or rerun:
 
-            try:
-                trial_types_df, raw_events_df, session_date, session_time, trial_settings, notes , licks, states, stimuli, Unique_Stimuli_Values, tones_per_class, boundaries = load_mat_file(behavioral_file_path)
-                combined_row_df = create_single_row_with_outcome(behavioral_file_path, trial_types_df, raw_events_df, session_date,
-                                                             session_time, trial_settings, notes, licks, states,
-                                                             Unique_Stimuli_Values, tones_per_class, boundaries)
-            except Exception as e:
-                print(f"Error processing {behavioral_file_path}: {e}")
+                try:
+                    trial_types_df, raw_events_df, session_date, session_time, trial_settings, notes , licks, states, stimuli, Unique_Stimuli_Values, tones_per_class, boundaries = load_mat_file(behavioral_file_path)
+                    combined_row_df = create_single_row_with_outcome(behavioral_file_path, trial_types_df, raw_events_df, session_date,
+                                                                session_time, trial_settings, notes, licks, states,
+                                                                Unique_Stimuli_Values, tones_per_class, boundaries)
+                except Exception as e:
+                    print(f"Error processing {behavioral_file_path}: {e}")
 
-            # --- Load Spikeglx Data ---
-            sr = read_sample_rate(working_dir)
-            spike_times, spike_clusters = load_spike_data(data_dir, sr)
-            cluster_info = load_cluster_info(working_dir, data_dir)
-            spike_matrix, good_spike_matrix, mua_spike_matrix, non_somatic_spike_matrix, all_cluster_indices = extract_spike_matrices(spike_times, spike_clusters, cluster_info)
-            stimuli_outcome_df = couple_stimuli_outcome_and_times(parent_dir, stimuli, combined_row_df["Outcomes"].iloc[0])
-            save_spike_matrices(good_spike_matrix, mua_spike_matrix, non_somatic_spike_matrix, data_dir, data_dir, data_dir, spike_matrix, os.path.join(data_dir, 'spike_matrix.npy'), stimuli_outcome_df, os.path.join(data_dir, 'stimuli_outcome_df.csv'))
+                # --- Load Spikeglx Data ---
+                sr = read_sample_rate(working_dir)
+                spike_times_sr, spike_clusters = load_spike_data(data_dir)
+                cluster_info = load_cluster_info(working_dir, data_dir)
+                spike_times_sec = spike_times_sr / sr # convert to seconds
+                spike_matrix, all_cluster_indices = extract_spike_matrices(spike_times_sec, spike_clusters, cluster_info) 
+                # Convert spike times to firing rate matrix
+                all_spikes = np.concatenate([s for s in spike_matrix if len(s) > 0])
+                t_start = np.floor(all_spikes.min()) 
+                t_end = np.ceil(all_spikes.max()) 
+                firing_rate_matrix, bins = spike_times_to_firing_rate_matrix(spike_matrix, t_start, t_end, bin_size=0.01)
+                stimuli_outcome_df = couple_stimuli_outcome_and_times(parent_dir, stimuli, combined_row_df["Outcomes"].iloc[0])
+
+                save_spike_matrices(output_dir, firing_rate_matrix, stimuli_outcome_df, all_cluster_indices)
         except Exception as e:
             print(f"Error processing {working_dir}: {e}")
             continue

@@ -1,6 +1,7 @@
 from Analysis.GNG_bpod_analysis.psychometric_curves import *
 from Analysis.GNG_bpod_analysis.metric import *
 from Analysis.GNG_bpod_analysis.GNG_bpod_general import *
+from Analysis.GNG_bpod_analysis.colors import OUTCOME_COLOR_MAP
 
 import re
 import ast
@@ -374,8 +375,8 @@ def learning_curve(selected_data, index=0):
         x = alt.X('index:Q', title = 'Trials'),
         y = alt.Y('Value:Q', title = 'Cumulative Responses'),
         color = alt.Color('Response Type:N', scale = alt.Scale(
-            domain = ['Hit', 'CR', 'FA', 'Miss'],
-            range = ["#008000", '#1E90FA', '#FF9100', '#B22222']  # Custom colors
+            domain = list(OUTCOME_COLOR_MAP.keys()),
+            range = [OUTCOME_COLOR_MAP[k] for k in OUTCOME_COLOR_MAP.keys()]
         )),
         tooltip = ['index', 'Response Type', 'Value']
     ).properties(

@@ -2,12 +2,16 @@ import streamlit as st
 import os
 import pandas as pd
 
+
+
 def initialize_session_state():
     # Path and user path
     if 'path' not in st.session_state:
         st.session_state.path = r"Z:\Shared\Amichai\Code\DB"
     if 'user_path' not in st.session_state:
         st.session_state.user_path = os.path.join(st.session_state.path, "users_data", "Amichai")
+    if 'npxl_monitoring_path' not in st.session_state:
+        st.session_state.npxl_monitoring_path = os.path.join(st.session_state.user_path, "NPXL recordings _experimental_data.csv")
 
     # Project type options
     if 'Project_type_options' not in st.session_state:
