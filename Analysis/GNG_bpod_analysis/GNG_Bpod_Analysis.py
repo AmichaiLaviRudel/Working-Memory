@@ -34,9 +34,17 @@ def gng_bpod_analysis(project_data, index):
             st.text(traceback.format_exc())
 
         try:
-            process_and_plot_lick_data(project_data, index)
+            df_go_first_licks, df_no_go_first_licks = process_and_plot_lick_data(project_data, index)
         except  Exception as e:
             st.warning(f"something went wrong with this graph :|\n\n{e}")
+            st.text(traceback.format_exc())
+            df_first_licks = None
+            
+        try:
+            st.subheader("First Lick Latency Analysis")
+            plot_first_lick_latency(project_data, index, df_go_first_licks, df_no_go_first_licks)
+        except Exception as e:
+            st.warning(f"something went wrong with latency analysis :|\n\n{e}")
             st.text(traceback.format_exc())
 
     with tab3:

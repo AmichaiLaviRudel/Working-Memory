@@ -245,8 +245,6 @@ def process_and_plot_lick_data(project_data, index):
     go_licks = licks[go_trial]
     no_go_licks = licks[no_go_trial]
 
-
-
     # Filter valid Go and No-Go licks
     filtered_go_licks = filter_valid_arrays(go_licks)
     filtered_no_go_licks = filter_valid_arrays(no_go_licks)
@@ -258,6 +256,43 @@ def process_and_plot_lick_data(project_data, index):
     # Generate new trial indices for Go and No-Go
     df_go_raster = prepare_raster_data(filtered_go_licks, "Go", start_index=1)
     df_nogo_raster = prepare_raster_data(filtered_no_go_licks, "No-Go", start_index=len(filtered_go_licks) + 1)
+
+    # Calculate first lick times for each trial
+    go_first_lick_times = []
+    no_go_first_lick_times = []
+    
+    # Process Go trials
+    if not df_go_raster.empty:
+        for trial_idx in df_go_raster["Trial Index"].unique():
+            trial_licks = df_go_raster[df_go_raster["Trial Index"] == trial_idx]["Time"].values
+            if len(trial_licks) > 0:
+                first_lick_time = trial_licks[0]  # First lick in this trial
+                go_first_lick_times.append({
+                    "Trial Index": trial_idx,
+                    "Trial Type": "Go",
+                    "First Lick Time (s)": first_lick_time
+                })
+    
+    # Process NoGo trials
+    if not df_nogo_raster.empty:
+        for trial_idx in df_nogo_raster["Trial Index"].unique():
+            trial_licks = df_nogo_raster[df_nogo_raster["Trial Index"] == trial_idx]["Time"].values
+            if len(trial_licks) > 0:
+                first_lick_time = trial_licks[0]  # First lick in this trial
+                no_go_first_lick_times.append({
+                    "Trial Index": trial_idx,
+                    "Trial Type": "NoGo",
+                    "First Lick Time (s)": first_lick_time
+                })
+    
+    # Create DataFrames for first lick times
+    df_go_first_licks = pd.DataFrame(go_first_lick_times)
+    df_no_go_first_licks = pd.DataFrame(no_go_first_lick_times)
+    
+    # Combine both trial types
+    df_all_first_licks = pd.concat([df_go_first_licks, df_no_go_first_licks], ignore_index=True)
+    df_all_first_licks = df_all_first_licks.sort_values("Trial Index")
+
 
     # Create the Plotly subplot figure
     fig = make_subplots(
@@ -350,6 +385,8 @@ def process_and_plot_lick_data(project_data, index):
     # Display the subplot figure in Streamlit
     st.plotly_chart(fig, use_container_width=False)
 
+    return df_go_first_licks, df_no_go_first_licks
+
 # Prepare raster plot data
 def prepare_raster_data(licks_list, trial_type, start_index=1):
 
@@ -388,3 +425,68 @@ def learning_curve(selected_data, index=0):
 
     # Display the interactive chart in Streamlit
     st.altair_chart(chart, use_container_width = True)
+
+def plot_first_lick_latency(selected_data, index=0, df_go_first_licks=None, df_no_go_first_licks= None):
+    """
+    Measures the latency of the first lick in each trial and compares Go vs NoGo trials.
+    Creates a half violin plot to visualize the distribution of latencies.
+    
+    Args:
+        selected_data (pd.DataFrame): DataFrame containing experiment data
+        index (int): Index of the session to analyze
+        df_first_licks (pd.DataFrame): DataFrame with first lick times from process_and_plot_lick_data
+    """
+    import numpy as np
+    import ast
+    from Analysis.GNG_bpod_analysis.colors import COLOR_GO, COLOR_NOGO
+    df_first_licks = pd.concat([df_go_first_licks, df_no_go_first_licks])
+    
+    # Display the first lick data
+    st.write("**First Lick Times by Trial:**")
+
+
+    
+    # Create half violin plot using plotly
+    fig = go.Figure()
+    
+    # Add violin plots for each trial type
+    for trial_type in ["Go", "NoGo"]:
+        data_subset = df_first_licks[df_first_licks["Trial Type"] == trial_type]["First Lick Time (s)"]
+        if len(data_subset) > 0:
+            fig.add_trace(go.Violin(
+                y=data_subset,
+                name=trial_type,
+                box_visible=True,
+                meanline_visible=True,
+                fillcolor=COLOR_GO if trial_type == "Go" else COLOR_NOGO,
+                line_color=COLOR_GO if trial_type == "Go" else COLOR_NOGO,
+                opacity=0.7,
+                side='negative' if trial_type == "Go" else 'positive'
+            ))
+    
+    # Update layout
+    fig.update_layout(
+        title="First Lick Latency Distribution",
+        yaxis_title="Latency (s)",
+        xaxis_title="Trial Type",
+        showlegend=True,
+        height=500,
+        violinmode='overlay'
+    )
+    
+    # Add statistics
+    go_latencies = df_first_licks[df_first_licks["Trial Type"] == "Go"]["First Lick Time (s)"].values
+    no_go_latencies = df_first_licks[df_first_licks["Trial Type"] == "NoGo"]["First Lick Time (s)"].values
+    
+    if len(go_latencies) > 0 and len(no_go_latencies) > 0:
+        from scipy.stats import mannwhitneyu
+        stat, p_value = mannwhitneyu(go_latencies, no_go_latencies, alternative='two-sided')
+        
+        st.write(f"**Statistics:**")
+        st.write(f"- Go trials: n={len(go_latencies)}, mean={np.mean(go_latencies):.3f}s ± {np.std(go_latencies):.3f}s")
+        st.write(f"- NoGo trials: n={len(no_go_latencies)}, mean={np.mean(no_go_latencies):.3f}s ± {np.std(no_go_latencies):.3f}s")
+        st.write(f"- Mann-Whitney U test: p={p_value:.3g}")
+    
+    st.plotly_chart(fig, use_container_width=True)
+    
+    # return df_first_licks
