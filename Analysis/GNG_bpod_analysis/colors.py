@@ -14,9 +14,6 @@ COLOR_LOW_BD_TRANSPARENT = "rgba(255, 72, 0, 0.2)"
 COLOR_HIGH_BD  = '#ffb600'
 COLOR_HIGH_BD_TRANSPARENT = "rgba(255, 182, 0, 0.2)"
 
-c_go = "#006837"  # Dark Green
-c_nogo = "#A50026"  # Dark Red
-
 COLOR_D_PRIME = "#FF7F0E"  # Orange
 # ─── Outcome Colors ─────────────────────────────────────────────
 COLOR_HIT = "#008000"      # Green

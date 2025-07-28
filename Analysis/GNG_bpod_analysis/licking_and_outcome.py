@@ -1,7 +1,7 @@
 from Analysis.GNG_bpod_analysis.psychometric_curves import *
 from Analysis.GNG_bpod_analysis.metric import *
 from Analysis.GNG_bpod_analysis.GNG_bpod_general import *
-from Analysis.GNG_bpod_analysis.colors import OUTCOME_COLOR_MAP
+from Analysis.GNG_bpod_analysis.colors import COLOR_FA, OUTCOME_COLOR_MAP
 
 import re
 import ast
@@ -89,6 +89,8 @@ def compute_lick_rate(stimuli, outcomes):
     """
     Computes the lick rate (as a percentage) for each unique stimulus level.
     """
+    from Analysis.GNG_bpod_analysis.colors import COLOR_HIT, COLOR_FA
+
     unique_stimuli = np.unique(stimuli)
     lick_rates = []
 
@@ -101,6 +103,7 @@ def compute_lick_rate(stimuli, outcomes):
     return unique_stimuli, np.array(lick_rates)
 
 def lick_rate_multipule_sessions(selected_data, t=10, plot=True,  animal_name = "None"):
+    from Analysis.GNG_bpod_analysis.colors import COLOR_HIT, COLOR_FA
     from Analysis.GNG_bpod_analysis.GNG_bpod_general import get_sessions_for_animal
     # Step 2: Automatically select all sessions for the chosen animal
     session_indices, session_dates = get_sessions_for_animal(selected_data, animal_name)
@@ -134,7 +137,7 @@ def lick_rate_multipule_sessions(selected_data, t=10, plot=True,  animal_name = 
     st.title(f"Lick Rate Progress for {animal_name}")
 
     # Base chart for hit rate
-    hit_chart = alt.Chart(data).mark_line(color = '#1E90FA').encode(
+    hit_chart = alt.Chart(data).mark_line(color = COLOR_HIT).encode(
         x=alt.X('Session Index:Q', title='Session Index', axis=alt.Axis(format='.0f', tickCount=len(session_indices))),
         y=alt.Y('Hit Rate:Q', title='Rate (%)', scale=alt.Scale(domain=[0, 100])),
         tooltip=['Session Index', 'Hit Rate', 'Hit Error']
@@ -148,7 +151,7 @@ def lick_rate_multipule_sessions(selected_data, t=10, plot=True,  animal_name = 
     )
 
     # Line chart for FA rate
-    fa_chart = alt.Chart(data).mark_line(color= '#B22222').encode(
+    fa_chart = alt.Chart(data).mark_line(color= COLOR_FA).encode(
         x=alt.X('Session Index:Q'),
         y=alt.Y('FA Rate:Q', title=None),
         tooltip=['Session Index', 'FA Rate', 'FA Error']
@@ -183,18 +186,19 @@ def preprocess_stimuli_outcomes(selected_data, index):
 
     return stimuli, outcomes
 
-def process_and_plot_lick_data(project_data, index):
+def process_and_plot_lick_data(project_data, index, plot=True):
     """
     Processes lick data from a DataFrame and generates raster and histogram plots using Plotly subplots.
 
     Args:
         project_data (pd.DataFrame): DataFrame containing 'Licks' and 'TrialTypes' columns.
         index (int): Index of the trial to process.
+        plot (bool): Whether to display the plot
     """
-
+    from Analysis.GNG_bpod_analysis.colors import COLOR_GO, COLOR_NOGO
     # Define colors
-    c_go = "#006837"  # Dark Green
-    c_nogo = "#A50026"  # Dark Red
+    c_go = COLOR_GO
+    c_nogo = COLOR_NOGO
 
     # Extract data from DataFrame
     licks_str = project_data.iloc[index]["Licks"]
@@ -383,7 +387,8 @@ def process_and_plot_lick_data(project_data, index):
     )
 
     # Display the subplot figure in Streamlit
-    st.plotly_chart(fig, use_container_width=False)
+    if plot:
+        st.plotly_chart(fig, use_container_width=False)
 
     return df_go_first_licks, df_no_go_first_licks
 
@@ -426,7 +431,7 @@ def learning_curve(selected_data, index=0):
     # Display the interactive chart in Streamlit
     st.altair_chart(chart, use_container_width = True)
 
-def plot_first_lick_latency(selected_data, index=0, df_go_first_licks=None, df_no_go_first_licks= None):
+def plot_first_lick_latency(selected_data, index=0, df_go_first_licks=None, df_no_go_first_licks= None, plot=True):
     """
     Measures the latency of the first lick in each trial and compares Go vs NoGo trials.
     Creates a half violin plot to visualize the distribution of latencies.
@@ -434,11 +439,24 @@ def plot_first_lick_latency(selected_data, index=0, df_go_first_licks=None, df_n
     Args:
         selected_data (pd.DataFrame): DataFrame containing experiment data
         index (int): Index of the session to analyze
-        df_first_licks (pd.DataFrame): DataFrame with first lick times from process_and_plot_lick_data
+        df_go_first_licks (pd.DataFrame): Go trial first lick data
+        df_no_go_first_licks (pd.DataFrame): NoGo trial first lick data
+        plot (bool): Whether to display the plot
     """
     import numpy as np
     import ast
-    from Analysis.GNG_bpod_analysis.colors import COLOR_GO, COLOR_NOGO
+    from Analysis.GNG_bpod_analysis.colors import COLOR_GO, COLOR_NOGO, COLOR_GRAY
+    
+    # If first lick data is not provided, calculate it
+    if df_go_first_licks is None or df_no_go_first_licks is None:
+        # Get the data from process_and_plot_lick_data
+        df_go_first_licks, df_no_go_first_licks = process_and_plot_lick_data(selected_data, index, plot=False)
+    
+    # Check if we have valid data
+    if df_go_first_licks is None or df_no_go_first_licks is None:
+        st.warning("No valid first lick data available for analysis.")
+        return None
+    
     df_first_licks = pd.concat([df_go_first_licks, df_no_go_first_licks])
     
     # Display the first lick data
@@ -449,29 +467,61 @@ def plot_first_lick_latency(selected_data, index=0, df_go_first_licks=None, df_n
     # Create half violin plot using plotly
     fig = go.Figure()
     
-    # Add violin plots for each trial type
-    for trial_type in ["Go", "NoGo"]:
-        data_subset = df_first_licks[df_first_licks["Trial Type"] == trial_type]["First Lick Time (s)"]
-        if len(data_subset) > 0:
-            fig.add_trace(go.Violin(
-                y=data_subset,
-                name=trial_type,
-                box_visible=True,
-                meanline_visible=True,
-                fillcolor=COLOR_GO if trial_type == "Go" else COLOR_NOGO,
-                line_color=COLOR_GO if trial_type == "Go" else COLOR_NOGO,
-                opacity=0.7,
-                side='negative' if trial_type == "Go" else 'positive'
-            ))
+    # Get separate data for each trial type
+    go_data = df_first_licks[df_first_licks["Trial Type"] == "Go"]["First Lick Time (s)"].values
+    nogo_data = df_first_licks[df_first_licks["Trial Type"] == "NoGo"]["First Lick Time (s)"].values
     
+    if len(go_data) > 0:
+        # Create left side for Go trials
+        fig.add_trace(go.Violin(
+            y=go_data,
+            x=[0] * len(go_data),  # Go data at x=0
+            name="Go",
+            box_visible=True,
+            meanline_visible=True,
+            fillcolor=COLOR_GO,
+            line_color=COLOR_GO,
+            opacity=0.7,
+            side='negative'  # Left side for Go trials
+        ))
+    
+    if len(nogo_data) > 0:
+        # Create right side for NoGo trials
+        fig.add_trace(go.Violin(
+            y=nogo_data,
+            x=[0] * len(nogo_data),  # NoGo data at x=0
+            name="NoGo",
+            box_visible=True,
+            meanline_visible=True,
+            fillcolor=COLOR_NOGO,
+            line_color=COLOR_NOGO,
+            opacity=0.7,
+            side='positive'  # Right side for NoGo trials
+        ))
+    fig.update_traces(meanline_visible=True,
+                  points='all', # show all points
+                  jitter=0.1,  # add some jitter on points for better visibility
+                  scalemode='count') #scale violin plot area with total count
     # Update layout
     fig.update_layout(
         title="First Lick Latency Distribution",
         yaxis_title="Latency (s)",
-        xaxis_title="Trial Type",
+        xaxis_title="",
         showlegend=True,
         height=500,
-        violinmode='overlay'
+        violinmode='overlay',
+        violingroupgap=0,
+        violingap=0,
+        xaxis=dict(
+            showticklabels=False,
+            range=[-1, 1],
+            showgrid=False
+        ),
+        yaxis=dict(
+            showgrid=True,
+            gridcolor=COLOR_GRAY,
+            gridwidth=0.5
+        )
     )
     
     # Add statistics
@@ -490,3 +540,186 @@ def plot_first_lick_latency(selected_data, index=0, df_go_first_licks=None, df_n
     st.plotly_chart(fig, use_container_width=True)
     
     # return df_first_licks
+
+def plot_first_lick_latency_multiple_sessions(selected_data, animal_name="None", plot=True):
+    """
+    Calculate and plot the mean and standard deviation of first lick latency across multiple sessions.
+    Uses half violin plots to show the distribution for each session.
+    
+    Args:
+        selected_data (pd.DataFrame): DataFrame containing experiment data
+        animal_name (str): Name of the animal to analyze
+        plot (bool): Whether to display the plot
+    """
+    from Analysis.GNG_bpod_analysis.GNG_bpod_general import get_sessions_for_animal
+    from Analysis.GNG_bpod_analysis.colors import COLOR_GO, COLOR_NOGO, COLOR_GRAY
+    import pandas as pd
+    import numpy as np
+    import streamlit as st
+    import plotly.graph_objects as go
+
+    session_indices, session_dates = get_sessions_for_animal(selected_data, animal_name)
+    session_results = []
+
+    for idx, session_idx in enumerate(session_indices):
+        try:
+            df_go_first_licks, df_no_go_first_licks = process_and_plot_lick_data(selected_data, session_idx, plot=False)
+            
+            go_latencies = df_go_first_licks["First Lick Time (s)"].values if not df_go_first_licks.empty else []
+            go_mean = np.mean(go_latencies) if len(go_latencies) > 0 else np.nan
+            go_std = np.std(go_latencies) if len(go_latencies) > 0 else np.nan
+            go_count = len(go_latencies)
+            
+            nogo_latencies = df_no_go_first_licks["First Lick Time (s)"].values if not df_no_go_first_licks.empty else []
+            nogo_mean = np.mean(nogo_latencies) if len(nogo_latencies) > 0 else np.nan
+            nogo_std = np.std(nogo_latencies) if len(nogo_latencies) > 0 else np.nan
+            nogo_count = len(nogo_latencies)
+            
+            session_results.append({
+                'Session Index': idx + 1,
+                'Session Date': session_dates[idx],
+                'Go Mean': go_mean,
+                'Go Std': go_std,
+                'Go Count': go_count,
+                'NoGo Mean': nogo_mean,
+                'NoGo Std': nogo_std,
+                'NoGo Count': nogo_count,
+                'Go Latencies': go_latencies,
+                'NoGo Latencies': nogo_latencies
+            })
+        except Exception as e:
+            print(f"Error processing session {session_idx}: {e}")
+            continue
+    
+    if not session_results:
+        st.warning(f"No valid sessions found for {animal_name}")
+        return None
+    
+    results_df = pd.DataFrame(session_results)
+    
+    if plot:
+        st.title(f"First Lick Latency Distribution for {animal_name}")
+        fig = go.Figure()
+        
+        # Plot half violin plots for each session
+        for idx, row in results_df.iterrows():
+            session_idx = row['Session Index']
+            
+            # Go trials - left side
+            go_data = row['Go Latencies']
+            if len(go_data) > 0:
+                fig.add_trace(go.Violin(
+                    y=go_data,
+                    x=[session_idx] * len(go_data),
+                    name=f"Go (Session {session_idx})",
+                    box_visible=True,
+                    meanline_visible=True,
+                    fillcolor=COLOR_GO,
+                    line_color=COLOR_GO,
+                    opacity=0.15,
+                    side='negative',
+                    legendgroup=f"session_{session_idx}",
+                    showlegend=False
+                ))
+            
+            # NoGo trials - right side
+            nogo_data = row['NoGo Latencies']
+            if len(nogo_data) > 0:
+                fig.add_trace(go.Violin(
+                    y=nogo_data,
+                    x=[session_idx] * len(nogo_data),
+                    name=f"NoGo (Session {session_idx})",
+                    box_visible=True,
+                    meanline_visible=True,
+                    fillcolor=COLOR_NOGO,
+                    line_color=COLOR_NOGO,
+                    opacity=0.15,
+                    side='positive',
+                    legendgroup=f"session_{session_idx}",
+                    showlegend=False
+                ))
+        
+        # Add legend entries for Go and NoGo
+        fig.add_trace(go.Scatter(
+            x=[None], y=[None],
+            mode='markers',
+            marker=dict(color=COLOR_GO, size=10),
+            name='Go Trials',
+            showlegend=True
+        ))
+        
+        fig.add_trace(go.Scatter(
+            x=[None], y=[None],
+            mode='markers',
+            marker=dict(color=COLOR_NOGO, size=10),
+            name='NoGo Trials',
+            showlegend=True
+        ))
+        
+        # Add average lines on top of violin plots
+        go_means = results_df['Go Mean'].dropna()
+        nogo_means = results_df['NoGo Mean'].dropna()
+        
+        if len(go_means) > 0:
+            fig.add_trace(go.Scatter(
+                x=go_means.index + 1,  # Session indices
+                y=go_means.values,
+                mode='lines+markers',
+                name='Go Average',
+                line=dict(color=COLOR_GO, width=2),
+                marker=dict(color=COLOR_GO, size=6),
+                showlegend=False
+            ))
+        
+        if len(nogo_means) > 0:
+            fig.add_trace(go.Scatter(
+                x=nogo_means.index + 1,  # Session indices
+                y=nogo_means.values,
+                mode='lines+markers',
+                name='NoGo Average',
+                line=dict(color=COLOR_NOGO, width=2),
+                marker=dict(color=COLOR_NOGO, size=6),
+                showlegend=False
+            ))
+        
+        # Add gray vertical line at 0.3 seconds
+        fig.add_hline(
+            y=0.3,
+            line_dash="dash",
+            line_color="gray",
+            line_width=1,
+            annotation_text="Reinforcement Delay",
+            annotation_position="bottom right"
+        )
+        
+        fig.update_layout(
+            title=f"First Lick Latency Distribution for {animal_name}",
+            xaxis_title="Session Index",
+            yaxis_title="First Lick Latency (s)",
+            showlegend=True,
+            height=600,
+            violinmode='overlay',
+            violingroupgap=0,
+            violingap=0,
+            xaxis=dict(
+                tickmode='linear',
+                tick0=1,
+                dtick=1,
+                showgrid=True,
+                gridcolor=COLOR_GRAY,
+                gridwidth=0.2
+            ),
+            yaxis=dict(
+                showgrid=True,
+                gridcolor=COLOR_GRAY,
+                gridwidth=0.2
+            )
+        )
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # Display summary statistics
+        st.write("**Summary Statistics:**")
+        summary_df = results_df[['Session Index', 'Session Date', 'Go Mean', 'Go Std', 'Go Count', 'NoGo Mean', 'NoGo Std', 'NoGo Count']].copy()
+        st.dataframe(summary_df, use_container_width=True)
+    
+    return results_df

@@ -175,9 +175,9 @@ def load_spike_data(data_dir):
     Returns:
         tuple: (spike_times, spike_clusters) as numpy arrays
     """
-    spike_times_ms = np.load(os.path.join(data_dir, 'spike_times.npy')) 
+    spike_times_sec = np.load(os.path.join(data_dir, 'spike_times_adj.npy')) 
     spike_clusters = np.load(os.path.join(data_dir, 'spike_clusters.npy'))
-    return spike_times_ms, spike_clusters
+    return spike_times_sec, spike_clusters
 
 def couple_stimuli_outcome_and_times(directory, stimuli_values, outcomes):
     """
@@ -264,7 +264,7 @@ def copy_behavioral_file_for_dir(parent_dir, df, spike_glx_col='spike glx file',
             break
     return behav_file
 
-def spike_times_to_binary_matrix(spike_matrix, t_start, t_end, bin_size=0.001):
+def spike_times_to_binary_matrix(spike_matrix, t_start, t_end, bin_size=0.01):
     """
     Converts a list of spike times per unit to a binary matrix [units x time_bins].
     Each entry is 1 if there is a spike in the bin, 0 otherwise.
@@ -350,15 +350,14 @@ def main():
 
                 # --- Load Spikeglx Data ---
                 sr = read_sample_rate(working_dir)
-                spike_times_sr, spike_clusters = load_spike_data(data_dir)
+                spike_times_sec, spike_clusters = load_spike_data(data_dir)
                 cluster_info = load_cluster_info(working_dir, data_dir)
-                spike_times_sec = spike_times_sr / sr # convert to seconds
                 spike_matrix, all_cluster_indices = extract_spike_matrices(spike_times_sec, spike_clusters, cluster_info) 
                 # Convert spike times to firing rate matrix
                 all_spikes = np.concatenate([s for s in spike_matrix if len(s) > 0])
                 t_start = np.floor(all_spikes.min()) 
                 t_end = np.ceil(all_spikes.max()) 
-                firing_rate_matrix, bins = spike_times_to_firing_rate_matrix(spike_matrix, t_start, t_end, bin_size=0.01)
+                firing_rate_matrix, bins = spike_times_to_firing_rate_matrix(spike_matrix, t_start, t_end, bin_size=0.1)
                 stimuli_outcome_df = couple_stimuli_outcome_and_times(parent_dir, stimuli, combined_row_df["Outcomes"].iloc[0])
 
                 save_spike_matrices(output_dir, firing_rate_matrix, stimuli_outcome_df, all_cluster_indices)

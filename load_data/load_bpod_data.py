@@ -224,12 +224,18 @@ def create_single_row_with_outcome(file_path, trial_types_df, raw_events_df, ses
 
 def calculate_water_consumption(rewards, trial_settings):
     # Calculate the total water consumed based on reward times and settings
-    water_consumed = 0
+    water_consumed = 0.0  # Use float to avoid overflow
     for idx, reward in enumerate(rewards):
         if reward:
-            # Extract the reward amount based on the reward time
-            reward_amount = trial_settings[idx]['GUI'][0, 0]['RewardAmount'][0, 0]
-            water_consumed += reward_amount
+            try:
+                # Extract the reward amount based on the reward time
+                reward_amount = trial_settings[idx]['GUI'][0, 0]['RewardAmount'][0, 0]
+                # Convert to float to ensure proper arithmetic
+                reward_amount = float(reward_amount)
+                water_consumed += reward_amount
+            except (ValueError, TypeError, IndexError) as e:
+                print(f"Warning: Could not extract reward amount for trial {idx}: {e}")
+                continue
     return water_consumed
 
 

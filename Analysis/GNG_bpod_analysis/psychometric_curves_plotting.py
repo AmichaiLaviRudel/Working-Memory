@@ -268,6 +268,11 @@ def plot_psychometric_curves_with_boundaries(project_data, N_Boundaries, n_indic
                     legendgroup=label
                 ))
         # --- Statistical comparison and annotation ---
+        pvals = None
+        corrected_pvals = None
+        points_of_interest = []
+        shared_x = None
+        
         if 1 in avg_responses and 2 in avg_responses:
             x1 = common_stimuli_dict[1]
             x2 = common_stimuli_dict[2]
@@ -347,25 +352,27 @@ def plot_psychometric_curves_with_boundaries(project_data, N_Boundaries, n_indic
             hovermode="x unified"
         )
         st.plotly_chart(fig, use_container_width=False)
-        # Display a table with points of interest and the corrected p-values
-        pval_table = pd.DataFrame({
-            "Point of Interest": [shared_x[pi] for pi in points_of_interest],
-            "p-value": pvals,
-            "Corrected p-value": corrected_pvals
-        })
-        # Use Streamlit's st.dataframe for a more interactive and visually appealing table
-        st.markdown("### Statistical Comparison at Points of Interest")
-        def highlight_nulls(val):
-            import pandas as pd
-            return "background-color: lightgray" if pd.isnull(val) else ""
+        
+        # Display a table with points of interest and the corrected p-values only if we have data
+        if pvals is not None and points_of_interest and shared_x is not None:
+            pval_table = pd.DataFrame({
+                "Point of Interest": [shared_x[pi] for pi in points_of_interest],
+                "p-value": pvals,
+                "Corrected p-value": corrected_pvals
+            })
+            # Use Streamlit's st.dataframe for a more interactive and visually appealing table
+            st.markdown("### Statistical Comparison at Points of Interest")
+            def highlight_nulls(val):
+                import pandas as pd
+                return "background-color: lightgray" if pd.isnull(val) else ""
 
-        styled = (
-            pval_table.style
-                .applymap(highlight_nulls)
-                .applymap(lambda v: "background-color: #ffe6e6" if isinstance(v, float) and v < 0.05 else "", subset=["Corrected p-value"])
-                .format({"Point of Interest": lambda x: "{:.1f}".format(round(x * 10 * 2) / 2), "p-value": "{:.3g}", "Corrected p-value": "{:.3g}"})
-        )
-        st.write(styled)
+            styled = (
+                pval_table.style
+                    .applymap(highlight_nulls)
+                    .applymap(lambda v: "background-color: #ffe6e6" if isinstance(v, float) and v < 0.05 else "", subset=["Corrected p-value"])
+                    .format({"Point of Interest": lambda x: "{:.1f}".format(round(x * 10 * 2) / 2), "p-value": "{:.3g}", "Corrected p-value": "{:.3g}"})
+            )
+            st.write(styled)
         return
 
     # Display final figure

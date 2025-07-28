@@ -80,6 +80,14 @@ def gng_bpod_analysis_multipule(project_data, index):
 
     with tab1:
         lick_rate_multipule_sessions(project_data, t=bin, plot=True, animal_name = animal_name)
+        
+        try:
+            st.subheader("First Lick Latency Progression")
+            plot_first_lick_latency_multiple_sessions(project_data, animal_name=animal_name, plot=True)
+        except Exception as e:
+            st.warning(f"Something went wrong with first lick latency analysis :|\n\n{e}")
+            st.text(traceback.format_exc())
+
     with tab2:
         d_prime_multiple_sessions(project_data, t=bin, animal_name = animal_name)
         # d_prime_multiple_sessions_divde_oneNtwo(project_data, t = 10, animal_name = 'None', plot = True)

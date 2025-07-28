@@ -19,7 +19,7 @@ def plot_population_heatmap(spike_matrix, stimuli_outcome_df, window_size):
         data=go.Heatmap(
             z=matrix_subset,
             x=time_axis,
-            colorscale='Viridis',
+            colorscale='Greys',
             colorbar=dict(title="Spikes/sec"),
         )
     )
@@ -29,12 +29,29 @@ def plot_population_heatmap(spike_matrix, stimuli_outcome_df, window_size):
         "False Alarm": COLOR_FA,
         "CR": COLOR_CR,
     }
+    
+    # Track which outcomes we've already added to legend
+    legend_added = set()
+    
     if 'time' in stimuli_outcome_df.columns and 'outcome' in stimuli_outcome_df.columns:
         for t, outcome in zip(stimuli_outcome_df['time'], stimuli_outcome_df['outcome']):
             color = outcome_color_map.get(outcome, "white")
             bin_idx = int(t / bin_size)
             if start_bin <= bin_idx < end_bin:
-                fig.add_vline(x=time_axis[bin_idx - start_bin], line_width=3, line_dash="dash", line_color=color)
+                # Show legend only once per outcome type
+                showlegend = outcome not in legend_added
+                if showlegend:
+                    legend_added.add(outcome)
+                
+                fig.add_vline(
+                    x=time_axis[bin_idx - start_bin], 
+                    line_width=3, 
+                    line_dash="dash", 
+                    line_color=color,
+                    name=outcome,
+                    showlegend=showlegend
+                )
+    
     fig.update_layout(
         xaxis=dict(
             title="Time (s)",
@@ -42,7 +59,14 @@ def plot_population_heatmap(spike_matrix, stimuli_outcome_df, window_size):
             constrain='domain'
         ),
         yaxis_title="Unit",
-        title="Spike Matrix (scrollable, with event lines)"
+        title="Spike Matrix (scrollable, with event lines)",
+        legend=dict(
+            title="Tone Onset by Outcome",
+            yanchor="top",
+            y=0.99,
+            xanchor="left",
+            x=0.01
+        )
     )
     fig.update_layout(height=800)
     st.plotly_chart(fig, use_container_width=True) 
