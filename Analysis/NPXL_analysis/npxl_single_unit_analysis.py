@@ -6,32 +6,83 @@ from sklearn.metrics import roc_auc_score, roc_curve
 from sklearn.linear_model import PoissonRegressor
 from sklearn.preprocessing import StandardScaler
 import pandas as pd
+import os
+# Add color imports
+from Analysis.GNG_bpod_analysis.colors import COLOR_GO, COLOR_NOGO, COLOR_HIT, COLOR_FA, COLOR_BLUE, COLOR_BLUE_TRANSPARENT, COLOR_ACCENT, COLOR_ACCENT_TRANSPARENT
 
-def compute_stimulus_selectivity(spike_matrix, stimuli_outcome_df, unit_idx, window=(-0.1, 0.5)):
+def save_pvalues_to_folder(pvals, selected_folder, window=(-1, 2), bin_size=0.01):
+    """
+    Save p-values to the analysis output folder.
+    
+    Args:
+        pvals: numpy array of p-values for each unit
+        selected_folder: path to the analysis output folder
+        window: time window used for p-value calculation
+        bin_size: bin size used for p-value calculation
+    """
+    try:
+        # Create a DataFrame with unit indices and p-values
+        pvals_df = pd.DataFrame({
+            'unit_index': range(len(pvals)),
+            'p_value': pvals,
+            'significant': pvals < 0.05
+        })
+        
+        # Add metadata about the analysis
+        metadata = {
+            'window_start': window[0],
+            'window_end': window[1],
+            'bin_size': bin_size,
+            'total_units': len(pvals),
+            'significant_units': np.sum(pvals < 0.05),
+            'significance_threshold': 0.05
+        }
+        
+        # Save p-values DataFrame
+        pvals_file = os.path.join(selected_folder, "pvalues_analysis.csv")
+        pvals_df.to_csv(pvals_file, index=False)
+        
+        # Save metadata
+        metadata_file = os.path.join(selected_folder, "pvalues_metadata.txt")
+        with open(metadata_file, 'w') as f:
+            for key, value in metadata.items():
+                f.write(f"{key}: {value}\n")
+        
+        return True
+    except Exception as e:
+        print(f"Error saving p-values: {e}")
+        return False
+
+def compute_stimulus_selectivity(spike_matrix, stimuli_outcome_df, unit_idx, window=(-0.2, 0.5)):
     """
     Compute stimulus selectivity for a single unit.
-    Returns frequency tuning curve and best frequency.
+    Returns frequency tuning curve, SEM, and best frequency.
     """
     if 'stimulus' not in stimuli_outcome_df.columns:
-        return None, None, None
+        return None, None, None, None
     
     unique_stimuli = np.unique(stimuli_outcome_df['stimulus'])
     tuning_curve = []
+    tuning_sem = []
     
     for stim in unique_stimuli:
         # Get trials with this stimulus
         stim_mask = stimuli_outcome_df['stimulus'] == stim
         stim_times = stimuli_outcome_df.loc[stim_mask, 'time'].values
-        
-        # Compute average firing rate around stimulus onset
-        avg_rate = compute_peri_event_rate(spike_matrix, stim_times, unit_idx, window)
+        # Compute firing rates for each trial
+        rates = [compute_peri_event_rate(spike_matrix, [t], unit_idx, window) for t in stim_times]
+        if len(rates) > 0:
+            avg_rate = np.mean(rates)
+            sem = np.std(rates) / np.sqrt(len(rates))
+        else:
+            avg_rate = 0
+            sem = 0
         tuning_curve.append(avg_rate)
-    
+        tuning_sem.append(sem)
     # Find best frequency (stimulus that elicits highest response)
     best_stim_idx = np.argmax(tuning_curve)
     best_stimulus = unique_stimuli[best_stim_idx]
-    
-    return unique_stimuli, tuning_curve, best_stimulus
+    return unique_stimuli, tuning_curve, tuning_sem, best_stimulus
 
 def compute_go_nogo_coding(spike_matrix, stimuli_outcome_df, unit_idx, window=(-0.1, 0.5)):
     """
@@ -234,9 +285,10 @@ def fit_glm_single_unit(spike_matrix, stimuli_outcome_df, unit_idx, window=(-0.1
         ss_tot = np.sum((y - np.mean(y)) ** 2)
         r_squared = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
         
-        return coefficients, (intercept, r_squared)
+        return coefficients, (intercept, r_squared), y_pred, y
     except:
-        return None, None
+        return None, None,  None, None
+
 
 def plot_advanced_unit_analysis(spike_matrix, stimuli_outcome_df, unit_idx, bin_size=0.01):
     """
@@ -363,7 +415,7 @@ def compute_psth_pvalues(spike_matrix, event_times, bin_size=0.01, window=(-1, 2
 
 
 def single_unit_analysis_panel(
-    spike_matrix, stimuli_outcome_df, bin_size=0.01, default_window=1.0):
+    spike_matrix, stimuli_outcome_df, selected_folder=None, bin_size=0.01, default_window=1.0):
     import streamlit as st
     import numpy as np
     from .npxl_single_unit_analysis import plot_unit_psth, compute_psth_pvalues
@@ -371,6 +423,10 @@ def single_unit_analysis_panel(
 
     event_times = stimuli_outcome_df['time'].values
     event_outcomes = stimuli_outcome_df['outcome'].values if 'outcome' in stimuli_outcome_df.columns else None
+    
+    # Compute p-values for all units (available to all tabs)
+    default_display_window = (-default_window/2, default_window/2)
+    pvals = compute_psth_pvalues(spike_matrix, event_times, bin_size=bin_size, window=default_display_window)
     
     # Create tabs for different analysis types
     tab1, tab2, tab3, tab4 = st.tabs(["Basic PSTH", "Advanced Analysis", "GLM Analysis", "Population Heatmap"])
@@ -388,10 +444,31 @@ def single_unit_analysis_panel(
             peri_event = st.slider("PSTH window size", 0.1, 3.0, default_window, step=0.10)
         display_window = (-peri_event/2, peri_event/2)
 
-        # Compute p-values for all units and sort (filtered)
+        # Recompute p-values with current window
         pvals = compute_psth_pvalues(spike_matrix, event_times, bin_size=bin_size, window=display_window)
         sorted_indices = np.argsort(pvals)
         sorted_pvals = pvals[sorted_indices]
+
+        # Save p-values if folder is provided
+        if selected_folder is not None:
+            # Display p-value statistics
+            significant_units = np.sum(pvals < 0.05)
+            st.info(f"P-value analysis: {significant_units}/{len(pvals)} units significant (p < 0.05)")
+            
+            # Auto-save p-values
+            save_success = save_pvalues_to_folder(pvals, selected_folder, window=display_window, bin_size=bin_size)
+            if save_success:
+                st.success(f"P-values auto-saved to {selected_folder}")
+            else:
+                st.error("Failed to auto-save p-values")
+            
+            # Manual save button
+            if st.button("Save P-values Manually"):
+                manual_save_success = save_pvalues_to_folder(pvals, selected_folder, window=display_window, bin_size=bin_size)
+                if manual_save_success:
+                    st.success(f"P-values manually saved to {selected_folder}")
+                else:
+                    st.error("Failed to manually save p-values")
 
         # Use a slider to select the unit by sorted order
         unit_rank = st.slider("Unit (sorted by p-value)", 0, len(sorted_pvals) - 1, 0)
@@ -408,8 +485,31 @@ def single_unit_analysis_panel(
     with tab2:
         st.header("Advanced Single Unit Analysis")
         
+        # Filter for significant units
+        show_only_significant = st.checkbox("Show only significant units (p < 0.05)", value=False)
+        
+        # Get available units based on significance filter
+        if show_only_significant:
+            significant_mask = pvals < 0.05
+            available_units = np.where(significant_mask)[0]
+            if len(available_units) == 0:
+                st.warning("No significant units found. Showing all units.")
+                available_units = range(spike_matrix.shape[0])
+            else:
+                st.info(f"Showing {len(available_units)} significant units out of {len(pvals)} total units")
+        else:
+            available_units = range(spike_matrix.shape[0])
+        
         # Unit selection
-        unit_idx_adv = st.selectbox("Select Unit", range(spike_matrix.shape[0]), index=0)
+        if len(available_units) > 0:
+            unit_idx_adv = st.slider(
+                "Select Unit", 
+                int(np.min(available_units)), 
+                int(np.max(available_units)), 
+                int(available_units[0])
+            )
+        else:
+            unit_idx_adv = 0
         
         # Analysis window
         analysis_window = st.slider("Analysis window", 0.1, 1.0, 0.5, step=0.1)
@@ -419,21 +519,42 @@ def single_unit_analysis_panel(
         
         with col1:
             st.subheader("Stimulus Selectivity")
-            stimuli, tuning_curve, best_stim = compute_stimulus_selectivity(
+            stimuli, tuning_curve, tuning_sem, best_stim = compute_stimulus_selectivity(
                 spike_matrix, stimuli_outcome_df, unit_idx_adv, window
             )
             if stimuli is not None:
                 st.metric("Best stimulus", f"{best_stim:.2f}")
                 fig_tuning = go.Figure()
+                
+                # Convert to numpy arrays for arithmetic operations
+                tuning_curve_array = np.array(tuning_curve)
+                tuning_sem_array = np.array(tuning_sem)
+                
+                # Add shaded area for error bars
+                fig_tuning.add_trace(go.Scatter(
+                    x=np.concatenate([stimuli, stimuli[::-1]]),
+                    y=np.concatenate([tuning_curve_array + tuning_sem_array, (tuning_curve_array - tuning_sem_array)[::-1]]),
+                    fill='toself',
+                    fillcolor=COLOR_BLUE_TRANSPARENT,
+                    line=dict(color='rgba(255,255,255,0)'),
+                    showlegend=False,
+                    name='Error'
+                ))
+                
+                # Add main line
                 fig_tuning.add_trace(go.Scatter(
                     x=stimuli, y=tuning_curve, mode='lines+markers',
                     name=f'Best stimulus: {best_stim:.2f}',
-                    line=dict(color='blue')
+                    line=dict(color=COLOR_BLUE, width=2),
+                    marker=dict(color=COLOR_BLUE, size=6)
                 ))
+                
                 fig_tuning.update_layout(
                     title="Stimulus Tuning Curve",
                     xaxis_title="Stimulus",
-                    yaxis_title="Firing Rate (spikes/s)"
+                    yaxis_title="Firing Rate (spikes/s)",
+                    plot_bgcolor='white',
+                    paper_bgcolor='white'
                 )
                 st.plotly_chart(fig_tuning, use_container_width=True)
             else:
@@ -448,10 +569,10 @@ def single_unit_analysis_panel(
                 st.metric("d'", f"{d_prime:.3f}")
                 st.metric("ROC AUC", f"{roc_auc:.3f}")
                 
-                # Plot Go vs NoGo rates
+                # Plot Go vs NoGo rates with colors
                 fig_gng = go.Figure()
-                fig_gng.add_trace(go.Box(y=go_rates, name="Go", boxpoints='all'))
-                fig_gng.add_trace(go.Box(y=nogo_rates, name="NoGo", boxpoints='all'))
+                fig_gng.add_trace(go.Box(y=go_rates, name="Go", boxpoints='all', marker_color=COLOR_GO))
+                fig_gng.add_trace(go.Box(y=nogo_rates, name="NoGo", boxpoints='all', marker_color=COLOR_NOGO))
                 fig_gng.update_layout(
                     title="Go vs NoGo Firing Rates",
                     yaxis_title="Firing Rate (spikes/s)"
@@ -473,8 +594,8 @@ def single_unit_analysis_panel(
                 st.metric("Non-rewarded mean", f"{non_rewarded_mean:.2f}")
                 
                 fig_outcome = go.Figure()
-                fig_outcome.add_trace(go.Box(y=rewarded_rates, name="Rewarded", boxpoints='all'))
-                fig_outcome.add_trace(go.Box(y=non_rewarded_rates, name="Non-rewarded", boxpoints='all'))
+                fig_outcome.add_trace(go.Box(y=rewarded_rates, name="Rewarded", boxpoints='all', marker_color=COLOR_HIT))
+                fig_outcome.add_trace(go.Box(y=non_rewarded_rates, name="Non-rewarded", boxpoints='all', marker_color=COLOR_FA))
                 fig_outcome.update_layout(
                     title="Rewarded vs Non-rewarded Firing Rates",
                     yaxis_title="Firing Rate (spikes/s)"
@@ -506,17 +627,62 @@ def single_unit_analysis_panel(
     with tab3:
         st.header("Generalized Linear Model Analysis")
         
-        unit_idx_glm = st.selectbox("Select Unit for GLM", range(spike_matrix.shape[0]), index=0, key="glm_unit")
+        # Filter for significant units (same as tab2)
+        show_only_significant_glm = st.checkbox("Show only significant units (p < 0.05)", value=False, key="glm_significant")
+        
+        # Get available units based on significance filter
+        if show_only_significant_glm:
+            significant_mask_glm = pvals < 0.05
+            available_units_glm = np.where(significant_mask_glm)[0]
+            if len(available_units_glm) == 0:
+                st.warning("No significant units found. Showing all units.")
+                available_units_glm = range(spike_matrix.shape[0])
+            else:
+                st.info(f"Showing {len(available_units_glm)} significant units out of {len(pvals)} total units")
+        else:
+            available_units_glm = range(spike_matrix.shape[0])
+        
+        unit_idx_glm = st.slider(
+            "Select Unit for GLM",
+            min_value=int(min(available_units_glm)),
+            max_value=int(max(available_units_glm)),
+            value=int(min(available_units_glm)),
+            step=1,
+            key="glm_unit"
+        )
         
         # GLM window
         glm_window = st.slider("GLM analysis window", 0.1, 1.0, 0.5, step=0.1, key="glm_window")
         window_glm = (-glm_window/2, glm_window/2)
         
         # Fit GLM
-        coefficients, (intercept, r_squared) = fit_glm_single_unit(
+        coefficients, (intercept, r_squared), y_pred, y = fit_glm_single_unit(
             spike_matrix, stimuli_outcome_df, unit_idx_glm, window_glm
         )
-        
+        # Plot predicted vs actual firing rates for GLM
+        if y_pred is not None and y is not None:
+            fig_glm_pred = go.Figure()
+            fig_glm_pred.add_trace(go.Scatter(
+                x=list(range(len(y))),
+                y=y,
+                mode='markers+lines',
+                name='Actual',
+                marker=dict(color='blue')
+            ))
+            fig_glm_pred.add_trace(go.Scatter(
+                x=list(range(len(y_pred))),
+                y=y_pred,
+                mode='markers+lines',
+                name='Predicted',
+                marker=dict(color='orange')
+            ))
+            fig_glm_pred.update_layout(
+                title="GLM: Actual vs Predicted Firing Rates",
+                xaxis_title="Trial",
+                yaxis_title="Firing Rate (spikes/s)",
+                legend=dict(x=0.01, y=0.99)
+            )
+            st.plotly_chart(fig_glm_pred, use_container_width=True)
         if coefficients is not None:
             st.metric("R²", f"{r_squared:.3f}")
             st.metric("Intercept", f"{intercept:.3f}")

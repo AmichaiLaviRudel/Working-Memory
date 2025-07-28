@@ -91,7 +91,7 @@ if 'Checkbox' in st_project_data.columns and st_project_data['Checkbox'].any():
                     load_path = os.path.join(selected_folder, f"{analysis_type}_matrix.npy")
                     spike_matrix = np.load(load_path, allow_pickle=True)
                     stimuli_outcome_df = pd.read_csv(os.path.join(selected_folder, "stimuli_outcome_df.csv"))
-                    single_unit_analysis_panel(spike_matrix, stimuli_outcome_df)
+                    single_unit_analysis_panel(spike_matrix, stimuli_outcome_df, selected_folder)
 
             with population_tab:
                 st.write("### Population Analysis")
