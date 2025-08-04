@@ -269,7 +269,7 @@ def fit_glm_single_unit(spike_matrix, stimuli_outcome_df, unit_idx, window=(-0.1
     # Standardize features
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
-    
+
     # Fit Poisson regression
     try:
         model = PoissonRegressor(alpha=0.1, max_iter=1000)
@@ -414,6 +414,117 @@ def compute_psth_pvalues(spike_matrix, event_times, bin_size=0.01, window=(-1, 2
     return np.array(pvals)
 
 
+def load_event_windows_data(folder):
+    """
+    Loads the event windows data and associated metadata.
+    
+    Args:
+        folder (str): Directory containing the saved data
+        
+    Returns:
+        tuple: (event_windows_matrix, time_axis, valid_event_indices, stimuli_outcome_df, metadata) or None if not found
+    """
+    try:
+        # Load the 3D event windows matrix
+        event_windows_matrix = np.load(os.path.join(folder, "event_windows_matrix.npy"))
+        
+        # Load the time axis
+        time_axis = np.load(os.path.join(folder, "event_window_time_axis.npy"))
+        
+        # Load the valid event indices
+        valid_event_indices = np.load(os.path.join(folder, "valid_event_indices.npy"))
+        
+        # Load the filtered stimuli_outcome DataFrame
+        stimuli_outcome_df = pd.read_csv(os.path.join(folder, "event_windows_stimuli_outcome.csv"))
+        
+        # Load metadata
+        metadata = {}
+        metadata_file = os.path.join(folder, "event_windows_metadata.txt")
+        if os.path.exists(metadata_file):
+            with open(metadata_file, 'r') as f:
+                for line in f:
+                    key, value = line.strip().split(': ')
+                    metadata[key] = value
+        
+        return event_windows_matrix, time_axis, valid_event_indices, stimuli_outcome_df, metadata
+    except Exception as e:
+        print(f"Could not load event windows data: {e}")
+        return None
+
+
+def create_raster_plot_from_event_windows(event_windows_matrix, time_axis, unit_idx, event_outcomes=None, stim_filter="All"):
+    """
+    Creates a raster plot from event windows data for a specific unit.
+    
+    Args:
+        event_windows_matrix (np.ndarray): 3D matrix of shape [units × time × events]
+        time_axis (np.ndarray): Time axis for the window
+        unit_idx (int): Index of the unit to plot
+        event_outcomes (np.ndarray): Array of event outcomes for filtering
+        stim_filter (str): Filter for events ("All", "Go", "NoGo")
+        
+    Returns:
+        plotly.graph_objects.Figure: Raster plot figure
+    """
+    # Get the unit's data
+    unit_data = event_windows_matrix[unit_idx, :, :]  # Shape: [time × events]
+    
+    # Filter events based on outcomes if provided
+    if event_outcomes is not None and stim_filter != "All":
+        if stim_filter == "Go":
+            event_mask = event_outcomes == 1
+        elif stim_filter == "NoGo":
+            event_mask = event_outcomes == 0
+        else:
+            event_mask = np.ones(len(event_outcomes), dtype=bool)
+        
+        unit_data = unit_data[:, event_mask]
+        filtered_outcomes = event_outcomes[event_mask] if event_outcomes is not None else None
+    else:
+        filtered_outcomes = event_outcomes
+    
+    # Create raster plot
+    fig = go.Figure()
+    
+    # For each event, find time points where firing rate > 0 and plot them
+    for event_idx in range(unit_data.shape[1]):
+        # Get firing rates for this event
+        firing_rates = unit_data[:, event_idx]
+        
+        # Find time points where there are spikes (firing rate > 0)
+        spike_times = time_axis[firing_rates > 0]
+        
+        if len(spike_times) > 0:
+            # Color based on outcome if available
+            if filtered_outcomes is not None:
+                color = 'red' if filtered_outcomes[event_idx] == 1 else 'blue'
+            else:
+                color = 'black'
+            
+            # Add raster lines for this event
+            for spike_time in spike_times:
+                fig.add_trace(go.Scatter(
+                    x=[spike_time, spike_time],
+                    y=[event_idx - 0.4, event_idx + 0.4],
+                    mode='lines',
+                    line=dict(color=color, width=1),
+                    showlegend=False
+                ))
+    
+    # Update layout
+    fig.update_layout(
+        title=f"Raster Plot - Unit {unit_idx}",
+        xaxis_title="Time (s)",
+        yaxis_title="Event",
+        plot_bgcolor='white',
+        paper_bgcolor='white',
+        xaxis=dict(zeroline=True, zerolinecolor='gray'),
+        yaxis=dict(zeroline=True, zerolinecolor='gray')
+    )
+    
+    return fig
+
+
 def single_unit_analysis_panel(
     spike_matrix, stimuli_outcome_df, selected_folder=None, bin_size=0.01, default_window=1.0):
     import streamlit as st
@@ -421,7 +532,7 @@ def single_unit_analysis_panel(
     from .npxl_single_unit_analysis import plot_unit_psth, compute_psth_pvalues
     from Analysis.NPXL_analysis.population_analysis import plot_population_heatmap
 
-    event_times = stimuli_outcome_df['time'].values
+    event_times = stimuli_outcome_df['time'].values 
     event_outcomes = stimuli_outcome_df['outcome'].values if 'outcome' in stimuli_outcome_df.columns else None
     
     # Compute p-values for all units (available to all tabs)
@@ -429,7 +540,7 @@ def single_unit_analysis_panel(
     pvals = compute_psth_pvalues(spike_matrix, event_times, bin_size=bin_size, window=default_display_window)
     
     # Create tabs for different analysis types
-    tab1, tab2, tab3, tab4 = st.tabs(["Basic PSTH", "Advanced Analysis", "GLM Analysis", "Population Heatmap"])
+    tab1, tab2, tab3 = st.tabs(["Basic PSTH", "Advanced Analysis", "GLM Analysis"])
     
     with tab1:
         col1, col2 = st.columns(2)
@@ -474,13 +585,51 @@ def single_unit_analysis_panel(
         unit_rank = st.slider("Unit (sorted by p-value)", 0, len(sorted_pvals) - 1, 0)
         unit_idx = sorted_indices[unit_rank]
 
-        # Plot PSTH for the selected unit (filtered)
-        psth_fig = plot_unit_psth(
-            spike_matrix, event_times, unit_idx,
-            bin_size=bin_size, window=display_window,
-            event_outcomes=event_outcomes, stim_filter=stim_filter
-        )
-        st.plotly_chart(psth_fig, use_container_width=True)
+        # Load event windows data if available
+        event_windows_data = None
+        if selected_folder is not None:
+            event_windows_data = load_event_windows_data(selected_folder)
+            if event_windows_data is not None:
+                st.success("Event windows data loaded successfully")
+            else:
+                st.warning("Event windows data not found")
+
+        # Create two columns for PSTH and raster plot
+        psth_col, raster_col = st.columns(2)
+        
+        with psth_col:
+            st.subheader("PSTH")
+            # Plot PSTH for the selected unit (filtered)
+            psth_fig = plot_unit_psth(
+                spike_matrix, event_times, unit_idx,
+                bin_size=bin_size, window=display_window,
+                event_outcomes=event_outcomes, stim_filter=stim_filter
+            )
+            st.plotly_chart(psth_fig, use_container_width=True)
+        
+        with raster_col:
+            st.subheader("Raster Plot")
+            if event_windows_data is not None:
+                event_windows_matrix, time_axis, valid_event_indices, event_stimuli_outcome_df, metadata = event_windows_data
+                
+                # Get outcomes for the valid events
+                event_outcomes_for_raster = None
+                if 'outcome' in event_stimuli_outcome_df.columns:
+                    event_outcomes_for_raster = event_stimuli_outcome_df['outcome'].values
+                
+                # Create raster plot
+                raster_fig = create_raster_plot_from_event_windows(
+                    event_windows_matrix, time_axis, unit_idx,
+                    event_outcomes=event_outcomes_for_raster, stim_filter=stim_filter
+                )
+                st.plotly_chart(raster_fig, use_container_width=True)
+                
+                # Display metadata
+                if metadata:
+                    st.caption(f"Event windows: {metadata.get('n_events', 'N/A')} events, "
+                             f"{metadata.get('n_time_bins', 'N/A')} time bins")
+            else:
+                st.info("Event windows data not available. Run preprocessing to generate event windows.")
     
     with tab2:
         st.header("Advanced Single Unit Analysis")
@@ -709,7 +858,3 @@ def single_unit_analysis_panel(
         else:
             st.write("Could not fit GLM - insufficient data or convergence issues")
     
-    with tab4:
-        st.header("Population Heatmap")
-        window_size = st.slider("Heatmap window size", 100, 1000, 500, step=100)
-        plot_population_heatmap(spike_matrix, stimuli_outcome_df, window_size)

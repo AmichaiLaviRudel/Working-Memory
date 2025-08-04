@@ -95,7 +95,8 @@ if 'Checkbox' in st_project_data.columns and st_project_data['Checkbox'].any():
 
             with population_tab:
                 st.write("### Population Analysis")
-                plot_population_heatmap(spike_matrix, stimuli_outcome_df, window_size=1000)
+                window_size = stimuli_outcome_df['time'].iloc[2]
+                plot_population_heatmap(spike_matrix, stimuli_outcome_df, window_size*3)
             with multi_tab:
                 st.write("### Multi Analysis")
                 st.write("Coming soon")

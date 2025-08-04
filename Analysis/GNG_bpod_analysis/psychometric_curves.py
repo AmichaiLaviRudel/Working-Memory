@@ -146,6 +146,10 @@ def psychometric_curve(selected_data, index, plot=True):
         stimuli, outcomes = preprocess_stimuli_outcomes(selected_data, index)
         unique_stimuli, lick_rates = compute_lick_rate(stimuli, outcomes)
         n_b = selected_data.loc[index, 'N_Boundaries']
+        session_type =  selected_data.at[index, "Notes"]
+        if "TA" in session_type or "Discrimination" in session_type:
+            st.info(f"this is {session_type} session")
+            return None, None, None, None, None
         # return boundaries, slopes_mid, slopes_at_bnds, x_fit, y_fit
         model_boundaries, slopes_mid, slopes_at_model_boundaries, x_fit, y_fit = psychometric_fitting(unique_stimuli, lick_rates,
                                                    N_Boundaries = n_b,
@@ -203,7 +207,14 @@ def psychometric_curve_multiple_sessions(selected_data, animal_name = "None", pl
         animal_name = st.selectbox("Choose an Animal", selected_data["MouseName"].unique(), key="slope_animal_select")
     session_indices, _ = get_sessions_for_animal(selected_data, animal_name)
     low_slopes, high_slopes, tones, n_bounds = [], [], [], []
+    valid_session_indices = []  # Track which sessions are actually processed
+    
     for idx in session_indices:
+        session_type = selected_data.at[idx, "Notes"]
+        if "TA" in session_type or "Discrimination" in session_type:
+            continue
+            
+        valid_session_indices.append(idx)  # Only add sessions that pass the filter
         N_Boundaries = selected_data.at[idx, "N_Boundaries"]
         boundaries, slopes_mid, slopes_at_bnds, x_fit, y_fit = psychometric_curve(selected_data, idx, plot = False)
         # Robustly ensure slopes_mid is always a numpy array of length 2 for safe indexing
@@ -228,11 +239,16 @@ def psychometric_curve_multiple_sessions(selected_data, animal_name = "None", pl
         tones.append(selected_data.at[idx, "Tones_per_class"])
         n_bounds.append(selected_data.at[idx, "N_Boundaries"])
 
+    # Check if we have any valid sessions
+    if len(valid_session_indices) == 0:
+        st.warning(f"No valid sessions found for {animal_name} (all sessions are TA or Discrimination)")
+        return np.array([])
+    
     # ── tidy dataframe for Altair ────────────────────────────────────────────────
     df = (
         pd.DataFrame(
             dict(
-                Session = np.arange(1, len(session_indices) + 1),
+                Session = np.arange(1, len(valid_session_indices) + 1),
                 Low = np.abs(low_slopes),
                 High = high_slopes,
                 tones_per_class = tones,
@@ -316,9 +332,18 @@ def multi_animal_psychometric_slope_progression(selected_data, N_Boundaries=1):
     records = []
     for subj in df["MouseName"].unique():
         slopes = psychometric_curve_multiple_sessions(df, animal_name=subj, plot=False)
+        # Handle case where no valid sessions are found
+        if slopes.size == 0:
+            continue
         for sess_idx, (low, high) in enumerate(slopes, start=1):
             records.append({"Mouse": subj, "Session": sess_idx, "Boundary": "Low",  "Slope": np.abs(low)})
             records.append({"Mouse": subj, "Session": sess_idx, "Boundary": "High", "Slope": high})
+    
+    # Check if we have any records
+    if not records:
+        st.warning("No valid sessions found for any animal")
+        return
+        
     long_df = pd.DataFrame(records)
 
     # ─── compute session‐wise average per boundary ────────────────────

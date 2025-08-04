@@ -6,12 +6,29 @@ import os as os
 from tqdm import tqdm
 import re as re
 
-# file_path = "Z:/Shared/Amichai/Behavior/data/Group_4\A6\GNG\Session Data\A6_GNG_20250408_085814.mat"
+# file_path = r"Z:\Shared\Amichai\NPXL\Recs\group5\catgt_G5A3_1b_4t_new_g0\G5A3_GNG_20250731_133810.mat"
 def load_mat_file(file_path):
     # Load the .mat file
 
     mat_contents = scipy.io.loadmat(file_path)
-
+    if "FRA" in file_path:
+        session_data_content = mat_contents['SessionData'][0, 0]
+        trial_settings = [session_data_content['SettingsFile'][0]]
+        session_date = session_data_content['Info']['SessionDate'][0][0]
+        session_time = session_data_content['Info']['SessionStartTime_UTC'][0][0]
+        trial_types = []
+        raw_events = session_data_content['RawEvents'][0, 0]
+        stimuli = session_data_content['trialTable']
+        notes = ['FRA']
+        licks = []
+        states = []
+        Unique_Stimuli_Values = np.unique(session_data_content['freq'])
+        tones_per_class = np.unique(session_data_content['atten'])
+        boundaries = []
+        trial_types_df = []
+        raw_events_df = []
+        return trial_types_df, raw_events_df, session_date, session_time, trial_settings, notes, licks, states, stimuli, Unique_Stimuli_Values, tones_per_class, boundaries
+    
     # Extract the 'SessionData' field
     session_data_content = mat_contents['SessionData'][0, 0]
     trial_settings = session_data_content['TrialSettings'][0]
@@ -71,7 +88,14 @@ def load_mat_file(file_path):
             notes = [notes, 'Categorization']
 
     except Exception as e:
-        print(f"Error extracting 'Notes': {e}")
+        num_unique_stimuli = len(np.unique(stimuli))
+
+        if num_unique_stimuli == 1:
+            notes = ['TA', 'TA']
+        elif num_unique_stimuli == 2:
+            notes = ['Discrimination']
+        else:  # Covers num_unique_stimuli > 2
+            notes = ['Categorization']
 
     # Determine task type based on number of unique stimuli
     Unique_Stimuli_Count = len(np.unique(stimuli))
@@ -240,8 +264,14 @@ def calculate_water_consumption(rewards, trial_settings):
 
 
 def save_combined_data_to_df(df, combined_row_df):
-    df = pd.concat([df, combined_row_df], ignore_index = True)
-    return df
+    # Handle empty DataFrames to avoid FutureWarning
+    if df.empty:
+        return combined_row_df
+    elif combined_row_df.empty:
+        return df
+    else:
+        df = pd.concat([df, combined_row_df], ignore_index = True)
+        return df
 
 
 
