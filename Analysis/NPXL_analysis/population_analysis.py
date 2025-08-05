@@ -3,29 +3,29 @@ from Analysis.GNG_bpod_analysis.colors import COLOR_HIT, COLOR_MISS, COLOR_FA, C
 import streamlit as st
 import numpy as np
 
-def plot_population_heatmap(spike_matrix, stimuli_outcome_df, window_size):
-    max_start = max(0, spike_matrix.shape[1] - window_size)
-    max_start = int(max_start)
-    window_size = int(window_size)
-
-    step_value = window_size - int(0.3*window_size)  # Ensure step is at least 1
-
+def plot_population_heatmap(spike_matrix, stimuli_outcome_df, metadata):
+    # Handle both 2D and 3D matrices
+    if len(spike_matrix.shape) == 3:
+        # 3D event windows matrix: [units × time × events]
+        # Average across events to get 2D matrix
+        spike_matrix = np.mean(spike_matrix, axis=2)
     
-    start_bin = st.slider("Start time bin", 0, max_start, min(100, max_start), step=step_value)
-    start_bin = int(start_bin)
-    end_bin = start_bin + window_size
-    matrix_subset = spike_matrix[:, start_bin:end_bin]
-
-    # Calculate time axis for the displayed window
-    if spike_matrix.shape[1] > 1:
-        total_time = stimuli_outcome_df['time'].max()
-        if total_time > 0:
-            bin_size = total_time / (spike_matrix.shape[1] - 1)
-        else:
-            bin_size = 1  # Default bin size if total_time is 0
-    else:
-        bin_size = 1
-    time_axis = np.arange(start_bin, end_bin) * bin_size
+    # Get display window from metadata
+    display_window = metadata.get('display_window', '(-1, 2)')
+    try:
+        # Parse display window string like "(-1, 2)" to get start and end times
+        display_window = eval(display_window)  # Safe for tuple parsing
+        start_time, end_time = display_window
+    except:
+        # Default window if parsing fails
+        start_time, end_time = -1, 2
+    
+    # Create time axis for the full event window
+    n_time_bins = spike_matrix.shape[1]
+    time_axis = np.linspace(start_time, end_time, n_time_bins)
+    
+    # Use the full matrix for event-aligned data (no scrolling needed)
+    matrix_subset = spike_matrix
     fig = go.Figure(
         data=go.Heatmap(
             z=matrix_subset,
@@ -33,6 +33,16 @@ def plot_population_heatmap(spike_matrix, stimuli_outcome_df, window_size):
             colorscale='Greys',
             colorbar=dict(title="Spikes/sec"),
         )
+    )
+    
+    # Add vertical line at x=0 to mark event onset
+    fig.add_vline(
+        x=0, 
+        line_width=2, 
+        line_dash="solid", 
+        line_color="red",
+        name="Event Onset",
+        showlegend=True
     )
     outcome_color_map = {
         "Hit": COLOR_HIT,
@@ -47,39 +57,34 @@ def plot_population_heatmap(spike_matrix, stimuli_outcome_df, window_size):
     if 'time' in stimuli_outcome_df.columns and 'outcome' in stimuli_outcome_df.columns:
         for t, outcome in zip(stimuli_outcome_df['time'], stimuli_outcome_df['outcome']):
             color = outcome_color_map.get(outcome, "white")
-            # Check for division by zero
-            if bin_size > 0:
-                bin_idx = int(t / bin_size)
-            else:
-                bin_idx = 0  # Default to first bin if bin_size is 0
-            if start_bin <= bin_idx < end_bin:
-                # Show legend only once per outcome type
-                showlegend = outcome not in legend_added
-                if showlegend:
-                    legend_added.add(outcome)
-                
-                # Ensure the index is within bounds
-                time_idx = bin_idx - start_bin
-                if 0 <= time_idx < len(time_axis):
-                    fig.add_vline(
-                        x=time_axis[time_idx], 
-                        line_width=3, 
-                        line_dash="dash", 
-                        line_color=color,
-                        name=outcome,
-                        showlegend=showlegend
-                    )
+            
+            # For event-aligned data, we want to mark the event onset (time 0)
+            # Find the closest time point to 0 in our time axis
+            event_time = 0  # Event onset is at time 0 in event-aligned data
+            
+            # Show legend only once per outcome type
+            showlegend = outcome not in legend_added
+            if showlegend:
+                legend_added.add(outcome)
+            
+            fig.add_vline(
+                x=event_time, 
+                line_width=3, 
+                line_dash="dash", 
+                line_color=color,
+                name=outcome,
+                showlegend=showlegend
+            )
     
     fig.update_layout(
         xaxis=dict(
-            title="Time (s)",
-            rangeslider=dict(visible=True),
+            title="Time relative to event (s)",
             constrain='domain'
         ),
         yaxis_title="Unit",
-        title="Spike Matrix (scrollable, with event lines)",
+        title="Population Activity Heatmap (Event-Aligned)",
         legend=dict(
-            title="Tone Onset by Outcome",
+            title="Event Onset by Outcome",
             yanchor="top",
             y=0.99,
             xanchor="left",

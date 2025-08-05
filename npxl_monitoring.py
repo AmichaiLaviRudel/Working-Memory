@@ -53,6 +53,12 @@ if 'Checkbox' in st_project_data.columns and st_project_data['Checkbox'].any():
             single_unit_tab, population_tab, multi_tab, fra_tab = st.tabs(["Single Unit", "Population", "Multi", "FRA"])
 
 
+            # Initialize variables for sharing between tabs
+            selected_folder = None
+            event_windows_matrix = None
+            stimuli_outcome_df = None
+            spike_matrix = None
+            
             with single_unit_tab:
                 st.write("### Single Unit Analysis")
                 folder_options = []
@@ -86,17 +92,30 @@ if 'Checkbox' in st_project_data.columns and st_project_data['Checkbox'].any():
                     selected_folder = None
 
                 if selected_folder:
-                    analysis_type = st.selectbox("Select type", options=["good", "mua", "non_somatic", "spike"])
-                    analysis_output_dirs = [selected_folder]
-                    load_path = os.path.join(selected_folder, f"{analysis_type}_matrix.npy")
-                    spike_matrix = np.load(load_path, allow_pickle=True)
-                    stimuli_outcome_df = pd.read_csv(os.path.join(selected_folder, "stimuli_outcome_df.csv"))
-                    single_unit_analysis_panel(spike_matrix, stimuli_outcome_df, selected_folder)
+                    # Use the load_event_windows_data function from npxl_single_unit_analysis
+                    from Analysis.NPXL_analysis.npxl_single_unit_analysis import load_event_windows_data
+                    
+                    loaded_data = load_event_windows_data(selected_folder)
+                    if loaded_data:
+                        event_windows_matrix, time_axis_from_load, valid_event_indices, stimuli_outcome_df, metadata = loaded_data
+                        spike_matrix = np.mean(event_windows_matrix, axis=2)  # For compatibility with single_unit_analysis_panel
+                        single_unit_analysis_panel(spike_matrix, stimuli_outcome_df, selected_folder)
+                    else:
+                        st.error(f"Event windows data could not be loaded from: {selected_folder}")
+                        st.info("Please ensure the event windows data has been generated.")
+                        # Set variables to None to prevent errors in other tabs
+                        event_windows_matrix = None
+                        stimuli_outcome_df = None
+                        spike_matrix = None
+                        metadata = None
 
             with population_tab:
                 st.write("### Population Analysis")
-                window_size = stimuli_outcome_df['time'].iloc[2]
-                plot_population_heatmap(spike_matrix, stimuli_outcome_df, window_size*3)
+                if selected_folder and event_windows_matrix is not None and stimuli_outcome_df is not None and metadata is not None:
+                    # Pass metadata instead of window_size*3
+                    plot_population_heatmap(event_windows_matrix, stimuli_outcome_df, metadata)
+                else:
+                    st.warning("Event windows data not available for population analysis")
             with multi_tab:
                 st.write("### Multi Analysis")
                 st.write("Coming soon")

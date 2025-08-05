@@ -8,7 +8,7 @@ from sklearn.preprocessing import StandardScaler
 import pandas as pd
 import os
 # Add color imports
-from Analysis.GNG_bpod_analysis.colors import COLOR_GO, COLOR_NOGO, COLOR_HIT, COLOR_FA, COLOR_BLUE, COLOR_BLUE_TRANSPARENT, COLOR_ACCENT, COLOR_ACCENT_TRANSPARENT
+from Analysis.GNG_bpod_analysis.colors import COLOR_GO, COLOR_GRAY, COLOR_NOGO, COLOR_HIT, COLOR_FA, COLOR_CR, COLOR_MISS, COLOR_BLUE, COLOR_BLUE_TRANSPARENT, COLOR_ACCENT, COLOR_ACCENT_TRANSPARENT
 
 def save_pvalues_to_folder(pvals, selected_folder, window=(-1, 2), bin_size=0.01):
     """
@@ -329,7 +329,7 @@ def plot_advanced_unit_analysis(spike_matrix, stimuli_outcome_df, unit_idx, bin_
     
     return fig
 
-def plot_unit_psth(spike_matrix, event_times, unit_idx, bin_size=0.01, window=(-1, 2), event_outcomes=None, stim_filter="All"):
+def plot_unit_psth(event_windows_data, display_window, unit_idx,sorted_pvals, unit_rank):
     """
     Plots PSTH for a single unit aligned to event_times, adds a vertical line at x=0, and calculates significance (Mann-Whitney U test) between pre- and post-event activity.
     Args:
@@ -339,49 +339,59 @@ def plot_unit_psth(spike_matrix, event_times, unit_idx, bin_size=0.01, window=(-
         bin_size: float, bin size in seconds for PSTH
         window: tuple, time window around event (start, end) in seconds
     """
-    # Filter event_times by stim_filter
-    if event_outcomes is not None and stim_filter != "All":
-        if stim_filter == "Go":
-            mask = np.isin(event_outcomes, ["Hit", "Miss"])
-        elif stim_filter == "NoGo":
-            mask = np.isin(event_outcomes, ["False Alarm", "CR"])
-        else:
-            mask = np.ones(len(event_times), dtype=bool)
-        event_times = np.array(event_times)[mask]
-    n_bins = spike_matrix.shape[1]
-    peri_event_window = np.arange(window[0], window[1], bin_size)
-    peri_event_hist = np.zeros_like(peri_event_window)
-    n_events = 0
-    for t in event_times:
-        event_bin = int(t / bin_size)
-        start_bin = event_bin + int(window[0] / bin_size)
-        end_bin = event_bin + int(window[1] / bin_size)
-        if start_bin < 0 or end_bin > n_bins:
-            continue
-        segment = spike_matrix[unit_idx, start_bin:end_bin]
-        if segment.shape[0] != peri_event_hist.shape[0]:
-            continue
-        peri_event_hist += segment
-        n_events += 1
-    if n_events > 0:
-        peri_event_hist = peri_event_hist / n_events  # average
 
-    # Calculate significance: pre (window[0] to 0), post (0 to window[1])
-    zero_idx = np.where(peri_event_window >= 0)[0][0]
-    pre = peri_event_hist[:zero_idx]
-    post = peri_event_hist[zero_idx:]
-    stat, p = mannwhitneyu(pre, post, alternative='two-sided')
-
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=peri_event_window, y=peri_event_hist, mode='lines', name="PSTH"))
-    fig.add_vline(x=0, line_width=2, line_dash="dash", line_color="red")
-    fig.update_layout(
-        title=f"PSTH for Unit {unit_idx} (p={p:.3g})",
-        xaxis_title="Time (s) from event",
-        yaxis_title="Firing rate (spikes/s)",
-        bargap=0
+    # Plot PSTH for the selected unit
+    unit_data = event_windows_data[0][unit_idx, :, :]
+    psth_mean = np.mean(unit_data, axis=1)  # Average across events
+    psth_sem = np.std(unit_data, axis=1) / np.sqrt(unit_data.shape[1])  # SEM across events
+    
+    # Create time axis for PSTH that matches the display_window
+    num_time_bins = unit_data.shape[0]
+    psth_time_axis = np.linspace(display_window[0], display_window[1], num_time_bins)
+    
+    # Create PSTH plot with proper time axis
+    psth_fig = go.Figure()
+    
+    # Add main PSTH line
+    psth_fig.add_trace(go.Scatter(
+        x=psth_time_axis,
+        y=psth_mean,
+        mode='lines',
+        name='Mean Firing Rate',
+        line=dict(color=COLOR_ACCENT, width=3)
+    ))
+    
+    # Add shaded area for SEM
+    psth_fig.add_trace(go.Scatter(
+        x=np.concatenate([psth_time_axis, psth_time_axis[::-1]]),
+        y=np.concatenate([psth_mean + psth_sem, (psth_mean - psth_sem)[::-1]]),
+        fill='toself',
+        fillcolor=f'rgba(0,0,255,0.2)',
+        line=dict(color='rgba(255,255,255,0)'),
+        showlegend=False,
+        name='SEM'
+    ))
+    
+    # Add vertical line at x = 0
+    psth_fig.add_vline(
+        x=0, 
+        line_dash="dash", 
+        line_color=COLOR_GRAY, 
+        line_width=2,
+        annotation_text="Event Onset",
+        annotation_position="top right"
     )
-    return fig
+    
+    psth_fig.update_layout(
+        title=f"PSTH - Unit {unit_idx} (p={sorted_pvals[unit_rank]:.3g})",
+        xaxis_title="Time (s)",
+            yaxis_title="Firing Rate (spikes/s)",
+            xaxis=dict(constrain='domain'),
+            margin=dict(r=80),
+            plot_bgcolor='white',
+            paper_bgcolor='white'
+        )
+    return psth_fig
 
     
 def compute_psth_pvalues(spike_matrix, event_times, bin_size=0.01, window=(-1, 2)):
@@ -411,6 +421,55 @@ def compute_psth_pvalues(spike_matrix, event_times, bin_size=0.01, window=(-1, 2
         post = peri_event_hist[zero_idx:]
         stat, p = mannwhitneyu(pre, post, alternative='two-sided')
         pvals.append(p)
+    return np.array(pvals)
+
+
+def compute_psth_pvalues_from_event_windows(event_windows_matrix, event_times, bin_size=0.01, window=(-1, 2)):
+    """
+    Compute p-values using event windows data for more accurate statistical analysis.
+    
+    Args:
+        event_windows_matrix: 3D array [units × time × events]
+        event_times: 1D array of event times
+        bin_size: float, bin size in seconds
+        window: tuple, time window around event (start, end) in seconds
+        
+    Returns:
+        numpy array of p-values for each unit
+    """
+    from Analysis.GNG_bpod_analysis.stats_tests import mannwhitneyu
+    
+    n_units = event_windows_matrix.shape[0]
+    n_time_bins = event_windows_matrix.shape[1]
+    n_events = event_windows_matrix.shape[2]
+    
+    # Create time axis for the window
+    peri_event_window = np.linspace(window[0], window[1], n_time_bins)
+    
+    pvals = []
+    
+    for unit_idx in range(n_units):
+        # Get the unit's data: [time × events]
+        unit_data = event_windows_matrix[unit_idx, :, :]
+        
+        # Calculate PSTH by averaging across events
+        psth_mean = np.mean(unit_data, axis=1)  # Shape: [time]
+        
+        # Find the index corresponding to time 0
+        zero_idx = np.argmin(np.abs(peri_event_window))
+        
+        # Split into pre and post event periods
+        pre = psth_mean[:zero_idx]
+        post = psth_mean[zero_idx:]
+        
+        # Perform Mann-Whitney U test
+        try:
+            stat, p = mannwhitneyu(pre, post, alternative='two-sided')
+        except:
+            p = 1.0  # Default p-value if test fails
+        
+        pvals.append(p)
+    
     return np.array(pvals)
 
 
@@ -451,78 +510,174 @@ def load_event_windows_data(folder):
         print(f"Could not load event windows data: {e}")
         return None
 
-
-def create_raster_plot_from_event_windows(event_windows_matrix, time_axis, unit_idx, event_outcomes=None, stim_filter="All"):
+def plot_unit_heatmap(event_windows_data, display_window, unit_idx):
     """
-    Creates a raster plot from event windows data for a specific unit.
+    Create a heatmap visualization for a single unit from event windows data.
     
     Args:
-        event_windows_matrix (np.ndarray): 3D matrix of shape [units × time × events]
-        time_axis (np.ndarray): Time axis for the window
-        unit_idx (int): Index of the unit to plot
-        event_outcomes (np.ndarray): Array of event outcomes for filtering
-        stim_filter (str): Filter for events ("All", "Go", "NoGo")
+        event_windows_data: Tuple containing (event_windows_matrix, time_axis, valid_event_indices, event_stimuli_outcome_df, metadata)
+        display_window: Tuple of (start_time, end_time) for the display window
+        unit_idx: Index of the unit to plot
         
     Returns:
-        plotly.graph_objects.Figure: Raster plot figure
+        plotly.graph_objects.Figure: The heatmap figure
     """
+    event_windows_matrix, time_axis, valid_event_indices, event_stimuli_outcome_df, metadata = event_windows_data
+    
+    # Create a new time axis that matches the current display_window
+    num_time_bins = event_windows_matrix.shape[1]
+    new_time_axis = np.linspace(display_window[0], display_window[1], num_time_bins)
+    
     # Get the unit's data
     unit_data = event_windows_matrix[unit_idx, :, :]  # Shape: [time × events]
+
+    # Get outcomes for the valid events
+    event_outcomes_for_raster = None
+    if 'outcome' in event_stimuli_outcome_df.columns:
+        event_outcomes_for_raster = event_stimuli_outcome_df['outcome'].values
     
-    # Filter events based on outcomes if provided
-    if event_outcomes is not None and stim_filter != "All":
-        if stim_filter == "Go":
-            event_mask = event_outcomes == 1
-        elif stim_filter == "NoGo":
-            event_mask = event_outcomes == 0
-        else:
-            event_mask = np.ones(len(event_outcomes), dtype=bool)
-        
-        unit_data = unit_data[:, event_mask]
-        filtered_outcomes = event_outcomes[event_mask] if event_outcomes is not None else None
-    else:
-        filtered_outcomes = event_outcomes
+    # Filter data by trial type
+    hit_mask = event_outcomes_for_raster == 'Hit'
+    miss_mask = event_outcomes_for_raster == "Miss"
+    false_alarm_mask = event_outcomes_for_raster == "False Alarm"
+    correct_rejection_mask = event_outcomes_for_raster == "CR"
     
-    # Create raster plot
+    hit_data = unit_data[:, hit_mask]
+    miss_data = unit_data[:, miss_mask]
+    false_alarm_data = unit_data[:, false_alarm_mask]
+    correct_rejection_data = unit_data[:, correct_rejection_mask]
+    
+    # Order data: CR, FA, Miss, Hit
+    ordered_data = np.concatenate([correct_rejection_data, false_alarm_data, miss_data, hit_data], axis=1).T
+
+    def rgba_from_hex(hex_color, alpha=0.3):
+        """Convert hex color to rgba string with given alpha."""
+        hex_color = hex_color.lstrip('#')
+        lv = len(hex_color)
+        rgb = tuple(int(hex_color[i:i + lv // 3], 16) for i in range(0, lv, lv // 3))
+        return f"rgba({rgb[0]},{rgb[1]},{rgb[2]},{alpha})"
+
+    trial_type_colors = {
+        "CR": rgba_from_hex(COLOR_CR, 0.3),
+        "False Alarm": rgba_from_hex(COLOR_FA, 0.3),
+        "Miss": rgba_from_hex(COLOR_MISS, 0.3),
+        "Hit": rgba_from_hex(COLOR_HIT, 0.3)
+    }
+
+    # Build a list of trial types in the order of the rows in ordered_data
+    trial_types_ordered = (
+        ["CR"] * correct_rejection_data.shape[1] +
+        ["False Alarm"] * false_alarm_data.shape[1] +
+        ["Miss"] * miss_data.shape[1] +
+        ["Hit"] * hit_data.shape[1]
+    )
+
+    # Create the heatmap
     fig = go.Figure()
+
+    fig.add_trace(go.Heatmap(
+        z=ordered_data,
+        x=new_time_axis,
+        y=np.arange(ordered_data.shape[1]),
+        colorbar=dict(title="Firing Rate", len=0.8)
+    ))
+
+    # Add colored rectangles for trial type indicators
+    for i, trial_type in enumerate(trial_types_ordered):
+        color = trial_type_colors.get(trial_type, "rgba(200,200,200,0.2)")
+        fig.add_shape(
+            type="rect",
+            xref="paper", yref="y",
+            x0=-0.02, x1=0,  # Just outside the heatmap
+            y0=i-0.5, y1=i+0.5,
+            fillcolor=color,
+            line=dict(width=0),
+            layer="above"
+        )
+
+    # Add legend for trial types
+    legend_items = []
+    for trial_type, color in trial_type_colors.items():
+        legend_items.append(
+            go.Scatter(
+                x=[None], y=[None],
+                mode='markers',
+                marker=dict(size=10, color=color),
+                legendgroup=trial_type,
+                showlegend=True,
+                name=trial_type
+            )
+        )
     
-    # For each event, find time points where firing rate > 0 and plot them
-    for event_idx in range(unit_data.shape[1]):
-        # Get firing rates for this event
-        firing_rates = unit_data[:, event_idx]
-        
-        # Find time points where there are spikes (firing rate > 0)
-        spike_times = time_axis[firing_rates > 0]
-        
-        if len(spike_times) > 0:
-            # Color based on outcome if available
-            if filtered_outcomes is not None:
-                color = 'red' if filtered_outcomes[event_idx] == 1 else 'blue'
-            else:
-                color = 'black'
-            
-            # Add raster lines for this event
-            for spike_time in spike_times:
-                fig.add_trace(go.Scatter(
-                    x=[spike_time, spike_time],
-                    y=[event_idx - 0.4, event_idx + 0.4],
-                    mode='lines',
-                    line=dict(color=color, width=1),
-                    showlegend=False
-                ))
-    
-    # Update layout
-    fig.update_layout(
-        title=f"Raster Plot - Unit {unit_idx}",
-        xaxis_title="Time (s)",
-        yaxis_title="Event",
-        plot_bgcolor='white',
-        paper_bgcolor='white',
-        xaxis=dict(zeroline=True, zerolinecolor='gray'),
-        yaxis=dict(zeroline=True, zerolinecolor='gray')
+    # Add vertical line at x = 0
+    fig.add_vline(
+        x=0, 
+        line_dash="dash", 
+        line_color=COLOR_GRAY, 
+        line_width=2,
+        annotation_text="Event Onset",
+        annotation_position="top right"
     )
     
+    fig.update_layout(
+        title=f"Heatmap - Unit {unit_idx}",
+        xaxis_title="Time (s)",
+        yaxis_title="Trial",
+        xaxis=dict(constrain='domain'),
+        legend=dict(
+            orientation='h',
+            x=0.5,
+            y=1.1,
+            xanchor='center',
+            yanchor='top'
+        ),
+        margin=dict(r=80, t=100)
+    )
+    
+    for item in legend_items:
+        fig.add_trace(item)
+    
     return fig
+
+
+def get_trial_statistics(event_windows_data, unit_idx):
+    """
+    Get trial statistics for a specific unit from event windows data.
+    
+    Args:
+        event_windows_data: Tuple containing (event_windows_matrix, time_axis, valid_event_indices, event_stimuli_outcome_df, metadata)
+        unit_idx: Index of the unit to analyze
+        
+    Returns:
+        dict: Dictionary containing trial counts for each outcome type
+    """
+    event_windows_matrix, time_axis, valid_event_indices, event_stimuli_outcome_df, metadata = event_windows_data
+    
+    # Get the unit's data
+    unit_data = event_windows_matrix[unit_idx, :, :]  # Shape: [time × events]
+
+    # Get outcomes for the valid events
+    event_outcomes_for_raster = None
+    if 'outcome' in event_stimuli_outcome_df.columns:
+        event_outcomes_for_raster = event_stimuli_outcome_df['outcome'].values
+    
+    # Filter data by trial type
+    hit_mask = event_outcomes_for_raster == 'Hit'
+    miss_mask = event_outcomes_for_raster == "Miss"
+    false_alarm_mask = event_outcomes_for_raster == "False Alarm"
+    correct_rejection_mask = event_outcomes_for_raster == "CR"
+    
+    hit_data = unit_data[:, hit_mask]
+    miss_data = unit_data[:, miss_mask]
+    false_alarm_data = unit_data[:, false_alarm_mask]
+    correct_rejection_data = unit_data[:, correct_rejection_mask]
+    
+    return {
+        'CR': correct_rejection_data.shape[1],
+        'FA': false_alarm_data.shape[1],
+        'Miss': miss_data.shape[1],
+        'Hit': hit_data.shape[1]
+    }
 
 
 def single_unit_analysis_panel(
@@ -535,101 +690,152 @@ def single_unit_analysis_panel(
     event_times = stimuli_outcome_df['time'].values 
     event_outcomes = stimuli_outcome_df['outcome'].values if 'outcome' in stimuli_outcome_df.columns else None
     
-    # Compute p-values for all units (available to all tabs)
-    default_display_window = (-default_window/2, default_window/2)
-    pvals = compute_psth_pvalues(spike_matrix, event_times, bin_size=bin_size, window=default_display_window)
     
     # Create tabs for different analysis types
     tab1, tab2, tab3 = st.tabs(["Basic PSTH", "Advanced Analysis", "GLM Analysis"])
     
     with tab1:
-        col1, col2 = st.columns(2)
-        with col1:
+        st.header("Basic Analysis")
+        
+        # Control Panel Section
+        st.subheader("Analysis Controls")
+        control_col1, control_col2, control_col3 = st.columns(3)
+        
+        with control_col1:
             stim_filter = st.radio(
-                "Stimulus filter",
+                "Stimulus Filter",
                 options=["All", "Go", "NoGo"],
                 index=0,
-                horizontal=True
+                horizontal=True,
+                help="Filter events by trial type"
             )
-        with col2:
-            peri_event = st.slider("PSTH window size", 0.1, 3.0, default_window, step=0.10)
+        
+        with control_col2:
+            peri_event = st.slider(
+                "PSTH Window Size", 
+                0.1, 3.0, default_window, step=0.10,
+                help="Time window around event onset (seconds)"
+            )
+        
+        with control_col3:
+            bin_size_display = st.number_input(
+                "Bin Size (s)", 
+                min_value=0.001, max_value=0.1, value=bin_size, step=0.001,
+                help="Time bin size for PSTH calculation"
+            )
+        
         display_window = (-peri_event/2, peri_event/2)
 
-        # Recompute p-values with current window
-        pvals = compute_psth_pvalues(spike_matrix, event_times, bin_size=bin_size, window=display_window)
-        sorted_indices = np.argsort(pvals)
-        sorted_pvals = pvals[sorted_indices]
-
-        # Save p-values if folder is provided
-        if selected_folder is not None:
-            # Display p-value statistics
-            significant_units = np.sum(pvals < 0.05)
-            st.info(f"P-value analysis: {significant_units}/{len(pvals)} units significant (p < 0.05)")
-            
-            # Auto-save p-values
-            save_success = save_pvalues_to_folder(pvals, selected_folder, window=display_window, bin_size=bin_size)
-            if save_success:
-                st.success(f"P-values auto-saved to {selected_folder}")
-            else:
-                st.error("Failed to auto-save p-values")
-            
-            # Manual save button
-            if st.button("Save P-values Manually"):
-                manual_save_success = save_pvalues_to_folder(pvals, selected_folder, window=display_window, bin_size=bin_size)
-                if manual_save_success:
-                    st.success(f"P-values manually saved to {selected_folder}")
-                else:
-                    st.error("Failed to manually save p-values")
-
-        # Use a slider to select the unit by sorted order
-        unit_rank = st.slider("Unit (sorted by p-value)", 0, len(sorted_pvals) - 1, 0)
-        unit_idx = sorted_indices[unit_rank]
-
-        # Load event windows data if available
+        # P-value Analysis Section
+        st.subheader("Statistical Analysis")
+        
+        # Load event windows data for accurate p-value calculation
         event_windows_data = None
         if selected_folder is not None:
             event_windows_data = load_event_windows_data(selected_folder)
-            if event_windows_data is not None:
-                st.success("Event windows data loaded successfully")
-            else:
-                st.warning("Event windows data not found")
-
-        # Create two columns for PSTH and raster plot
-        psth_col, raster_col = st.columns(2)
         
-        with psth_col:
-            st.subheader("PSTH")
-            # Plot PSTH for the selected unit (filtered)
+        # Recompute p-values with current window
+        if event_windows_data is not None:
+            # Use event windows data for more accurate p-value calculation
+            event_windows_matrix, time_axis, valid_event_indices, event_stimuli_outcome_df, metadata = event_windows_data
+            # Calculate p-values using the full event windows data
+            pvals = compute_psth_pvalues_from_event_windows(event_windows_matrix, event_times, bin_size=bin_size_display, window=display_window)
+        else:
+            # Fallback to original method
+            pvals = compute_psth_pvalues(spike_matrix, event_times, bin_size=bin_size_display, window=display_window)
+        
+        sorted_indices = np.argsort(pvals)
+        sorted_pvals = pvals[sorted_indices]
+        
+        # Display statistics
+        stats_col1, stats_col2, stats_col3, stats_col4 = st.columns(4)
+        with stats_col1:
+            st.metric("Total Units", len(pvals))
+        with stats_col2:
+            significant_units = np.sum(pvals < 0.05)
+            st.metric("Significant Units", f"{significant_units}/{len(pvals)}")
+        with stats_col3:
+            significance_rate = (significant_units / len(pvals)) * 100 if len(pvals) > 0 else 0
+            st.metric("Significance Rate", f"{significance_rate:.1f}%")
+        with stats_col4:
+            min_pval = np.min(pvals) if len(pvals) > 0 else 1.0
+            st.metric("Min P-value", f"{min_pval:.3g}")
+
+        # Save p-values if folder is provided
+        if selected_folder is not None:
+            if st.button("Save P-values"):
+                save_success = save_pvalues_to_folder(pvals, selected_folder, window=display_window, bin_size=bin_size_display)
+                if save_success:
+                    st.success(f"P-values saved")
+                else:
+                    st.error("Failed to save p-values")
+
+
+        # Unit Selection Section
+        st.subheader("Unit Selection")
+                # Unit selection controls
+        unit_col1, unit_col2, unit_col3 = st.columns(3)
+        
+        with unit_col1:
+            unit_rank = st.slider(
+                "Unit Rank (by p-value)", 
+                0, len(sorted_pvals) - 1, 0,
+                help="Select unit by statistical significance rank"
+            )
+            unit_idx = sorted_indices[unit_rank]
+        
+        with unit_col2:
+            st.metric("Selected Unit", unit_idx)
+            st.metric("P-value", f"{sorted_pvals[unit_rank]:.3g}")
+        
+        with unit_col3:
+            if len(sorted_pvals) > 0:
+                percentile = ((len(sorted_pvals) - unit_rank) / len(sorted_pvals)) * 100
+                st.metric("Percentile", f"{percentile:.1f}%")
+            else:
+                st.metric("Percentile", "N/A")
+
+        # Visualization Section
+        st.subheader("Visualizations")
+        
+        if event_windows_data is not None:
+            # Create two columns for PSTH and raster plot
+            viz_col1, viz_col2 = st.columns(2)
+            
+            with viz_col1:
+
+                psth_fig = plot_unit_psth(event_windows_data, display_window, unit_idx,sorted_pvals, unit_rank)
+                st.plotly_chart(psth_fig, use_container_width=True)
+            
+            with viz_col2:
+                # Create heatmap using the new function
+                heatmap_fig = plot_unit_heatmap(event_windows_data, display_window, unit_idx)
+                st.plotly_chart(heatmap_fig, use_container_width=True)
+                
+                # Heatmap statistics
+                trial_stats = get_trial_statistics(event_windows_data, unit_idx)
+                heatmap_stats_col1, heatmap_stats_col2, heatmap_stats_col3, heatmap_stats_col4 = st.columns(4)
+                with heatmap_stats_col1:
+                    st.metric("CR", trial_stats['CR'])
+                with heatmap_stats_col2:
+                    st.metric("FA", trial_stats['FA'])
+                with heatmap_stats_col3:
+                    st.metric("Miss", trial_stats['Miss'])
+                with heatmap_stats_col4:
+                    st.metric("Hit", trial_stats['Hit'])
+        else:
+            st.warning("No event windows data available. Please ensure data is loaded.")
+            
+            # Fallback to basic PSTH if no event windows data
+            st.subheader("Basic PSTH (Fallback)")
             psth_fig = plot_unit_psth(
                 spike_matrix, event_times, unit_idx,
-                bin_size=bin_size, window=display_window,
+                bin_size=bin_size_display, window=display_window,
                 event_outcomes=event_outcomes, stim_filter=stim_filter
             )
             st.plotly_chart(psth_fig, use_container_width=True)
-        
-        with raster_col:
-            st.subheader("Raster Plot")
-            if event_windows_data is not None:
-                event_windows_matrix, time_axis, valid_event_indices, event_stimuli_outcome_df, metadata = event_windows_data
-                
-                # Get outcomes for the valid events
-                event_outcomes_for_raster = None
-                if 'outcome' in event_stimuli_outcome_df.columns:
-                    event_outcomes_for_raster = event_stimuli_outcome_df['outcome'].values
-                
-                # Create raster plot
-                raster_fig = create_raster_plot_from_event_windows(
-                    event_windows_matrix, time_axis, unit_idx,
-                    event_outcomes=event_outcomes_for_raster, stim_filter=stim_filter
-                )
-                st.plotly_chart(raster_fig, use_container_width=True)
-                
-                # Display metadata
-                if metadata:
-                    st.caption(f"Event windows: {metadata.get('n_events', 'N/A')} events, "
-                             f"{metadata.get('n_time_bins', 'N/A')} time bins")
-            else:
-                st.info("Event windows data not available. Run preprocessing to generate event windows.")
+
+
     
     with tab2:
         st.header("Advanced Single Unit Analysis")

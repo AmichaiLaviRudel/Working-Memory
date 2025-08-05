@@ -80,18 +80,19 @@ function concatSessions()
         try
             fprintf('Concatenating sessions...\n');
             
-            % Load first file
-            merged_struct = load(sorted_files{1});
-            fprintf('Loaded: %s\n', sorted_files{1});
-            
-            % Concatenate with remaining files
-            for i = 2:length(sorted_files)
-                current_struct = load(sorted_files{i});
-                merged_struct = concatStructs(merged_struct, current_struct);
-                fprintf('Concatenated: %s\n', sorted_files{i});
-            end
-            
-            SessionData = merged_struct.SessionData;
+                         % Load first file
+             first_struct = load(sorted_files{1});
+             fprintf('Loaded: %s\n', sorted_files{1});
+             
+             % Concatenate with remaining files
+             merged_struct = first_struct;
+             for i = 2:length(sorted_files)
+                 current_struct = load(sorted_files{i});
+                 merged_struct.SessionData = concatStructs(merged_struct.SessionData, current_struct.SessionData);
+                 fprintf('Concatenated: %s\n', sorted_files{i});
+             end
+             
+             SessionData = merged_struct.SessionData;
             
             %% Step 6: Save merged file in original location
             % Use the first file's location and name as the merged file
@@ -129,78 +130,5 @@ function concatSessions()
     fprintf('\nConcatenation complete!\n');
 end
 
-function merged = concatStructs(struct1, struct2)
-    %% Helper function to concatenate two SessionData structures
-    % This function merges the fields of two SessionData structures
-    % by concatenating arrays and combining other data appropriately
-    
-    if ~isfield(struct1, 'SessionData') || ~isfield(struct2, 'SessionData')
-        error('Both structures must contain SessionData field');
-    end
-    
-    sd1 = struct1.SessionData;
-    sd2 = struct2.SessionData;
-    
-    merged = struct1;
-    merged_sd = sd1;
-    
-    % Get field names
-    fields1 = fieldnames(sd1);
-    fields2 = fieldnames(sd2);
-    
-    % Process each field
-    for i = 1:length(fields1)
-        field_name = fields1{i};
-        
-        if isfield(sd2, field_name)
-            val1 = sd1.(field_name);
-            val2 = sd2.(field_name);
-            
-            % Handle different field types
-            if iscell(val1) && iscell(val2)
-                % Concatenate cell arrays
-                merged_sd.(field_name) = [val1; val2];
-            elseif isnumeric(val1) && isnumeric(val2)
-                % Concatenate numeric arrays
-                if size(val1, 1) == 1 && size(val2, 1) == 1
-                    % Row vectors - concatenate horizontally
-                    merged_sd.(field_name) = [val1, val2];
-                else
-                    % Column vectors or matrices - concatenate vertically
-                    merged_sd.(field_name) = [val1; val2];
-                end
-            elseif isstruct(val1) && isstruct(val2)
-                % Handle nested structures (like RawEvents)
-                if strcmp(field_name, 'RawEvents')
-                    % Special handling for RawEvents
-                    merged_sd.(field_name) = concatRawEvents(val1, val2);
-                else
-                    % For other structures, just use the first one
-                    merged_sd.(field_name) = val1;
-                end
-            else
-                % For other types, use the first value
-                merged_sd.(field_name) = val1;
-            end
-        end
-    end
-    
-    merged.SessionData = merged_sd;
-end
 
-function merged_events = concatRawEvents(events1, events2)
-    %% Helper function to concatenate RawEvents structures
-    % This handles the complex RawEvents structure specifically
-    
-    merged_events = events1;
-    
-    if isfield(events1, 'Trial') && isfield(events2, 'Trial')
-        % Concatenate Trial arrays
-        merged_events.Trial = [events1.Trial; events2.Trial];
-    end
-    
-    % Handle other RawEvents fields as needed
-    % Add more specific concatenation logic here if needed
-    
-end
 
