@@ -53,6 +53,130 @@ def save_pvalues_to_folder(pvals, selected_folder, window=(-1, 2), bin_size=0.01
         print(f"Error saving p-values: {e}")
         return False
 
+def save_all_psth_metrics(event_windows_data, selected_folder, display_window, pvals=None, baseline_window=(-0.5, 0)):
+    """
+    Save PSTH metrics for all units to the analysis output folder.
+    
+    Args:
+        event_windows_data: tuple containing (event_windows_matrix, time_axis, valid_event_indices, event_stimuli_outcome_df, metadata)
+        selected_folder: path to the analysis output folder
+        display_window: tuple of (start, end) time for the display window
+        pvals: numpy array of p-values for each unit (optional)
+        baseline_window: tuple of (start, end) time for baseline calculation
+        
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    try:
+        # Extract data from event_windows_data
+        event_windows_matrix, time_axis, valid_event_indices, event_stimuli_outcome_df, metadata = event_windows_data
+        
+        # Create single_unit subfolder
+        single_unit_folder = os.path.join(selected_folder, "single_unit")
+        os.makedirs(single_unit_folder, exist_ok=True)
+        
+        # Initialize list to store all metrics
+        all_metrics = []
+        
+        # Calculate metrics for each unit
+        num_units = event_windows_matrix.shape[0]
+        for unit_idx in range(num_units):
+            # Get unit data
+            unit_data = event_windows_matrix[unit_idx, :, :]  # [time × events]
+            
+            # Calculate PSTH metrics
+            metrics = calculate_psth_metrics(unit_data, time_axis, baseline_window)
+            
+            # Add unit index to metrics
+            metrics['unit_index'] = unit_idx
+            
+            # Add p-value if available
+            if pvals is not None and unit_idx < len(pvals):
+                metrics['p_value'] = pvals[unit_idx]
+                metrics['significant'] = pvals[unit_idx] < 0.05
+            else:
+                metrics['p_value'] = np.nan
+                metrics['significant'] = False
+            
+            # Flatten suppression metrics for CSV storage
+            if isinstance(metrics['suppression_metrics'], dict):
+                metrics['suppression_magnitude'] = metrics['suppression_metrics']['magnitude']
+                metrics['suppression_duration'] = metrics['suppression_metrics']['duration']
+                metrics['fraction_suppressed'] = metrics['suppression_metrics']['fraction_suppressed']
+                del metrics['suppression_metrics']  # Remove the nested dict
+            
+            all_metrics.append(metrics)
+        
+        # Convert to DataFrame
+        metrics_df = pd.DataFrame(all_metrics)
+        
+        # Reorder columns to put unit_index first
+        cols = ['unit_index'] + [col for col in metrics_df.columns if col != 'unit_index']
+        metrics_df = metrics_df[cols]
+        
+        # Save to CSV
+        metrics_file = os.path.join(single_unit_folder, "psth_metrics.csv")
+        metrics_df.to_csv(metrics_file, index=False)
+        
+        # Save metadata
+        metadata_file = os.path.join(single_unit_folder, "psth_metrics_metadata.txt")
+        with open(metadata_file, 'w') as f:
+            f.write(f"Analysis Date: {pd.Timestamp.now()}\n")
+            f.write(f"Total Units: {num_units}\n")
+            f.write(f"Display Window: {display_window[0]} to {display_window[1]} seconds\n")
+            f.write(f"Baseline Window: {baseline_window[0]} to {baseline_window[1]} seconds\n")
+            f.write(f"Time Axis Range: {time_axis[0]:.3f} to {time_axis[-1]:.3f} seconds\n")
+            f.write(f"Number of Events: {event_windows_matrix.shape[2]}\n")
+            f.write(f"Time Bins: {len(time_axis)}\n")
+            if pvals is not None:
+                f.write(f"P-values Available: Yes\n")
+                f.write(f"Significant Units (p < 0.05): {np.sum(pvals < 0.05)}\n")
+            else:
+                f.write(f"P-values Available: No\n")
+            f.write("\nMetrics Description and Mathematical Formulas:\n")
+            f.write("- response_type: Type of response ('excitation' or 'suppression')\n")
+            f.write("  Formula: excitation if max_deviation >= min_deviation, else suppression\n")
+            f.write("- onset_latency: Time from event onset to first significant response (seconds)\n")
+            f.write("  Formula: min(t | rate(t) > baseline_rate + 2*std) for excitation\n")
+            f.write("  Formula: min(t | rate(t) < baseline_rate - 2*std) for suppression\n")
+            f.write("- peak_latency: Time from event onset to peak response (seconds)\n")
+            f.write("  Formula: argmax(rate(t)) for excitation, argmin(rate(t)) for suppression\n")
+            f.write("- response_magnitude: Peak response magnitude relative to baseline (spikes/s)\n")
+            f.write("  Formula: max(rate(t)) - baseline_rate for excitation\n")
+            f.write("  Formula: baseline_rate - min(rate(t)) for suppression\n")
+            f.write("- fwhm: Full-width at half-maximum of the response (seconds)\n")
+            f.write("  Formula: t2 - t1 where rate(t1) = rate(t2) = baseline + (peak - baseline)/2 for excitation\n")
+            f.write("  Formula: t2 - t1 where rate(t1) = rate(t2) = baseline - (baseline - peak)/2 for suppression\n")
+            f.write("- rise_time: Time from onset to peak (seconds)\n")
+            f.write("  Formula: peak_latency - onset_latency\n")
+            f.write("- decay_time: Time from peak to return to baseline (seconds)\n")
+            f.write("  Formula: t_return - peak_latency where rate(t_return) ≈ baseline_rate + std for excitation\n")
+            f.write("  Formula: t_return - peak_latency where rate(t_return) ≈ baseline_rate - std for suppression\n")
+            f.write("- trial_variability: Coefficient of variation across trials\n")
+            f.write("  Formula: std(trial_rates) / mean(trial_rates)\n")
+            f.write("- signal_to_noise: Response magnitude divided by baseline standard deviation\n")
+            f.write("  Formula: response_magnitude / std(baseline_rate)\n")
+            f.write("- baseline_rate: Average firing rate during baseline period (spikes/s)\n")
+            f.write("  Formula: mean(rate(t)) where t is in baseline window\n")
+            f.write("- peak_rate: Peak firing rate during response period (spikes/s)\n")
+            f.write("  Formula: max(rate(t)) for excitation, min(rate(t)) for suppression\n")
+            f.write("- suppression_magnitude: Magnitude of suppression below baseline (spikes/s)\n")
+            f.write("  Formula: baseline_rate - min(rate(t)) where rate(t) < baseline_rate\n")
+            f.write("- suppression_duration: Duration of suppression period (seconds)\n")
+            f.write("  Formula: sum(dt) where rate(t) < baseline_rate\n")
+            f.write("- fraction_suppressed: Fraction of response period that was suppressed\n")
+            f.write("  Formula: suppression_duration / total_response_duration\n")
+            f.write("- p_value: Statistical significance of response modulation\n")
+            f.write("  Formula: Mann-Whitney U test between baseline and response periods\n")
+            f.write("- significant: Boolean indicating p < 0.05\n")
+            f.write("  Formula: p_value < 0.05\n")
+        
+        return True
+        
+    except Exception as e:
+        print(f"Error saving PSTH metrics: {e}")
+        return False
+
 def compute_stimulus_selectivity(spike_matrix, stimuli_outcome_df, unit_idx, window=(-0.2, 0.5)):
     """
     Compute stimulus selectivity for a single unit.
@@ -289,7 +413,6 @@ def fit_glm_single_unit(spike_matrix, stimuli_outcome_df, unit_idx, window=(-0.1
     except:
         return None, None,  None, None
 
-
 def plot_advanced_unit_analysis(spike_matrix, stimuli_outcome_df, unit_idx, bin_size=0.01):
     """
     Create comprehensive plots for advanced single unit analysis.
@@ -329,25 +452,81 @@ def plot_advanced_unit_analysis(spike_matrix, stimuli_outcome_df, unit_idx, bin_
     
     return fig
 
-def plot_unit_psth(event_windows_data, display_window, unit_idx,sorted_pvals, unit_rank):
+def plot_unit_psth(event_windows_data, display_window, unit_idx, sorted_pvals, unit_rank, outcome_filter="All", bin_size=0.01):
     """
     Plots PSTH for a single unit aligned to event_times, adds a vertical line at x=0, and calculates significance (Mann-Whitney U test) between pre- and post-event activity.
+    
     Args:
-        spike_matrix: 2D array [units x time_bins] (firing rate)
-        event_times: 1D array of event times (in seconds)
+        event_windows_data: Tuple containing (event_windows_matrix, time_axis, valid_event_indices, event_stimuli_outcome_df, metadata)
+        display_window: Tuple of (start_time, end_time) for the display window
         unit_idx: int, index of the unit to plot
-        bin_size: float, bin size in seconds for PSTH
-        window: tuple, time window around event (start, end) in seconds
+        sorted_pvals: array of sorted p-values
+        unit_rank: int, rank of the unit in the sorted p-values
+        outcome_filter: str, filter for specific outcome types ("All", "Go", "NoGo", "Hit", "Miss", "False Alarm", "CR")
     """
+    event_windows_matrix, time_axis, valid_event_indices, event_stimuli_outcome_df, metadata = event_windows_data
+    import streamlit as st
+    # Get the unit's data
+    unit_data = event_windows_matrix[unit_idx, :, :]  # Shape: [time × events]
+    n_time_bins = event_windows_matrix.shape[1]
+    
+    # Create time axis for the window
+    peri_event_window = np.linspace(display_window[0], display_window[1], n_time_bins)
+    # Find the index corresponding to time 0
+    zero_idx = np.argmin(np.abs(peri_event_window))
+    unit_data = unit_data[zero_idx+int(display_window[0]*10):zero_idx+int(display_window[1]*10),:]
 
-    # Plot PSTH for the selected unit
-    unit_data = event_windows_data[0][unit_idx, :, :]
-    psth_mean = np.mean(unit_data, axis=1)  # Average across events
-    psth_sem = np.std(unit_data, axis=1) / np.sqrt(unit_data.shape[1])  # SEM across events
+    event_outcomes = None
+    if 'outcome' in event_stimuli_outcome_df.columns:
+        event_outcomes = event_stimuli_outcome_df['outcome'].values
+    
+    # Filter data by outcome if specified
+    if outcome_filter != "All" and event_outcomes is not None:
+        if outcome_filter == "Go":
+            hit_mask = event_outcomes == "Hit"
+            miss_mask = event_outcomes == "Miss"
+            outcome_mask = hit_mask | miss_mask
+        elif outcome_filter == "NoGo":
+            false_alarm_mask = event_outcomes == "False Alarm"
+            correct_rejection_mask = event_outcomes == "CR"
+            outcome_mask = false_alarm_mask | correct_rejection_mask
+        else:
+            outcome_mask = event_outcomes == outcome_filter
+        
+        if np.sum(outcome_mask) > 0:
+            unit_data = unit_data[:, outcome_mask]
+            filtered_outcomes = event_outcomes[outcome_mask]
+        else:
+            # If no events match the filter, return empty plot
+            psth_fig = go.Figure()
+            psth_fig.update_layout(
+                title=f"PSTH - Unit {unit_idx} ({outcome_filter}) - No data available",
+                xaxis_title="Time (s)",
+                yaxis_title="Firing Rate (spikes/s)",
+                xaxis=dict(constrain='domain'),
+                margin=dict(r=80),
+                plot_bgcolor='white',
+                paper_bgcolor='white'
+            )
+            return psth_fig
+    else:
+        filtered_outcomes = event_outcomes
+    
+    # Calculate PSTH statistics
+    if unit_data.shape[1] > 0:
+        psth_mean = np.mean(unit_data, axis=1)  # Average across events
+        psth_sem = np.std(unit_data, axis=1) / np.sqrt(unit_data.shape[1])  # SEM across events
+    else:
+        # If no data, create empty arrays
+        psth_mean = np.zeros(unit_data.shape[0])
+        psth_sem = np.zeros(unit_data.shape[0])
     
     # Create time axis for PSTH that matches the display_window
     num_time_bins = unit_data.shape[0]
     psth_time_axis = np.linspace(display_window[0], display_window[1], num_time_bins)
+    
+    # Calculate comprehensive PSTH metrics
+    psth_metrics = calculate_psth_metrics(unit_data, psth_time_axis)
     
     # Create PSTH plot with proper time axis
     psth_fig = go.Figure()
@@ -377,51 +556,222 @@ def plot_unit_psth(event_windows_data, display_window, unit_idx,sorted_pvals, un
         x=0, 
         line_dash="dash", 
         line_color=COLOR_GRAY, 
-        line_width=2,
-        annotation_text="Event Onset",
-        annotation_position="top right"
+        line_width=2
     )
     
-    psth_fig.update_layout(
-        title=f"PSTH - Unit {unit_idx} (p={sorted_pvals[unit_rank]:.3g})",
-        xaxis_title="Time (s)",
-            yaxis_title="Firing Rate (spikes/s)",
-            xaxis=dict(constrain='domain'),
-            margin=dict(r=80),
-            plot_bgcolor='white',
-            paper_bgcolor='white'
+    # Add markers for key metrics if they exist
+    if not np.isnan(psth_metrics['onset_latency']):
+        psth_fig.add_vline(
+            x=psth_metrics['onset_latency'],
+            line_dash="dot",
+            line_color="orange",
+            line_width=2,
+            annotation_text=f"Onset",
+            annotation_position="top left",
+            annotation=dict(textangle=90)  # Rotate annotation 90 degrees
         )
-    return psth_fig
-
     
-def compute_psth_pvalues(spike_matrix, event_times, bin_size=0.01, window=(-1, 2)):
-    from Analysis.GNG_bpod_analysis.stats_tests import mannwhitneyu
-    n_units = spike_matrix.shape[0]
-    pvals = []
-    n_bins = spike_matrix.shape[1]
-    peri_event_window = np.arange(window[0], window[1], bin_size)
-    for unit_idx in range(n_units):
-        peri_event_hist = np.zeros_like(peri_event_window)
-        n_events = 0
-        for t in event_times:
-            event_bin = int(t / bin_size)
-            start_bin = event_bin + int(window[0] / bin_size)
-            end_bin = event_bin + int(window[1] / bin_size)
-            if start_bin < 0 or end_bin > n_bins:
-                continue
-            segment = spike_matrix[unit_idx, start_bin:end_bin]
-            if segment.shape[0] != peri_event_hist.shape[0]:
-                continue
-            peri_event_hist += segment
-            n_events += 1
-        if n_events > 0:
-            peri_event_hist = peri_event_hist / n_events  # average
-        zero_idx = np.where(peri_event_window >= 0)[0][0]
-        pre = peri_event_hist[:zero_idx]
-        post = peri_event_hist[zero_idx:]
-        stat, p = mannwhitneyu(pre, post, alternative='two-sided')
-        pvals.append(p)
-    return np.array(pvals)
+    if not np.isnan(psth_metrics['peak_latency']):
+        psth_fig.add_vline(
+            x=psth_metrics['peak_latency'],
+            line_dash="dot",
+            line_color="red",
+            line_width=2,
+            annotation_text=f"Peak",
+            annotation_position="top left",
+            annotation=dict(textangle=90)  # Rotate annotation 90 degrees
+        )
+        
+        # Add horizontal line at half-maximum for FWHM visualization
+        if not np.isnan(psth_metrics['fwhm']):
+            half_max = psth_metrics['baseline_rate'] + (psth_metrics['peak_rate'] - psth_metrics['baseline_rate']) / 2
+            psth_fig.add_hline(
+                y=half_max,
+                line_dash="dot",
+                line_color="purple",
+                line_width=1,
+                annotation_text=f"Half-Max: {half_max:.2f}",
+                annotation_position="right",
+                annotation=dict(textangle=90)  # Rotate annotation 90 degrees
+            )
+    
+    # Create title with outcome filter information
+    title_text = f"PSTH - Unit {unit_idx} (p={sorted_pvals[unit_rank]:.3g})"
+    if outcome_filter != "All":
+        title_text += f" - {outcome_filter} (n={unit_data.shape[1]})"
+    else:
+        title_text += f" - All trials (n={unit_data.shape[1]})"
+    
+    psth_fig.update_layout(
+        title=title_text,
+        xaxis_title="Time (s)",
+        yaxis_title="Firing Rate (spikes/s)",
+        xaxis=dict(constrain='domain'),
+        margin=dict(r=80),
+        plot_bgcolor='white',
+        paper_bgcolor='white'
+    )
+    return psth_fig, psth_metrics
+
+
+def calculate_psth_metrics(unit_data, time_axis, baseline_window=(-0.5, 0)):
+    """
+    Calculate comprehensive PSTH metrics for a single unit.
+    
+    Args:
+        unit_data: 2D array [time × events] for the unit
+        time_axis: 1D array of time points
+        baseline_window: tuple of (start, end) time for baseline calculation
+        
+    Returns:
+        dict: Dictionary containing all PSTH metrics
+    """
+    # Calculate PSTH
+    psth_mean = np.mean(unit_data, axis=1)  # Average across events
+    psth_sem = np.std(unit_data, axis=1) / np.sqrt(unit_data.shape[1])  # SEM across events
+    
+    # Find baseline period
+    baseline_mask = (time_axis >= baseline_window[0]) & (time_axis < baseline_window[1])
+    if np.sum(baseline_mask) == 0:
+        baseline_mask = time_axis < 0  # Fallback to pre-stimulus period
+    
+    baseline_mean = np.mean(psth_mean[baseline_mask])
+    baseline_std = np.std(psth_mean[baseline_mask])
+    
+    # Find response period (post-stimulus)
+    response_mask = time_axis >= 0
+    response_data = psth_mean[response_mask]
+    response_times = time_axis[response_mask]
+    
+    if len(response_data) == 0:
+        return {
+            'onset_latency': np.nan,
+            'peak_latency': np.nan,
+            'response_magnitude': np.nan,
+            'fwhm': np.nan,
+            'rise_time': np.nan,
+            'decay_time': np.nan,
+            'suppression_metrics': np.nan,
+            'trial_variability': np.nan,
+            'signal_to_noise': np.nan,
+            'baseline_rate': baseline_mean,
+            'peak_rate': np.nan
+        }
+    
+    # 1. Determine response type (excitation vs suppression)
+    max_response = np.max(response_data)
+    min_response = np.min(response_data)
+    max_deviation_from_baseline = max_response - baseline_mean
+    min_deviation_from_baseline = baseline_mean - min_response
+    
+    if max_deviation_from_baseline >= min_deviation_from_baseline:
+        # Excitatory response (or no clear preference)
+        peak_idx = np.argmax(response_data)
+        peak_latency = response_times[peak_idx]
+        peak_rate = response_data[peak_idx]
+        response_magnitude = peak_rate - baseline_mean
+        response_type = "excitation"
+    else:
+        # Suppressive response
+        peak_idx = np.argmin(response_data)
+        peak_latency = response_times[peak_idx]
+        peak_rate = response_data[peak_idx]
+        response_magnitude = baseline_mean - peak_rate  # Positive value for suppression
+        response_type = "suppression"
+    
+    # 2. Onset latency (first time point where response deviates significantly from baseline)
+    if response_type == "excitation":
+        threshold = baseline_mean + 2 * baseline_std
+        onset_indices = np.where(response_data > threshold)[0]
+    else:  # suppression
+        threshold = baseline_mean - 2 * baseline_std
+        onset_indices = np.where(response_data < threshold)[0]
+    
+    onset_latency = response_times[onset_indices[0]] if len(onset_indices) > 0 else np.nan
+    
+    # 3. Full-width at half-maximum (FWHM)
+    if response_type == "excitation":
+        half_max = baseline_mean + (peak_rate - baseline_mean) / 2
+        above_half_max = response_data >= half_max
+    else:  # suppression
+        half_max = baseline_mean - (baseline_mean - peak_rate) / 2
+        above_half_max = response_data <= half_max
+    
+    if np.sum(above_half_max) > 0:
+        first_half_max = np.where(above_half_max)[0][0]
+        last_half_max = np.where(above_half_max)[0][-1]
+        fwhm = response_times[last_half_max] - response_times[first_half_max]
+    else:
+        fwhm = np.nan
+    
+    # 4. Rise time (time from onset to peak)
+    if not np.isnan(onset_latency):
+        rise_time = peak_latency - onset_latency
+    else:
+        rise_time = np.nan
+    
+    # 5. Decay time (time from peak to return to baseline)
+    if response_type == "excitation":
+        decay_threshold = baseline_mean + baseline_std
+        decay_indices = np.where((response_data <= decay_threshold) & (response_times > peak_latency))[0]
+    else:  # suppression
+        decay_threshold = baseline_mean - baseline_std
+        decay_indices = np.where((response_data >= decay_threshold) & (response_times > peak_latency))[0]
+    
+    decay_time = response_times[decay_indices[0]] - peak_latency if len(decay_indices) > 0 else np.nan
+    
+    # 6. Suppression metrics (general response characteristics)
+    if response_type == "suppression":
+        # For suppressive responses, calculate suppression characteristics
+        suppression_mask = response_data < baseline_mean
+        suppression_magnitude = baseline_mean - np.min(response_data)
+        suppression_duration = np.sum(suppression_mask) * (time_axis[1] - time_axis[0]) if len(time_axis) > 1 else 0
+        suppression_metrics = {
+            'magnitude': suppression_magnitude,
+            'duration': suppression_duration,
+            'fraction_suppressed': np.sum(suppression_mask) / len(response_data)
+        }
+    else:
+        # For excitatory responses, calculate any suppression periods
+        suppression_mask = response_data < baseline_mean
+        if np.sum(suppression_mask) > 0:
+            suppression_magnitude = baseline_mean - np.min(response_data[suppression_mask])
+            suppression_duration = np.sum(suppression_mask) * (time_axis[1] - time_axis[0]) if len(time_axis) > 1 else 0
+            suppression_metrics = {
+                'magnitude': suppression_magnitude,
+                'duration': suppression_duration,
+                'fraction_suppressed': np.sum(suppression_mask) / len(response_data)
+            }
+        else:
+            suppression_metrics = {
+                'magnitude': 0,
+                'duration': 0,
+                'fraction_suppressed': 0
+            }
+    
+    # 7. Trial-to-trial variability (coefficient of variation)
+    trial_variability = np.std(unit_data, axis=1) / (np.mean(unit_data, axis=1) + 1e-10)  # Add small constant to avoid division by zero
+    mean_variability = np.mean(trial_variability[response_mask])
+    
+    # 8. Signal-to-noise ratio
+    signal = response_magnitude
+    noise = baseline_std
+    signal_to_noise = signal / (noise + 1e-10)  # Add small constant to avoid division by zero
+    
+    return {
+        'onset_latency': onset_latency,
+        'peak_latency': peak_latency,
+        'response_magnitude': response_magnitude,
+        'response_type': response_type,
+        'fwhm': fwhm,
+        'rise_time': rise_time,
+        'decay_time': decay_time,
+        'suppression_metrics': suppression_metrics,
+        'trial_variability': mean_variability,
+        'signal_to_noise': signal_to_noise,
+        'baseline_rate': baseline_mean,
+        'peak_rate': peak_rate
+    }
 
 
 def compute_psth_pvalues_from_event_windows(event_windows_matrix, event_times, bin_size=0.01, window=(-1, 2)):
@@ -471,7 +821,6 @@ def compute_psth_pvalues_from_event_windows(event_windows_matrix, event_times, b
         pvals.append(p)
     
     return np.array(pvals)
-
 
 def load_event_windows_data(folder):
     """
@@ -639,7 +988,6 @@ def plot_unit_heatmap(event_windows_data, display_window, unit_idx):
     
     return fig
 
-
 def get_trial_statistics(event_windows_data, unit_idx):
     """
     Get trial statistics for a specific unit from event windows data.
@@ -684,7 +1032,7 @@ def single_unit_analysis_panel(
     spike_matrix, stimuli_outcome_df, selected_folder=None, bin_size=0.01, default_window=1.0):
     import streamlit as st
     import numpy as np
-    from .npxl_single_unit_analysis import plot_unit_psth, compute_psth_pvalues
+    from .npxl_single_unit_analysis import plot_unit_psth
     from Analysis.NPXL_analysis.population_analysis import plot_population_heatmap
 
     event_times = stimuli_outcome_df['time'].values 
@@ -699,32 +1047,26 @@ def single_unit_analysis_panel(
         
         # Control Panel Section
         st.subheader("Analysis Controls")
-        control_col1, control_col2, control_col3 = st.columns(3)
+        control_col1, control_col2 = st.columns(2)
+        
         
         with control_col1:
-            stim_filter = st.radio(
-                "Stimulus Filter",
-                options=["All", "Go", "NoGo"],
-                index=0,
-                horizontal=True,
-                help="Filter events by trial type"
-            )
-        
-        with control_col2:
             peri_event = st.slider(
                 "PSTH Window Size", 
                 0.1, 3.0, default_window, step=0.10,
                 help="Time window around event onset (seconds)"
             )
+            display_window = (-peri_event/2, peri_event/2)
         
-        with control_col3:
+        with control_col2:
             bin_size_display = st.number_input(
                 "Bin Size (s)", 
                 min_value=0.001, max_value=0.1, value=bin_size, step=0.001,
                 help="Time bin size for PSTH calculation"
             )
         
-        display_window = (-peri_event/2, peri_event/2)
+                   
+
 
         # P-value Analysis Section
         st.subheader("Statistical Analysis")
@@ -740,15 +1082,13 @@ def single_unit_analysis_panel(
             event_windows_matrix, time_axis, valid_event_indices, event_stimuli_outcome_df, metadata = event_windows_data
             # Calculate p-values using the full event windows data
             pvals = compute_psth_pvalues_from_event_windows(event_windows_matrix, event_times, bin_size=bin_size_display, window=display_window)
-        else:
-            # Fallback to original method
-            pvals = compute_psth_pvalues(spike_matrix, event_times, bin_size=bin_size_display, window=display_window)
+
         
         sorted_indices = np.argsort(pvals)
         sorted_pvals = pvals[sorted_indices]
         
         # Display statistics
-        stats_col1, stats_col2, stats_col3, stats_col4 = st.columns(4)
+        stats_col1, stats_col2, stats_col3 = st.columns(3)
         with stats_col1:
             st.metric("Total Units", len(pvals))
         with stats_col2:
@@ -757,24 +1097,34 @@ def single_unit_analysis_panel(
         with stats_col3:
             significance_rate = (significant_units / len(pvals)) * 100 if len(pvals) > 0 else 0
             st.metric("Significance Rate", f"{significance_rate:.1f}%")
-        with stats_col4:
-            min_pval = np.min(pvals) if len(pvals) > 0 else 1.0
-            st.metric("Min P-value", f"{min_pval:.3g}")
 
-        # Save p-values if folder is provided
-        if selected_folder is not None:
-            if st.button("Save P-values"):
-                save_success = save_pvalues_to_folder(pvals, selected_folder, window=display_window, bin_size=bin_size_display)
-                if save_success:
-                    st.success(f"P-values saved")
-                else:
-                    st.error("Failed to save p-values")
+
+        # # Save p-values and metrics automatically once
+        # if selected_folder is not None:
+        #     try:
+        #         save_pvalues_to_folder(pvals, selected_folder, window=display_window, bin_size=bin_size_display)
+        #     except Exception as e:
+        #         st.error(f"Error saving p-values: {e}")
+
+        #     try:
+        #         save_all_psth_metrics(event_windows_data, selected_folder, display_window, pvals)
+        #         st.toast("PSTH metrics saved (auto)")
+        #     except Exception as e:
+        #         st.error(f"Error saving PSTH metrics: {e}")
+
+        #     # Add button for manual save
+        #     if st.button("Save PSTH Metrics Again"):
+        #         try:
+        #             save_all_psth_metrics(event_windows_data, selected_folder, display_window, pvals)
+        #             st.toast("PSTH metrics saved (manual)")
+        #         except Exception as e:
+        #             st.error(f"Error saving PSTH metrics: {e}")
 
 
         # Unit Selection Section
         st.subheader("Unit Selection")
                 # Unit selection controls
-        unit_col1, unit_col2, unit_col3 = st.columns(3)
+        unit_col1, unit_col2 = st.columns(2)
         
         with unit_col1:
             unit_rank = st.slider(
@@ -788,13 +1138,6 @@ def single_unit_analysis_panel(
             st.metric("Selected Unit", unit_idx)
             st.metric("P-value", f"{sorted_pvals[unit_rank]:.3g}")
         
-        with unit_col3:
-            if len(sorted_pvals) > 0:
-                percentile = ((len(sorted_pvals) - unit_rank) / len(sorted_pvals)) * 100
-                st.metric("Percentile", f"{percentile:.1f}%")
-            else:
-                st.metric("Percentile", "N/A")
-
         # Visualization Section
         st.subheader("Visualizations")
         
@@ -804,8 +1147,42 @@ def single_unit_analysis_panel(
             
             with viz_col1:
 
-                psth_fig = plot_unit_psth(event_windows_data, display_window, unit_idx,sorted_pvals, unit_rank)
+                outcome_filter = st.selectbox(
+                "Outcome Filter",
+                options=["All", "Go", "NoGo", "Hit", "Miss", "False Alarm", "CR"],
+                index=0,
+                help="Filter PSTH by specific outcome type")
+                psth_fig, psth_metrics = plot_unit_psth(event_windows_data, display_window, unit_idx, sorted_pvals, unit_rank, outcome_filter)
                 st.plotly_chart(psth_fig, use_container_width=True)
+                
+                # Display PSTH Metrics
+                st.subheader("PSTH Metrics")
+                metrics_col1, metrics_col2 = st.columns(2)
+                
+                with metrics_col1:
+                    st.metric("Onset Latency", f"{psth_metrics['onset_latency']:.3f}s" if not np.isnan(psth_metrics['onset_latency']) else "N/A")
+                    st.metric("Peak Latency", f"{psth_metrics['peak_latency']:.3f}s" if not np.isnan(psth_metrics['peak_latency']) else "N/A")
+                    st.metric("Response Magnitude", f"{psth_metrics['response_magnitude']:.2f} spikes/s" if not np.isnan(psth_metrics['response_magnitude']) else "N/A")
+                    st.metric("FWHM", f"{psth_metrics['fwhm']:.3f}s" if not np.isnan(psth_metrics['fwhm']) else "N/A")
+                    st.metric("Rise Time", f"{psth_metrics['rise_time']:.3f}s" if not np.isnan(psth_metrics['rise_time']) else "N/A")
+                
+                with metrics_col2:
+                    st.metric("Decay Time", f"{psth_metrics['decay_time']:.3f}s" if not np.isnan(psth_metrics['decay_time']) else "N/A")
+                    st.metric("Trial Variability", f"{psth_metrics['trial_variability']:.3f}" if not np.isnan(psth_metrics['trial_variability']) else "N/A")
+                    st.metric("Signal-to-Noise", f"{psth_metrics['signal_to_noise']:.2f}" if not np.isnan(psth_metrics['signal_to_noise']) else "N/A")
+                    st.metric("Baseline Rate", f"{psth_metrics['baseline_rate']:.2f} spikes/s")
+                    st.metric("Peak Rate", f"{psth_metrics['peak_rate']:.2f} spikes/s" if not np.isnan(psth_metrics['peak_rate']) else "N/A")
+                
+                # Suppression metrics (if applicable)
+                if psth_metrics['suppression_metrics']['magnitude'] > 0:
+                    st.subheader("Suppression Metrics")
+                    supp_col1, supp_col2, supp_col3 = st.columns(3)
+                    with supp_col1:
+                        st.metric("Suppression Magnitude", f"{psth_metrics['suppression_metrics']['magnitude']:.2f} spikes/s")
+                    with supp_col2:
+                        st.metric("Suppression Duration", f"{psth_metrics['suppression_metrics']['duration']:.3f}s")
+                    with supp_col3:
+                        st.metric("Fraction Suppressed", f"{psth_metrics['suppression_metrics']['fraction_suppressed']:.2f}")
             
             with viz_col2:
                 # Create heatmap using the new function
@@ -828,11 +1205,15 @@ def single_unit_analysis_panel(
             
             # Fallback to basic PSTH if no event windows data
             st.subheader("Basic PSTH (Fallback)")
+            # Note: Fallback PSTH doesn't support metrics yet
+            st.warning("PSTH metrics not available in fallback mode")
             psth_fig = plot_unit_psth(
                 spike_matrix, event_times, unit_idx,
                 bin_size=bin_size_display, window=display_window,
-                event_outcomes=event_outcomes, stim_filter=stim_filter
+                event_outcomes=event_outcomes
             )
+            if isinstance(psth_fig, tuple):
+                psth_fig = psth_fig[0]  # Extract just the figure
             st.plotly_chart(psth_fig, use_container_width=True)
 
 

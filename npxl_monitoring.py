@@ -4,7 +4,7 @@ import time
 import numpy as np
 import os
 from Analysis.GNG_bpod_analysis.colors import COLOR_HIT, COLOR_MISS, COLOR_FA, COLOR_CR
-from Analysis.NPXL_analysis.npxl_single_unit_analysis import plot_unit_psth, compute_psth_pvalues, single_unit_analysis_panel
+from Analysis.NPXL_analysis.npxl_single_unit_analysis import single_unit_analysis_panel
 from Analysis.NPXL_analysis.population_analysis import plot_population_heatmap
 
 # Load the experimental data
@@ -36,10 +36,11 @@ if st.button("Save Changes"):
     st.rerun()
 
 st.divider()
-st.subheader("Analysis")
+
 
 # Check if 'Checkbox' column exists and has any True values
 if 'Checkbox' in st_project_data.columns and st_project_data['Checkbox'].any():
+    st.subheader("Analysis")
     for idx, row in st_project_data[st_project_data['Checkbox'] == True].iterrows():
         current_dir = row.get('current_dir', None)
         if current_dir and isinstance(current_dir, str):
@@ -49,8 +50,17 @@ if 'Checkbox' in st_project_data.columns and st_project_data['Checkbox'].any():
                     if d == "analysis_output":
                         analysis_output_dirs.append(os.path.join(root, d))
             
-            # Create 4 Streamlit tabs for analysis
-            single_unit_tab, population_tab, multi_tab, fra_tab = st.tabs(["Single Unit", "Population", "Multi", "FRA"])
+            FRA_session = False
+            if 'FRA' in root:
+                st.badge("FRA Analysis")
+                # Create 2 Streamlit tabs for analysis
+                single_unit_tab, fra_tab = st.tabs(["Single Unit", "FRA"])
+                FRA_session = True
+
+            else:
+                st.badge("Behavior Analysis")
+                # Create 3 Streamlit tabs for analysis
+                single_unit_tab, population_tab, multi_tab = st.tabs(["Single Unit", "Population", "Multi"])
 
 
             # Initialize variables for sharing between tabs
@@ -119,10 +129,10 @@ if 'Checkbox' in st_project_data.columns and st_project_data['Checkbox'].any():
             with multi_tab:
                 st.write("### Multi Analysis")
                 st.write("Coming soon")
-
-            with fra_tab:
-                st.write("### FRA Analysis")
-                st.write("Coming soon")
+            if FRA_session:
+                with fra_tab:
+                    st.write("### FRA Analysis")
+                    st.write("Coming soon")
         else:
             analysis_output_dirs = []
 

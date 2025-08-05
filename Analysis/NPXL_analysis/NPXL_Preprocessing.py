@@ -593,7 +593,7 @@ def main():
                     # Create event windows data
                     try:
                         event_windows_matrix, time_axis, valid_event_indices = reshape_firing_rate_to_event_windows(
-                            firing_rate_matrix, stimuli_outcome_df, window_duration=3.0, bin_size=bin_size)
+                            firing_rate_matrix, stimuli_outcome_df, window_duration=4.0, bin_size=bin_size)
                         
                         # Save event windows data
                         save_event_windows_data(analysis_output_dir, event_windows_matrix, time_axis, valid_event_indices, stimuli_outcome_df)
