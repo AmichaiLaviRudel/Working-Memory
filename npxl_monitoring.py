@@ -5,7 +5,7 @@ import numpy as np
 import os
 from Analysis.GNG_bpod_analysis.colors import COLOR_HIT, COLOR_MISS, COLOR_FA, COLOR_CR
 from Analysis.NPXL_analysis.npxl_single_unit_analysis import single_unit_analysis_panel
-from Analysis.NPXL_analysis.population_analysis import plot_population_heatmap
+from Analysis.NPXL_analysis.population_analysis import plot_population_heatmap, advanced_population_analysis_panel
 
 # Load the experimental data
 project_data = pd.read_csv(st.session_state.npxl_monitoring_path, delimiter=',', low_memory=False)
@@ -59,8 +59,8 @@ if 'Checkbox' in st_project_data.columns and st_project_data['Checkbox'].any():
 
             else:
                 st.badge("Behavior Analysis")
-                # Create 3 Streamlit tabs for analysis
-                single_unit_tab, population_tab, multi_tab = st.tabs(["Single Unit", "Population", "Multi"])
+                # Create 4 Streamlit tabs for analysis
+                single_unit_tab, population_tab, advanced_tab, multi_tab = st.tabs(["Single Unit", "Population", "Advanced", "Multi"])
 
 
             # Initialize variables for sharing between tabs
@@ -102,12 +102,12 @@ if 'Checkbox' in st_project_data.columns and st_project_data['Checkbox'].any():
                     selected_folder = None
 
                 if selected_folder:
-                    # Use the load_event_windows_data function from npxl_single_unit_analysis
-                    from Analysis.NPXL_analysis.npxl_single_unit_analysis import load_event_windows_data
+                    # Use the load_event_windows_data function from NPXL_Preprocessing
+                    from Analysis.NPXL_analysis.NPXL_Preprocessing import load_event_windows_data
                     
                     loaded_data = load_event_windows_data(selected_folder)
                     if loaded_data:
-                        event_windows_matrix, time_axis_from_load, valid_event_indices, stimuli_outcome_df, metadata = loaded_data
+                        event_windows_matrix, time_axis_from_load, valid_event_indices, stimuli_outcome_df, metadata, lick_event_windows_matrix = loaded_data
                         single_unit_analysis_panel(event_windows_matrix, stimuli_outcome_df, selected_folder)
                     else:
                         st.error(f"Event windows data could not be loaded from: {selected_folder}")
@@ -124,6 +124,14 @@ if 'Checkbox' in st_project_data.columns and st_project_data['Checkbox'].any():
                     plot_population_heatmap(event_windows_matrix, stimuli_outcome_df, metadata)
                 else:
                     st.warning("Event windows data not available for population analysis")
+            
+            with advanced_tab:
+                st.write("### Advanced Population Analysis")
+                if selected_folder and event_windows_matrix is not None and stimuli_outcome_df is not None and metadata is not None:
+                    advanced_population_analysis_panel(event_windows_matrix, stimuli_outcome_df, metadata)
+                else:
+                    st.warning("Event windows data not available for advanced analysis")
+            
             with multi_tab:
                 st.write("### Multi Analysis")
                 st.write("Coming soon")

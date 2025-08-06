@@ -29,6 +29,35 @@ OUTCOME_COLOR_MAP = {
     "Miss": COLOR_MISS,
 }
 
+# ─── Go/NoGo Stimulus Color Palettes ─────────────────────────────
+# Green shades for Go stimuli
+GO_COLORS = [
+    "#2E8B57",  # Sea Green
+    "#3CB371",  # Medium Sea Green
+    "#20B2AA",  # Light Sea Green
+    "#48D1CC",  # Medium Turquoise
+    "#40E0D0",  # Turquoise
+    "#7FFFD4",  # Aquamarine
+    "#66CDAA",  # Medium Aquamarine
+    "#98FB98",  # Pale Green
+    "#90EE90",  # Light Green
+    "#ADFF2F",  # Green Yellow
+]
+
+# Red shades for NoGo stimuli
+NOGO_COLORS = [
+    "#DC143C",  # Crimson
+    "#B22222",  # Fire Brick
+    "#CD5C5C",  # Indian Red
+    "#F08080",  # Light Coral
+    "#FA8072",  # Salmon
+    "#E9967A",  # Dark Salmon
+    "#FFA07A",  # Light Salmon
+    "#FF6347",  # Tomato
+    "#FF4500",  # Orange Red
+    "#FF0000",  # Red
+]
+
 # ─── Line Width ─────────────────────────────────────────────────
 LINE_WIDTH_THIN     = 0.5
 LINE_WIDTH_MEDIUM  = 1.0

@@ -1208,16 +1208,16 @@ def single_unit_analysis_panel(
 
         # Save p-values and metrics automatically once
         if selected_folder is not None:
-            try:
-                save_pvalues_to_folder(pvals, selected_folder, window=display_window, bin_size=bin_size_display)
-            except Exception as e:
-                st.error(f"Error saving p-values: {e}")
+            # try:
+            #     save_pvalues_to_folder(pvals, selected_folder, window=display_window, bin_size=bin_size_display)
+            # except Exception as e:
+            #     st.error(f"Error saving p-values: {e}")
 
-            try:
-                save_all_psth_metrics(event_windows_data, selected_folder, display_window, pvals)
-                st.toast("PSTH metrics saved (auto)")
-            except Exception as e:
-                st.error(f"Error saving PSTH metrics: {e}")
+            # try:
+            #     save_all_psth_metrics(event_windows_data, selected_folder, display_window, pvals)
+            #     st.toast("PSTH metrics saved (auto)")
+            # except Exception as e:
+            #     st.error(f"Error saving PSTH metrics: {e}")
 
             # Add button for manual save
             if st.button("Save PSTH Metrics Again"):

@@ -351,22 +351,6 @@ def choose_directory(default_path):
     return directory_path
 
 
-# Main logic to handle directory selection
-default_directory = r"Z:\Shared\Amichai\Behavior\data"  # Replace with your hardcoded default
-last_directory = get_last_directory(default_directory)
-
-print(f"Last directory: {last_directory}")
-new_directory_path = choose_directory(last_directory)
-
-if new_directory_path:
-    directory_path = new_directory_path
-    save_last_directory(directory_path)
-    print(f"New directory selected: {directory_path}")
-else:
-    directory_path = last_directory
-    print(f"Using last directory: {directory_path}")
-
-
 def get_csv_path(directory_path):
     # get group name the last folder in the path
     group_name = os.path.split(directory_path)[-1]
@@ -379,6 +363,21 @@ def get_csv_path(directory_path):
 
 
 if __name__ == "__main__":
+    # Main logic to handle directory selection
+    default_directory = r"Z:\Shared\Amichai\Behavior\data"  # Replace with your hardcoded default
+    last_directory = get_last_directory(default_directory)
+
+    print(f"Last directory: {last_directory}")
+    new_directory_path = choose_directory(last_directory)
+
+    if new_directory_path:
+        directory_path = new_directory_path
+        save_last_directory(directory_path)
+        print(f"New directory selected: {directory_path}")
+    else:
+        directory_path = last_directory
+        print(f"Using last directory: {directory_path}")
+
     group_name, csv_path = get_csv_path(directory_path)
     # Load the existing CSV into a DataFrame
     if os.path.exists(csv_path):

@@ -23,6 +23,58 @@ For each isolated neuron in AC or OFC, advanced analyses can reveal how it encod
 ## Population Analysis
 Explore collective dynamics in AC or OFC:
 
+### Implementation Progress:
+**Phase 1: Core Infrastructure** ✅
+- [x] Created `population_analysis_advanced.py` module
+- [x] Base `PopulationAnalyzer` class with data preparation
+- [x] Cross-validation framework
+- [x] Trial labeling utilities
+
+**Phase 2: Decoding Analyses** ✅
+- [x] `StimulusDecoder` class implemented
+- [x] `ChoiceDecoder` class implemented  
+- [x] Time-resolved decoding support
+- [x] UI integration (Advanced tab in monitoring interface)
+- [x] Fixed continuous stimulus labeling issue with quantile-based binning
+
+[x] **Stimulus decoding** – apply linear classifiers to population activity to decode stimulus identity; use cross-validation to assess accuracy.
+   - ✅ Implemented: Logistic Regression, SVM, LDA classifiers
+   - ✅ Cross-validation with stratified K-fold
+   - ✅ Confusion matrices and classification reports
+   - ✅ Feature importance analysis
+   - ✅ Interactive parameter controls in UI
+
+[x] **Choice decoding** – predict lick (Go) vs no-lick (NoGo) trials from ensemble activity; assess decision signal strength.
+   - ✅ Implemented: Go vs NoGo classification
+   - ✅ Multiple classifier options
+   - ✅ Time window selection
+   - ✅ Performance metrics with chance level comparison
+   - ✅ Time-resolved decoding analysis
+
+**Phase 3: Dimensionality Reduction & RSA** ✅
+- [x] `DimensionalityReducer` class implemented
+- [x] `RepresentationalSimilarityAnalyzer` class implemented
+- [x] UI integration for Phase 3 analyses
+- [x] Interactive parameter controls and visualizations
+
+[x] **Low-dimensional trajectories** – apply PCA/dPCA to trial-averaged population activity to visualize state-space trajectories by condition.
+   - ✅ Implemented: PCA with explained variance analysis
+   - ✅ Condition-averaged trajectories visualization
+   - ✅ Interactive component selection and time window controls
+   - ✅ Comprehensive variance analysis and plotting
+
+[x] **Dimensionality Reduction (PCA, dPCA, UMAP)** – Visualize and separate variance linked to stimuli, outcomes, or time. **Output:** low-D trajectories linked to task variables.
+   - ✅ Implemented: PCA and UMAP algorithms
+   - ✅ Multi-panel visualization (variance, projections, trajectories)
+   - ✅ Trial-by-trial and condition-averaged analyses
+   - ✅ Color-coded by stimulus and choice conditions
+
+[x] **Representational Similarity Analysis (RSA)** – Measure dissimilarities between task conditions in neural space. Useful for exploring geometry of representations.
+   - ✅ Implemented: Multiple distance metrics (correlation, euclidean, cosine)
+   - ✅ Representational Dissimilarity Matrix (RDM) computation
+   - ✅ Hierarchical clustering of conditions
+   - ✅ Interactive metric selection and visualization
+
 [] **Latency differences** – estimate onset latency of stimulus or decision signals in AC vs OFC.
 
 [] **Functional coupling** – compute noise correlations across areas and spike-field coherence between AC spikes and OFC LFP (and vice versa).
@@ -31,15 +83,7 @@ Explore collective dynamics in AC or OFC:
 
 [] **Granger causality / information flow** – apply directed metrics to estimate flow of information (AC→OFC or OFC→AC) during different trial epochs.
 
-[] **Stimulus decoding** – apply linear classifiers to population activity to decode stimulus identity; use cross-validation to assess accuracy.
-
-[] **Choice decoding** – predict lick (Go) vs no-lick (NoGo) trials from ensemble activity; assess decision signal strength.
-
-[] **Low-dimensional trajectories** – apply PCA/dPCA to trial-averaged population activity to visualize state-space trajectories by condition.
-
 [] **Representational similarity** – compute dissimilarity matrices across tones and outcomes; assess clustering and geometry of population codes.
-
-[] **Dimensionality Reduction (PCA, dPCA, UMAP)** – Visualize and separate variance linked to stimuli, outcomes, or time. **Output:** low-D trajectories linked to task variables.
 
 [] **Latent Factor Inference (LFADS, GPFA)** – Model underlying latent neural states on a trial-by-trial basis. Useful for uncovering shared or hidden dynamics.
 
@@ -47,7 +91,6 @@ Explore collective dynamics in AC or OFC:
 
 [] **Temporal Generalization Matrices** – Cross-time decoding to test stability of codes. **Output:** 2D matrix of decoding accuracy (train-time × test-time).
 
-[] **Representational Similarity Analysis (RSA)** – Measure dissimilarities between task conditions in neural space. Useful for exploring geometry of representations.
 
 [] **State-Space and Dynamics Modeling** – Use jPCA, HMMs, or switching dynamical systems to explore neural trajectories, transitions, and attractors.
 
