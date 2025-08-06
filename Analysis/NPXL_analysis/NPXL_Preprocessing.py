@@ -59,7 +59,6 @@ def load_cluster_info(working_dir, data_dirs):
         else:
             return None
 
-
 def extract_spike_matrices(spikes_times, spikes_clusters, cluster_info):
     """
     Extracts spike times for good, MUA, and non-somatic clusters from the provided cluster info.
@@ -165,7 +164,6 @@ def load_spike_matrices(folder, type="good"):
         spike_matrix = None
     return spike_matrix, stimuli_outcome_df 
 
-
 def load_spike_data(data_dir):
     """
     Loads spike_times.npy and spike_clusters.npy from the given data_dir.
@@ -190,14 +188,12 @@ def couple_stimuli_outcome_and_times(parent_dir, stimuli, atten, outcomes, bin_s
     Trims all arrays to the shortest length if they mismatch.
     """
     # Define the expected file suffix
-    
-
-    if "FRA" in parent_dir:
-        expected_suffix = "nidq.xd_0_1_0.txt"
-    else:
-        expected_suffix = "nidq.xd_0_1_100.txt"
+    expected_suffix = "nidq.xd_0_1_100.txt"
     
     times = load_nidq_stream(parent_dir, stream_suffix=expected_suffix)
+    if len(times) == 0:
+        expected_suffix = "nidq.xd_0_1_0.txt"
+        times = load_nidq_stream(parent_dir, stream_suffix=expected_suffix)
 
     # check if the times are in the same length as the stimuli_values and outcomes
     if len(times) != len(stimuli):
@@ -364,7 +360,6 @@ def load_nidq_stream(working_dir, stream_suffix):
     
     return stream_timestamps
 
-
 def reshape_firing_rate_to_event_windows(firing_rate_matrix, stimuli_outcome_df, window_duration=1.0, bin_size=0.1):
     """
     Reshapes firing rate matrix to extract windows around each event.
@@ -431,8 +426,87 @@ def reshape_firing_rate_to_event_windows(firing_rate_matrix, stimuli_outcome_df,
     
     return event_windows_matrix, time_axis, valid_event_indices
 
+def reshape_licking_to_event_windows(licking_timestamps_in_bins, stimuli_outcome_df, recording_duration_bins, window_duration=1.0, bin_size=0.1):
+    """
+    Reshapes licking timestamps to extract lick rate windows around each event.
+    
+    Args:
+        licking_timestamps_in_bins (np.ndarray): Array of licking timestamps in bins
+        stimuli_outcome_df (pd.DataFrame): DataFrame containing 'time' column with event timestamps
+        recording_duration_bins (int): Total duration of recording in bins
+        window_duration (float): Duration of window before and after event in seconds (default: 1.0)
+        bin_size (float): Bin size in seconds (default: 0.1)
+        
+    Returns:
+        np.ndarray: 3D matrix of shape [1 × time_bins_per_window × n_events] (lick rate)
+        np.ndarray: Time axis for the window (relative to event onset)
+        list: List of valid event indices that were successfully extracted
+    """
+    if licking_timestamps_in_bins is None or len(licking_timestamps_in_bins) == 0:
+        raise ValueError("No licking data provided")
+    
+    # Calculate number of bins in the window
+    bins_per_window = int(2 * window_duration / bin_size)  # Before + after event
+    
+    # Get event times from DataFrame
+    if 'time' not in stimuli_outcome_df.columns:
+        raise ValueError("stimuli_outcome_df must contain 'time' column")
+    
+    event_times = stimuli_outcome_df['time'].values
+    
+    # Convert licking timestamps to lick rate matrix
+    # Create time bins for the entire recording
+    time_bins = np.arange(0, recording_duration_bins + 1)
+    
+    # Calculate lick counts per bin
+    lick_counts, _ = np.histogram(licking_timestamps_in_bins, bins=time_bins)
+    
+    # Convert to lick rate (licks per second)
+    lick_rate_matrix = lick_counts / bin_size  # Shape: [n_time_bins]
+    lick_rate_matrix = lick_rate_matrix.reshape(1, -1)  # Shape: [1 × n_time_bins]
+    
+    n_time_bins = lick_rate_matrix.shape[1]
+    
+    # Initialize output matrix
+    event_windows = []
+    valid_event_indices = []
+    
+    # Time axis for the window (relative to event onset)
+    time_axis = np.arange(-window_duration, window_duration, bin_size)
+    
+    for event_idx, event_time in enumerate(event_times):
+        event_bin = int(event_time)  # Already in bins times, just convert to int
+        
+        # Calculate start and end bins for the window
+        start_bin = event_bin - int(window_duration / bin_size)
+        end_bin = event_bin + int(window_duration / bin_size)
+        
+        # Check if window fits within the lick rate matrix
+        if start_bin >= 0 and end_bin <= n_time_bins:
+            # Extract window for lick rate (single channel)
+            window_data = lick_rate_matrix[:, start_bin:end_bin]
+            
+            # Ensure the window has the expected size
+            if window_data.shape[1] == bins_per_window:
+                event_windows.append(window_data)
+                valid_event_indices.append(event_idx)
+            else:
+                print(f"Warning: Lick event {event_idx} window size mismatch. Expected {bins_per_window}, got {window_data.shape[1]}")
+        else:
+            print(f"Warning: Lick event {event_idx} window ({start_bin}:{end_bin}) outside matrix bounds (0:{n_time_bins})")
+    
+    if not event_windows:
+        raise ValueError("No valid licking event windows could be extracted")
+    
+    # Stack all windows into a 3D array
+    lick_event_windows_matrix = np.stack(event_windows, axis=2)  # Shape: [1 × time × events]
+    
+    print(f"Successfully extracted {len(valid_event_indices)} licking event windows")
+    print(f"Licking output shape: {lick_event_windows_matrix.shape}")
+    
+    return lick_event_windows_matrix, time_axis, valid_event_indices
 
-def save_event_windows_data(folder, event_windows_matrix, time_axis, valid_event_indices, stimuli_outcome_df):
+def save_event_windows_data(folder, event_windows_matrix, time_axis, valid_event_indices, stimuli_outcome_df, lick_event_windows_matrix=None):
     """
     Saves the event windows data and associated metadata.
     
@@ -442,12 +516,17 @@ def save_event_windows_data(folder, event_windows_matrix, time_axis, valid_event
         time_axis (np.ndarray): Time axis for the window
         valid_event_indices (list): List of valid event indices
         stimuli_outcome_df (pd.DataFrame): Original stimuli_outcome DataFrame
+        lick_event_windows_matrix (np.ndarray, optional): 3D matrix of shape [1 × time × events] for lick rates
     """
     if not os.path.exists(folder):
         os.makedirs(folder)
     
     # Save the 3D event windows matrix
     np.save(os.path.join(folder, "event_windows_matrix.npy"), event_windows_matrix)
+    
+    # Save the licking event windows matrix if provided
+    if lick_event_windows_matrix is not None:
+        np.save(os.path.join(folder, "lick_event_windows_matrix.npy"), lick_event_windows_matrix)
     
     # Save the time axis
     np.save(os.path.join(folder, "event_window_time_axis.npy"), time_axis)
@@ -475,7 +554,6 @@ def save_event_windows_data(folder, event_windows_matrix, time_axis, valid_event
     
     print(f"Event windows data saved to {folder}")
 
-
 def load_event_windows_data(folder):
     """
     Loads the event windows data and associated metadata.
@@ -484,10 +562,17 @@ def load_event_windows_data(folder):
         folder (str): Directory containing the saved data
         
     Returns:
-        tuple: (event_windows_matrix, time_axis, valid_event_indices, stimuli_outcome_df, metadata)
+        tuple: (event_windows_matrix, time_axis, valid_event_indices, stimuli_outcome_df, metadata, lick_event_windows_matrix)
     """
     # Load the 3D event windows matrix
     event_windows_matrix = np.load(os.path.join(folder, "event_windows_matrix.npy"))
+    
+    # Load the licking event windows matrix if it exists
+    lick_file_path = os.path.join(folder, "lick_event_windows_matrix.npy")
+    if os.path.exists(lick_file_path):
+        lick_event_windows_matrix = np.load(lick_file_path)
+    else:
+        lick_event_windows_matrix = None
     
     # Load the time axis
     time_axis = np.load(os.path.join(folder, "event_window_time_axis.npy"))
@@ -507,8 +592,7 @@ def load_event_windows_data(folder):
                 key, value = line.strip().split(': ')
                 metadata[key] = value
     
-    return event_windows_matrix, time_axis, valid_event_indices, stimuli_outcome_df, metadata
-
+    return event_windows_matrix, time_axis, valid_event_indices, stimuli_outcome_df, metadata, lick_event_windows_matrix
 
 # --- Main Analysis Loop ---
 def main():
@@ -537,7 +621,7 @@ def main():
             probe_identifier = current_ks_folder[-1]
             spikeglx_data_dir = os.path.join(current_ks_folder, f"imec{probe_identifier}_ks4")
             analysis_output_dir = os.path.join(current_ks_folder, "analysis_output")
-            behavioral_data_file_path = copy_behavioral_file_for_dir(parent_dir=recording_session_dir, df = experiment_metadata_df, csv_path=experiment_metadata_csv_path, force_rerun=force_rerun)
+            behavioral_data_file_path = copy_behavioral_file_for_dir(parent_dir=recording_session_dir, df = experiment_metadata_df, csv_path=experiment_metadata_csv_path, force_rerun=False)
             
             if not os.path.exists(analysis_output_dir) or force_rerun:
 
@@ -584,6 +668,7 @@ def main():
                     try:
                         licking_timestamps_seconds = load_nidq_stream(recording_session_dir, stream_suffix="nidq.xd_0_2_0.txt")
                         licking_timestamps_in_bins = licking_timestamps_seconds*(1/bin_size)
+
                     except FileNotFoundError:
                         print(f"Warning: No licking data found for {current_ks_folder}")
                         licking_timestamps_in_bins = None
@@ -592,11 +677,25 @@ def main():
                     
                     # Create event windows data
                     try:
+                        window_duration = 4.0
                         event_windows_matrix, time_axis, valid_event_indices = reshape_firing_rate_to_event_windows(
-                            firing_rate_matrix, stimuli_outcome_df, window_duration=4.0, bin_size=bin_size)
+                            firing_rate_matrix, stimuli_outcome_df, window_duration, bin_size=bin_size)
                         
-                        # Save event windows data
-                        save_event_windows_data(analysis_output_dir, event_windows_matrix, time_axis, valid_event_indices, stimuli_outcome_df)
+                        # Create licking event windows if licking data is available
+                        lick_event_windows_matrix = None
+                        if licking_timestamps_in_bins is not None:
+                            try:
+                                recording_duration_bins = firing_rate_matrix.shape[1]
+                                lick_event_windows_matrix, lick_time_axis, lick_valid_indices = reshape_licking_to_event_windows(
+                                    licking_timestamps_in_bins, stimuli_outcome_df, recording_duration_bins, 
+                                    window_duration, bin_size=bin_size)
+                            except Exception as e:
+                                print(f"Warning: Could not create licking event windows: {e}")
+                                lick_event_windows_matrix = None
+                        
+                        # Save event windows data (including licking if available)
+                        save_event_windows_data(analysis_output_dir, event_windows_matrix, time_axis, valid_event_indices, 
+                                               stimuli_outcome_df, lick_event_windows_matrix)
                         print(f"Event windows data created successfully: {event_windows_matrix.shape}")
                         
                     except Exception as e:

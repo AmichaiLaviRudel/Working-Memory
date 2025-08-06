@@ -120,8 +120,15 @@ def load_mat_file(file_path):
     # Initialize arrays
     trials = raw_events['Trial']
     n_trials = len(trial_types)
-    licks = [None] * n_trials
-    for i in range(n_trials):
+    n_trials_available = trials.shape[1]
+    
+    # Use the minimum to avoid index errors
+    n_trials_to_process = min(n_trials, n_trials_available)
+    if n_trials != n_trials_available:
+        print(f"Warning: Trial count mismatch - trial_types: {n_trials}, raw_events trials: {n_trials_available}. Processing {n_trials_to_process} trials.")
+    
+    licks = [None] * n_trials_to_process
+    for i in range(n_trials_to_process):
         try:
             trial_element = trials[0, i]
             nested_structure = trial_element[0, 0]
@@ -151,9 +158,9 @@ def load_mat_file(file_path):
         except Exception as e:
             print(f"Error processing trial {i}: {e}")
 
-    # Convert 'TrialTypes' and stimuli to a DataFrame
-    trial_types_df = pd.DataFrame(trial_types, columns = ['TrialType'])
-    stimuli_df = pd.DataFrame(stimuli, columns = ['Stimuli'])
+    # Convert 'TrialTypes' and stimuli to a DataFrame, using only the processed trials
+    trial_types_df = pd.DataFrame(trial_types[:n_trials_to_process], columns = ['TrialType'])
+    stimuli_df = pd.DataFrame(stimuli[:n_trials_to_process], columns = ['Stimuli'])
     trial_types_df = pd.concat([trial_types_df, stimuli_df], axis = 1)
 
     # Extract the 'Trial' field from 'RawEvents'
@@ -199,10 +206,15 @@ def create_single_row_with_outcome(file_path, trial_types_df, raw_events_df, ses
     rewards = raw_events_df['Reward'].apply(lambda x: not contains_nan(x))
     punishments = raw_events_df['Punishment'].apply(lambda x: not contains_nan(x))
 
-    for idx, row in trial_types_df.iterrows():
-        trial_type = row['TrialType']
-        reward = rewards.iloc[idx]
-        punishment = punishments.iloc[idx]
+    # Ensure both DataFrames have the same length to avoid index errors
+    min_length = min(len(trial_types_df), len(raw_events_df))
+    if len(trial_types_df) != len(raw_events_df):
+        print(f"Warning: Length mismatch - trial_types_df: {len(trial_types_df)}, raw_events_df: {len(raw_events_df)}. Using first {min_length} trials.")
+    
+    for i in range(min_length):
+        trial_type = trial_types_df.iloc[i]['TrialType']
+        reward = rewards.iloc[i]
+        punishment = punishments.iloc[i]
 
         if trial_type == 1:
             trial_type_str = 'Go'
@@ -233,8 +245,8 @@ def create_single_row_with_outcome(file_path, trial_types_df, raw_events_df, ses
         'TrialTypes':       trial_types_list,
         'States':           states,
         'Outcomes':         outcomes_list,
-        'Stimuli':          trial_types_df["Stimuli"].values,
-        'Licks':            licks,
+        'Stimuli':          trial_types_df["Stimuli"].iloc[:min_length].values,
+        'Licks':            licks[:min_length],
         'WaterConsumption': water,
         'FilePath':         file_path,
         'Notes':            notes,
@@ -282,7 +294,7 @@ def find_mat_files_in_session_data(directory):
     # Walk through the directory
     for root, dirs, files in os.walk(directory):
         # Check if 'Session Data' is in the current directory path
-        if 'Session Data' in root and 'GNG' in os.path.dirname(root):
+        if 'Session Data' in root and 'GNG' in os.path.dirname(root) and not 'Original_Files' in root:
             for file in files:
                 if file.endswith('.mat'):
                     # Add the full path of the .mat file to the list
@@ -409,8 +421,8 @@ if __name__ == "__main__":
     # Convert 'SessionDate' to regular Python string type before converting to datetime
     df['SessionDate'] = df['SessionDate'].apply(lambda x: str(x))
 
-    # Convert to datetime
-    df['SessionDate'] = pd.to_datetime(df['SessionDate'])
+    # Convert to datetime with flexible format parsing
+    df['SessionDate'] = pd.to_datetime(df['SessionDate'], format='mixed')
 
     # Sort the DataFrame by session date and time
     df = df.sort_values(by = ['SessionDate', 'SessionTime']).reset_index(drop = True)

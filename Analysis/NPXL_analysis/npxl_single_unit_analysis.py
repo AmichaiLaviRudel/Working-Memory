@@ -1,12 +1,13 @@
 import plotly.graph_objects as go
 import numpy as np
-from Analysis.GNG_bpod_analysis.stats_tests import mannwhitneyu
 from scipy import stats
 from sklearn.metrics import roc_auc_score, roc_curve
 from sklearn.linear_model import PoissonRegressor
 from sklearn.preprocessing import StandardScaler
 import pandas as pd
 import os
+import streamlit as st
+
 # Add color imports
 from Analysis.GNG_bpod_analysis.colors import COLOR_GO, COLOR_GRAY, COLOR_NOGO, COLOR_HIT, COLOR_FA, COLOR_CR, COLOR_MISS, COLOR_BLUE, COLOR_BLUE_TRANSPARENT, COLOR_ACCENT, COLOR_ACCENT_TRANSPARENT
 
@@ -177,7 +178,7 @@ def save_all_psth_metrics(event_windows_data, selected_folder, display_window, p
         print(f"Error saving PSTH metrics: {e}")
         return False
 
-def compute_stimulus_selectivity(spike_matrix, stimuli_outcome_df, unit_idx, window=(-0.2, 0.5)):
+def compute_stimulus_selectivity(event_windows_data, stimuli_outcome_df, unit_idx, window=(-0.2, 0.5)):
     """
     Compute stimulus selectivity for a single unit.
     Returns frequency tuning curve, SEM, and best frequency.
@@ -189,42 +190,82 @@ def compute_stimulus_selectivity(spike_matrix, stimuli_outcome_df, unit_idx, win
     tuning_curve = []
     tuning_sem = []
     
+    # Extract data from event_windows_data
+    event_windows_matrix, time_axis, valid_event_indices, event_stimuli_outcome_df, metadata = event_windows_data
+    
     for stim in unique_stimuli:
         # Get trials with this stimulus
-        stim_mask = stimuli_outcome_df['stimulus'] == stim
-        stim_times = stimuli_outcome_df.loc[stim_mask, 'time'].values
-        # Compute firing rates for each trial
-        rates = [compute_peri_event_rate(spike_matrix, [t], unit_idx, window) for t in stim_times]
-        if len(rates) > 0:
-            avg_rate = np.mean(rates)
-            sem = np.std(rates) / np.sqrt(len(rates))
+        stim_mask = (stimuli_outcome_df['stimulus'] == stim).values
+        if np.sum(stim_mask) == 0:
+            tuning_curve.append(0)
+            tuning_sem.append(0)
+            continue
+
+        # Get the unit's data for trials with this stimulus
+        stim_trials = np.where(stim_mask)[0]
+        if len(stim_trials) == 0:
+            tuning_curve.append(0)
+            tuning_sem.append(0)
+            continue
+            
+        # Find the time indices corresponding to the window
+        start_time, end_time = window
+        start_idx = np.argmin(np.abs(time_axis - start_time))
+        end_idx = np.argmin(np.abs(time_axis - end_time))
+        
+        # Get the unit's data for the specified window and stimulus trials
+        unit_data = event_windows_matrix[unit_idx, start_idx:end_idx, stim_trials]  # [time × trials]
+        
+        # Average across time bins for each trial
+        trial_rates = np.mean(unit_data, axis=0)  # Average across time for each trial
+        
+        if len(trial_rates) > 0:
+            avg_rate = np.mean(trial_rates)
+            sem = np.std(trial_rates) / np.sqrt(len(trial_rates))
         else:
             avg_rate = 0
             sem = 0
+        
         tuning_curve.append(avg_rate)
         tuning_sem.append(sem)
+    
     # Find best frequency (stimulus that elicits highest response)
-    best_stim_idx = np.argmax(tuning_curve)
-    best_stimulus = unique_stimuli[best_stim_idx]
+    if len(tuning_curve) > 0 and np.any(np.array(tuning_curve) > 0):
+        best_stim_idx = np.argmax(tuning_curve)
+        best_stimulus = unique_stimuli[best_stim_idx]
+    else:
+        best_stimulus = unique_stimuli[0] if len(unique_stimuli) > 0 else None
+    
     return unique_stimuli, tuning_curve, tuning_sem, best_stimulus
 
-def compute_go_nogo_coding(spike_matrix, stimuli_outcome_df, unit_idx, window=(-0.1, 0.5)):
+def compute_go_nogo_coding(event_windows_data, stimuli_outcome_df, unit_idx, window=(-0.1, 0.5)):
     """
     Compute d' and ROC AUC for Go vs NoGo discrimination.
     """
+    # Extract data from event_windows_data
+    event_windows_matrix, time_axis, valid_event_indices, event_stimuli_outcome_df, metadata = event_windows_data
+    
     # Separate Go and NoGo trials
     go_mask = np.isin(stimuli_outcome_df['outcome'], ['Hit', 'Miss'])
     nogo_mask = np.isin(stimuli_outcome_df['outcome'], ['False Alarm', 'CR'])
     
-    go_times = stimuli_outcome_df.loc[go_mask, 'time'].values
-    nogo_times = stimuli_outcome_df.loc[nogo_mask, 'time'].values
-    
-    if len(go_times) == 0 or len(nogo_times) == 0:
+    if np.sum(go_mask) == 0 or np.sum(nogo_mask) == 0:
         return None, None, None
     
-    # Compute firing rates for each trial
-    go_rates = [compute_peri_event_rate(spike_matrix, [t], unit_idx, window) for t in go_times]
-    nogo_rates = [compute_peri_event_rate(spike_matrix, [t], unit_idx, window) for t in nogo_times]
+    # Find the time indices corresponding to the window
+    start_time, end_time = window
+    start_idx = np.argmin(np.abs(time_axis - start_time))
+    end_idx = np.argmin(np.abs(time_axis - end_time))
+    
+    # Get the unit's data for the specified window
+    unit_data = event_windows_matrix[unit_idx, start_idx:end_idx, :]  # [time × trials]
+    
+    # Average across time bins for each trial
+    trial_rates = np.mean(unit_data, axis=0)  # Average across time for each trial
+    
+    # Get rates for Go and NoGo trials
+    go_rates = trial_rates[go_mask]
+    nogo_rates = trial_rates[nogo_mask]
     
     # Compute d'
     go_mean, go_std = np.mean(go_rates), np.std(go_rates)
@@ -245,23 +286,34 @@ def compute_go_nogo_coding(spike_matrix, stimuli_outcome_df, unit_idx, window=(-
     
     return d_prime, roc_auc, (go_rates, nogo_rates)
 
-def compute_outcome_modulation(spike_matrix, stimuli_outcome_df, unit_idx, window=(-0.1, 0.5)):
+def compute_outcome_modulation(event_windows_data, stimuli_outcome_df, unit_idx, window=(-0.1, 0.5)):
     """
     Compare responses between rewarded (Hit) and non-rewarded (Miss/FA) trials.
     """
+    # Extract data from event_windows_data
+    event_windows_matrix, time_axis, valid_event_indices, event_stimuli_outcome_df, metadata = event_windows_data
+    
     # Separate rewarded and non-rewarded trials
     rewarded_mask = stimuli_outcome_df['outcome'] == 'Hit'
     non_rewarded_mask = np.isin(stimuli_outcome_df['outcome'], ['Miss', 'False Alarm'])
     
-    rewarded_times = stimuli_outcome_df.loc[rewarded_mask, 'time'].values
-    non_rewarded_times = stimuli_outcome_df.loc[non_rewarded_mask, 'time'].values
-    
-    if len(rewarded_times) == 0 or len(non_rewarded_times) == 0:
+    if np.sum(rewarded_mask) == 0 or np.sum(non_rewarded_mask) == 0:
         return None, None, None
     
-    # Compute firing rates
-    rewarded_rates = [compute_peri_event_rate(spike_matrix, [t], unit_idx, window) for t in rewarded_times]
-    non_rewarded_rates = [compute_peri_event_rate(spike_matrix, [t], unit_idx, window) for t in non_rewarded_times]
+    # Find the time indices corresponding to the window
+    start_time, end_time = window
+    start_idx = np.argmin(np.abs(time_axis - start_time))
+    end_idx = np.argmin(np.abs(time_axis - end_time))
+    
+    # Get the unit's data for the specified window
+    unit_data = event_windows_matrix[unit_idx, start_idx:end_idx, :]  # [time × trials]
+    
+    # Average across time bins for each trial
+    trial_rates = np.mean(unit_data, axis=0)  # Average across time for each trial
+    
+    # Get rates for rewarded and non-rewarded trials
+    rewarded_rates = trial_rates[rewarded_mask]
+    non_rewarded_rates = trial_rates[non_rewarded_mask]
     
     # Statistical test
     try:
@@ -271,23 +323,36 @@ def compute_outcome_modulation(spike_matrix, stimuli_outcome_df, unit_idx, windo
     
     return p_value, (rewarded_rates, non_rewarded_rates), (np.mean(rewarded_rates), np.mean(non_rewarded_rates))
 
-def compute_choice_probability(spike_matrix, stimuli_outcome_df, unit_idx, window=(-0.1, 0.5)):
+def compute_choice_probability(event_windows_data, stimuli_outcome_df, unit_idx, window=(-0.1, 0.5)):
     """
     Calculate choice probability (CP) - trial-by-trial correlation between spike counts and Go/NoGo choice.
     """
+    # Extract data from event_windows_data
+    event_windows_matrix, time_axis, valid_event_indices, event_stimuli_outcome_df, metadata = event_windows_data
+    
     # Get Go trials only (where choice is relevant)
     go_mask = np.isin(stimuli_outcome_df['outcome'], ['Hit', 'Miss'])
-    go_data = stimuli_outcome_df.loc[go_mask].copy()
     
-    if len(go_data) == 0:
+    if np.sum(go_mask) == 0:
         return None, None
     
-    # Get firing rates for each trial
-    go_times = go_data['time'].values
-    firing_rates = [compute_peri_event_rate(spike_matrix, [t], unit_idx, window) for t in go_times]
+    # Find the time indices corresponding to the window
+    start_time, end_time = window
+    start_idx = np.argmin(np.abs(time_axis - start_time))
+    end_idx = np.argmin(np.abs(time_axis - end_time))
+    
+    # Get the unit's data for the specified window
+    unit_data = event_windows_matrix[unit_idx, start_idx:end_idx, :]  # [time × trials]
+    
+    # Average across time bins for each trial
+    trial_rates = np.mean(unit_data, axis=0)  # Average across time for each trial
+    
+    # Get firing rates for Go trials only
+    firing_rates = trial_rates[go_mask]
     
     # Create choice labels: 1 for Hit (correct Go), 0 for Miss (incorrect Go)
-    choices = (go_data['outcome'] == 'Hit').astype(int)
+    go_data = stimuli_outcome_df.loc[go_mask]
+    choices = (go_data['outcome'] == 'Hit').astype(int).values
     
     # Compute choice probability using ROC
     try:
@@ -300,23 +365,34 @@ def compute_choice_probability(spike_matrix, stimuli_outcome_df, unit_idx, windo
     
     return cp, cp_corr
 
-def compute_d_prime(spike_matrix, stimuli_outcome_df, unit_idx, condition1, condition2, window=(-0.1, 0.5)):
+def compute_d_prime(event_windows_data, stimuli_outcome_df, unit_idx, condition1, condition2, window=(-0.1, 0.5)):
     """
     Compute d' between two conditions.
     """
+    # Extract data from event_windows_data
+    event_windows_matrix, time_axis, valid_event_indices, event_stimuli_outcome_df, metadata = event_windows_data
+    
     # Get trials for each condition
     mask1 = stimuli_outcome_df['outcome'] == condition1
     mask2 = stimuli_outcome_df['outcome'] == condition2
     
-    times1 = stimuli_outcome_df.loc[mask1, 'time'].values
-    times2 = stimuli_outcome_df.loc[mask2, 'time'].values
-    
-    if len(times1) == 0 or len(times2) == 0:
+    if np.sum(mask1) == 0 or np.sum(mask2) == 0:
         return None
     
-    # Compute firing rates
-    rates1 = [compute_peri_event_rate(spike_matrix, [t], unit_idx, window) for t in times1]
-    rates2 = [compute_peri_event_rate(spike_matrix, [t], unit_idx, window) for t in times2]
+    # Find the time indices corresponding to the window
+    start_time, end_time = window
+    start_idx = np.argmin(np.abs(time_axis - start_time))
+    end_idx = np.argmin(np.abs(time_axis - end_time))
+    
+    # Get the unit's data for the specified window
+    unit_data = event_windows_matrix[unit_idx, start_idx:end_idx, :]  # [time × trials]
+    
+    # Average across time bins for each trial
+    trial_rates = np.mean(unit_data, axis=0)  # Average across time for each trial
+    
+    # Get rates for each condition
+    rates1 = trial_rates[mask1]
+    rates2 = trial_rates[mask2]
     
     # Compute d'
     mean1, std1 = np.mean(rates1), np.std(rates1)
@@ -327,7 +403,7 @@ def compute_d_prime(spike_matrix, stimuli_outcome_df, unit_idx, condition1, cond
     
     return d_prime
 
-def compute_peri_event_rate(spike_matrix, event_times, unit_idx, window=(-0.1, 0.5), bin_size=0.01):
+# def compute_peri_event_rate(spike_matrix, event_times, unit_idx, window=(-0.1, 0.5), bin_size=0.01):
     """
     Compute average firing rate around event times for a single unit.
     """
@@ -353,17 +429,55 @@ def compute_peri_event_rate(spike_matrix, event_times, unit_idx, window=(-0.1, 0
     
     return total_rate / valid_events if valid_events > 0 else 0
 
-def fit_glm_single_unit(spike_matrix, stimuli_outcome_df, unit_idx, window=(-0.1, 0.5)):
+def compute_peri_event_rate_from_event_windows(event_windows_data, unit_idx, window=(-0.1, 0.5), bin_size=0.01):
+    """
+    Compute average firing rate around event times for a single unit using event windows data.
+    """
+    # Extract data from event_windows_data
+    event_windows_matrix, time_axis, valid_event_indices, event_stimuli_outcome_df, metadata = event_windows_data
+    
+    # Find the time indices corresponding to the window
+    start_time, end_time = window
+    start_idx = np.argmin(np.abs(time_axis - start_time))
+    end_idx = np.argmin(np.abs(time_axis - end_time))
+    
+    # Get the unit's data for the specified window
+    unit_data = event_windows_matrix[unit_idx, start_idx:end_idx, :]  # [time × trials]
+    # Average across time bins and trials
+    if unit_data.size > 0:
+        return np.mean(unit_data)
+    else:
+        return 0
+
+def fit_glm_single_unit(event_windows_data, stimuli_outcome_df, unit_idx, window=(-0.1, 0.5)):
     """
     Fit Generalized Linear Model (Poisson regression) to single neuron spike trains.
     """
+    # Extract data from event_windows_data
+    event_windows_matrix, time_axis, valid_event_indices, event_stimuli_outcome_df, metadata = event_windows_data
+    
+    # Find the time indices corresponding to the window
+    start_time, end_time = window
+    start_idx = np.argmin(np.abs(time_axis - start_time))
+    end_idx = np.argmin(np.abs(time_axis - end_time))
+    
+    # Get the unit's data for the specified window
+    unit_data = event_windows_matrix[unit_idx, start_idx:end_idx, :]  # [time × trials]
+    
+    # Average across time bins for each trial
+    trial_rates = np.mean(unit_data, axis=0)  # Average across time for each trial
+    
     # Create design matrix
     design_matrix = []
     spike_counts = []
     
     for idx, row in stimuli_outcome_df.iterrows():
-        # Get firing rate around this event
-        rate = compute_peri_event_rate(spike_matrix, [row['time']], unit_idx, window)
+        # Get firing rate for this trial
+        trial_idx = idx  # Assuming the DataFrame index corresponds to trial order
+        if trial_idx < len(trial_rates):
+            rate = trial_rates[trial_idx]
+        else:
+            rate = 0
         spike_counts.append(rate)
         
         # Create feature vector
@@ -411,9 +525,9 @@ def fit_glm_single_unit(spike_matrix, stimuli_outcome_df, unit_idx, window=(-0.1
         
         return coefficients, (intercept, r_squared), y_pred, y
     except:
-        return None, None,  None, None
+        return None, None
 
-def plot_advanced_unit_analysis(spike_matrix, stimuli_outcome_df, unit_idx, bin_size=0.01):
+def plot_advanced_unit_analysis(event_windows_data, stimuli_outcome_df, unit_idx, bin_size=0.01):
     """
     Create comprehensive plots for advanced single unit analysis.
     """
@@ -421,7 +535,7 @@ def plot_advanced_unit_analysis(spike_matrix, stimuli_outcome_df, unit_idx, bin_
     fig = go.Figure()
     
     # 1. Stimulus selectivity
-    stimuli, tuning_curve, best_stim = compute_stimulus_selectivity(spike_matrix, stimuli_outcome_df, unit_idx)
+    stimuli, tuning_curve, tuning_sem, best_stim = compute_stimulus_selectivity(event_windows_data, stimuli_outcome_df, unit_idx)
     if stimuli is not None:
         fig.add_trace(go.Scatter(
             x=stimuli, y=tuning_curve, mode='lines+markers',
@@ -430,15 +544,15 @@ def plot_advanced_unit_analysis(spike_matrix, stimuli_outcome_df, unit_idx, bin_
         ))
     
     # 2. Go/NoGo coding
-    d_prime, roc_auc, (go_rates, nogo_rates) = compute_go_nogo_coding(spike_matrix, stimuli_outcome_df, unit_idx)
+    d_prime, roc_auc, (go_rates, nogo_rates) = compute_go_nogo_coding(event_windows_data, stimuli_outcome_df, unit_idx)
     
     # 3. Outcome modulation
     outcome_p, (rewarded_rates, non_rewarded_rates), (rewarded_mean, non_rewarded_mean) = compute_outcome_modulation(
-        spike_matrix, stimuli_outcome_df, unit_idx
+        event_windows_data, stimuli_outcome_df, unit_idx
     )
     
     # 4. Choice probability
-    cp, cp_corr = compute_choice_probability(spike_matrix, stimuli_outcome_df, unit_idx)
+    cp, cp_corr = compute_choice_probability(event_windows_data, stimuli_outcome_df, unit_idx)
     
     # Update layout
     fig.update_layout(
@@ -613,7 +727,6 @@ def plot_unit_psth(event_windows_data, display_window, unit_idx, sorted_pvals, u
     )
     return psth_fig, psth_metrics
 
-
 def calculate_psth_metrics(unit_data, time_axis, baseline_window=(-0.5, 0)):
     """
     Calculate comprehensive PSTH metrics for a single unit.
@@ -773,7 +886,6 @@ def calculate_psth_metrics(unit_data, time_axis, baseline_window=(-0.5, 0)):
         'peak_rate': peak_rate
     }
 
-
 def compute_psth_pvalues_from_event_windows(event_windows_matrix, event_times, bin_size=0.01, window=(-1, 2)):
     """
     Compute p-values using event windows data for more accurate statistical analysis.
@@ -787,7 +899,6 @@ def compute_psth_pvalues_from_event_windows(event_windows_matrix, event_times, b
     Returns:
         numpy array of p-values for each unit
     """
-    from Analysis.GNG_bpod_analysis.stats_tests import mannwhitneyu
     
     n_units = event_windows_matrix.shape[0]
     n_time_bins = event_windows_matrix.shape[1]
@@ -814,7 +925,7 @@ def compute_psth_pvalues_from_event_windows(event_windows_matrix, event_times, b
         
         # Perform Mann-Whitney U test
         try:
-            stat, p = mannwhitneyu(pre, post, alternative='two-sided')
+            stat, p = stats.mannwhitneyu(pre, post, alternative='two-sided')
         except:
             p = 1.0  # Default p-value if test fails
         
@@ -1027,9 +1138,8 @@ def get_trial_statistics(event_windows_data, unit_idx):
         'Hit': hit_data.shape[1]
     }
 
-
 def single_unit_analysis_panel(
-    spike_matrix, stimuli_outcome_df, selected_folder=None, bin_size=0.01, default_window=1.0):
+    event_windows_data, stimuli_outcome_df, selected_folder=None, bin_size=0.01, default_window=1.0):
     import streamlit as st
     import numpy as np
     from .npxl_single_unit_analysis import plot_unit_psth
@@ -1064,9 +1174,6 @@ def single_unit_analysis_panel(
                 min_value=0.001, max_value=0.1, value=bin_size, step=0.001,
                 help="Time bin size for PSTH calculation"
             )
-        
-                   
-
 
         # P-value Analysis Section
         st.subheader("Statistical Analysis")
@@ -1099,26 +1206,26 @@ def single_unit_analysis_panel(
             st.metric("Significance Rate", f"{significance_rate:.1f}%")
 
 
-        # # Save p-values and metrics automatically once
-        # if selected_folder is not None:
-        #     try:
-        #         save_pvalues_to_folder(pvals, selected_folder, window=display_window, bin_size=bin_size_display)
-        #     except Exception as e:
-        #         st.error(f"Error saving p-values: {e}")
+        # Save p-values and metrics automatically once
+        if selected_folder is not None:
+            try:
+                save_pvalues_to_folder(pvals, selected_folder, window=display_window, bin_size=bin_size_display)
+            except Exception as e:
+                st.error(f"Error saving p-values: {e}")
 
-        #     try:
-        #         save_all_psth_metrics(event_windows_data, selected_folder, display_window, pvals)
-        #         st.toast("PSTH metrics saved (auto)")
-        #     except Exception as e:
-        #         st.error(f"Error saving PSTH metrics: {e}")
+            try:
+                save_all_psth_metrics(event_windows_data, selected_folder, display_window, pvals)
+                st.toast("PSTH metrics saved (auto)")
+            except Exception as e:
+                st.error(f"Error saving PSTH metrics: {e}")
 
-        #     # Add button for manual save
-        #     if st.button("Save PSTH Metrics Again"):
-        #         try:
-        #             save_all_psth_metrics(event_windows_data, selected_folder, display_window, pvals)
-        #             st.toast("PSTH metrics saved (manual)")
-        #         except Exception as e:
-        #             st.error(f"Error saving PSTH metrics: {e}")
+            # Add button for manual save
+            if st.button("Save PSTH Metrics Again"):
+                try:
+                    save_all_psth_metrics(event_windows_data, selected_folder, display_window, pvals)
+                    st.toast("PSTH metrics saved (manual)")
+                except Exception as e:
+                    st.error(f"Error saving PSTH metrics: {e}")
 
 
         # Unit Selection Section
@@ -1208,15 +1315,13 @@ def single_unit_analysis_panel(
             # Note: Fallback PSTH doesn't support metrics yet
             st.warning("PSTH metrics not available in fallback mode")
             psth_fig = plot_unit_psth(
-                spike_matrix, event_times, unit_idx,
+                event_windows_data, event_times, unit_idx,
                 bin_size=bin_size_display, window=display_window,
                 event_outcomes=event_outcomes
             )
             if isinstance(psth_fig, tuple):
                 psth_fig = psth_fig[0]  # Extract just the figure
             st.plotly_chart(psth_fig, use_container_width=True)
-
-
     
     with tab2:
         st.header("Advanced Single Unit Analysis")
@@ -1230,11 +1335,11 @@ def single_unit_analysis_panel(
             available_units = np.where(significant_mask)[0]
             if len(available_units) == 0:
                 st.warning("No significant units found. Showing all units.")
-                available_units = range(spike_matrix.shape[0])
+                available_units = range(event_windows_matrix.shape[0])
             else:
                 st.info(f"Showing {len(available_units)} significant units out of {len(pvals)} total units")
         else:
-            available_units = range(spike_matrix.shape[0])
+            available_units = range(event_windows_matrix.shape[0])
         
         # Unit selection
         if len(available_units) > 0:
@@ -1248,15 +1353,15 @@ def single_unit_analysis_panel(
             unit_idx_adv = 0
         
         # Analysis window
-        analysis_window = st.slider("Analysis window", 0.1, 1.0, 0.5, step=0.1)
-        window = (-analysis_window/2, analysis_window/2)
+        analysis_window = st.slider("Analysis window", 0.1, 2.0, 1.0, step=0.1)
+        window = (-0.1, analysis_window)
         
         col1, col2 = st.columns(2)
         
         with col1:
             st.subheader("Stimulus Selectivity")
             stimuli, tuning_curve, tuning_sem, best_stim = compute_stimulus_selectivity(
-                spike_matrix, stimuli_outcome_df, unit_idx_adv, window
+                event_windows_data, stimuli_outcome_df, unit_idx_adv, window
             )
             if stimuli is not None:
                 st.metric("Best stimulus", f"{best_stim:.2f}")
@@ -1299,7 +1404,7 @@ def single_unit_analysis_panel(
         with col2:
             st.subheader("Go/NoGo Coding")
             d_prime, roc_auc, (go_rates, nogo_rates) = compute_go_nogo_coding(
-                spike_matrix, stimuli_outcome_df, unit_idx_adv, window
+                event_windows_data, stimuli_outcome_df, unit_idx_adv, window
             )
             if d_prime is not None:
                 st.metric("d'", f"{d_prime:.3f}")
@@ -1322,7 +1427,7 @@ def single_unit_analysis_panel(
         with col3:
             st.subheader("Outcome Modulation")
             outcome_p, (rewarded_rates, non_rewarded_rates), (rewarded_mean, non_rewarded_mean) = compute_outcome_modulation(
-                spike_matrix, stimuli_outcome_df, unit_idx_adv, window
+                event_windows_data, stimuli_outcome_df, unit_idx_adv, window
             )
             if outcome_p is not None:
                 st.metric("p-value", f"{outcome_p:.3g}")
@@ -1343,15 +1448,15 @@ def single_unit_analysis_panel(
         with col4:
             st.subheader("Choice Probability")
             cp, cp_corr = compute_choice_probability(
-                spike_matrix, stimuli_outcome_df, unit_idx_adv, window
+                event_windows_data, stimuli_outcome_df, unit_idx_adv, window
             )
             if cp is not None:
                 st.metric("Choice Probability", f"{cp:.3f}")
                 st.metric("CP Correlation", f"{cp_corr:.3f}")
                 
                 # Additional d' calculations
-                d_hit_miss = compute_d_prime(spike_matrix, stimuli_outcome_df, unit_idx_adv, "Hit", "Miss", window)
-                d_fa_cr = compute_d_prime(spike_matrix, stimuli_outcome_df, unit_idx_adv, "False Alarm", "CR", window)
+                d_hit_miss = compute_d_prime(event_windows_data, stimuli_outcome_df, unit_idx_adv, "Hit", "Miss", window)
+                d_fa_cr = compute_d_prime(event_windows_data, stimuli_outcome_df, unit_idx_adv, "False Alarm", "CR", window)
                 
                 if d_hit_miss is not None:
                     st.metric("d' (Hit vs Miss)", f"{d_hit_miss:.3f}")
@@ -1372,11 +1477,11 @@ def single_unit_analysis_panel(
             available_units_glm = np.where(significant_mask_glm)[0]
             if len(available_units_glm) == 0:
                 st.warning("No significant units found. Showing all units.")
-                available_units_glm = range(spike_matrix.shape[0])
+                available_units_glm = range(event_windows_matrix.shape[0])
             else:
                 st.info(f"Showing {len(available_units_glm)} significant units out of {len(pvals)} total units")
         else:
-            available_units_glm = range(spike_matrix.shape[0])
+            available_units_glm = range(event_windows_matrix.shape[0])
         
         unit_idx_glm = st.slider(
             "Select Unit for GLM",
@@ -1393,7 +1498,7 @@ def single_unit_analysis_panel(
         
         # Fit GLM
         coefficients, (intercept, r_squared), y_pred, y = fit_glm_single_unit(
-            spike_matrix, stimuli_outcome_df, unit_idx_glm, window_glm
+            event_windows_data, stimuli_outcome_df, unit_idx_glm, window_glm
         )
         # Plot predicted vs actual firing rates for GLM
         if y_pred is not None and y is not None:

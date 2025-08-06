@@ -108,15 +108,13 @@ if 'Checkbox' in st_project_data.columns and st_project_data['Checkbox'].any():
                     loaded_data = load_event_windows_data(selected_folder)
                     if loaded_data:
                         event_windows_matrix, time_axis_from_load, valid_event_indices, stimuli_outcome_df, metadata = loaded_data
-                        spike_matrix = np.mean(event_windows_matrix, axis=2)  # For compatibility with single_unit_analysis_panel
-                        single_unit_analysis_panel(spike_matrix, stimuli_outcome_df, selected_folder)
+                        single_unit_analysis_panel(event_windows_matrix, stimuli_outcome_df, selected_folder)
                     else:
                         st.error(f"Event windows data could not be loaded from: {selected_folder}")
                         st.info("Please ensure the event windows data has been generated.")
                         # Set variables to None to prevent errors in other tabs
                         event_windows_matrix = None
                         stimuli_outcome_df = None
-                        spike_matrix = None
                         metadata = None
 
             with population_tab:
