@@ -15,6 +15,7 @@ COLOR_HIGH_BD  = '#ffb600'
 COLOR_HIGH_BD_TRANSPARENT = "rgba(255, 182, 0, 0.2)"
 
 COLOR_D_PRIME = "#FF7F0E"  # Orange
+COLOR_ORANGE = "#FF7F0E"   # Orange (general purpose)
 # ─── Outcome Colors ─────────────────────────────────────────────
 COLOR_HIT = "#008000"      # Green
 COLOR_CR = "#1E90FA"       # Dodger Blue

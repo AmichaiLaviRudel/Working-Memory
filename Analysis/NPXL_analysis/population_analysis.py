@@ -1,14 +1,16 @@
 import plotly.graph_objects as go
-from Analysis.GNG_bpod_analysis.colors import COLOR_HIT, COLOR_MISS, COLOR_FA, COLOR_CR, GO_COLORS, NOGO_COLORS
+from Analysis.GNG_bpod_analysis.colors import COLOR_HIT, COLOR_MISS, COLOR_FA, COLOR_CR, GO_COLORS, NOGO_COLORS, COLOR_ACCENT
 import streamlit as st
 import numpy as np
 import pandas as pd
 from Analysis.NPXL_analysis.population_analysis_advanced import (
     PopulationAnalyzer, StimulusDecoder, ChoiceDecoder, 
-    DimensionalityReducer, RepresentationalSimilarityAnalyzer,
+    DimensionalityReducer, RepresentationalSimilarityAnalyzer, jPCAAnalyzer,
     plot_decoding_results, plot_time_resolved_decoding,
-    plot_pca_results, plot_umap_results, plot_rsa_results
+    plot_pca_results, plot_umap_results, plot_rsa_results, plot_jpca_results
 )
+from Analysis.NPXL_analysis.npxl_single_unit_analysis import compute_stimulus_selectivity, compute_psth_pvalues_from_event_windows
+from Analysis.GNG_bpod_analysis.colors import COLOR_ORANGE
 
 def plot_population_heatmap(event_windows_matrix, stimuli_outcome_df, metadata):
     """
@@ -241,6 +243,245 @@ def plot_population_heatmap(event_windows_matrix, stimuli_outcome_df, metadata):
     st.plotly_chart(fig, use_container_width=True)
 
 
+def plot_best_stimulus_panel(event_windows_matrix, stimuli_outcome_df, metadata, window=(-0.1, 0.5)):
+    """
+    Plot a panel aggregating each unit's best stimulus and its firing rate.
+
+    Args:
+        event_windows_matrix: 3D array [units × time_bins × trials]
+        stimuli_outcome_df: DataFrame with trial information (must include 'stimulus')
+        metadata: Dictionary with recording parameters (expects 'bin_size' and 'window_duration')
+        window: tuple of (start, end) time in seconds relative to event for computing responses
+    """
+    if 'stimulus' not in stimuli_outcome_df.columns:
+        st.warning("No 'stimulus' column found; cannot compute best stimulus per unit.")
+        return
+
+    if len(event_windows_matrix.shape) != 3:
+        st.error("Expected 3D event windows matrix [units × time × trials]")
+        return
+
+    n_units, n_time_bins, n_trials = event_windows_matrix.shape
+
+    # Reconstruct time axis from metadata
+    bin_size = float(metadata.get('bin_size', 0.1))
+    window_duration = float(metadata.get('window_duration', 3.0))
+    time_axis = np.arange(-window_duration, window_duration, bin_size)
+    if time_axis.shape[0] != n_time_bins:
+        # Fallback to length-consistent axis if metadata-derived axis length mismatches data
+        time_axis = np.linspace(-window_duration, window_duration, n_time_bins, endpoint=False)
+
+    # Optional filtering: only significant units
+    colf1, colf2 = st.columns(2)
+    with colf1:
+        only_significant = st.checkbox("Only significant units (p < α)", value=False, help="Filter units by baseline vs post-event significance using Mann-Whitney U")
+    with colf2:
+        alpha = st.number_input("α (significance threshold)", min_value=0.001, max_value=0.2, value=0.05, step=0.001, format="%.3f")
+
+    # Build event_windows_data tuple expected by compute_stimulus_selectivity
+    valid_event_indices = np.arange(n_trials)
+    event_windows_data = (event_windows_matrix, time_axis, valid_event_indices, stimuli_outcome_df, metadata)
+
+    # Determine indices to include
+    unit_indices = np.arange(n_units)
+    if only_significant:
+        # Use the full event window for significance computation (split around 0)
+        event_times = stimuli_outcome_df['time'].values if 'time' in stimuli_outcome_df.columns else np.arange(n_trials)
+        pvals = compute_psth_pvalues_from_event_windows(
+            event_windows_matrix,
+            event_times,
+            bin_size=bin_size,
+            window=(-window_duration, window_duration)
+        )
+        sig_mask = np.isfinite(pvals) & (pvals < float(alpha))
+        unit_indices = np.where(sig_mask)[0]
+
+    best_stimuli = []
+    best_rates = []
+
+    for unit_idx in unit_indices:
+        stimuli, tuning_curve, tuning_sem, best_stim = compute_stimulus_selectivity(
+            event_windows_data, stimuli_outcome_df, unit_idx, window
+        )
+        if stimuli is None or best_stim is None:
+            continue
+
+        # Get best rate from tuning curve
+        if isinstance(tuning_curve, list):
+            tuning_array = np.array(tuning_curve)
+        else:
+            tuning_array = tuning_curve
+
+        if tuning_array.size == 0 or np.all(~np.isfinite(tuning_array)):
+            continue
+
+        # Use the index of the best stimulus to fetch its firing rate
+        try:
+            best_index = int(np.where(np.array(stimuli) == best_stim)[0][0])
+            best_rate = float(tuning_array[best_index])
+        except Exception:
+            best_rate = float(np.nanmax(tuning_array))
+
+        best_stimuli.append(best_stim)
+        best_rates.append(best_rate)
+
+    if len(best_stimuli) == 0:
+        st.warning("No best stimulus data could be computed across units.")
+        return
+
+    # Convert to arrays
+    best_stimuli_arr = np.array(best_stimuli, dtype=object)
+    best_rates_arr = np.array(best_rates, dtype=float)
+
+    # Determine jitter strategy (numeric vs categorical x)
+    def _is_all_numeric(values):
+        try:
+            _ = np.asarray(values, dtype=float)
+            return True
+        except Exception:
+            return False
+
+    is_numeric_x = _is_all_numeric(best_stimuli_arr)
+
+    if is_numeric_x:
+        x_vals = np.asarray(best_stimuli_arr, dtype=float)
+        # Multiplicative jitter in log space to keep positivity
+        log_x = np.log10(x_vals)
+        unique_sorted_log = np.unique(np.round(log_x, 12))
+        if unique_sorted_log.size > 1:
+            min_diff_log = np.min(np.diff(unique_sorted_log))
+            log_jitter_sigma = 0.05 * float(min_diff_log)
+        else:
+            log_jitter_sigma = 0.02
+        jitter_factors = 10 ** np.random.normal(0.0, log_jitter_sigma, size=x_vals.shape[0])
+        jittered_x = x_vals * jitter_factors
+        # Ensure strictly positive for log axis
+        jittered_x = np.clip(jittered_x, a_min=np.finfo(float).eps, a_max=None)
+        # Prepare ticks: spell out all unique stimulus values
+        tick_vals = np.sort(np.unique(x_vals))
+        tick_text = [f"{v:.2f}" for v in tick_vals]
+    else:
+        categories = list(pd.unique(best_stimuli_arr))
+        cat_to_idx = {cat: i for i, cat in enumerate(categories)}
+        x_idx = np.array([cat_to_idx[c] for c in best_stimuli_arr], dtype=float)
+        jitter_sigma = 0.15
+        jittered_x = x_idx + np.random.normal(0.0, jitter_sigma, size=x_idx.shape[0])
+        tick_vals = list(range(len(categories)))
+        tick_text = categories
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=jittered_x,
+            y=best_rates_arr,
+            mode='markers',
+            name='Units',
+            marker=dict(size=7, opacity=0.8, color=COLOR_ACCENT)
+        )
+    )
+
+    # Add vertical reference lines at x = 1 and x = 1.5
+    def _x_position_for_value(val):
+        if is_numeric_x:
+            return val
+        # categorical: try to map exact match or numeric-close match using tick lists
+        if val in (tick_text or []):
+            return (tick_vals or [])[ (tick_text or []).index(val) ]
+        try:
+            for i, c in enumerate(tick_text or []):
+                try:
+                    if np.isclose(float(c), float(val)):
+                        return (tick_vals or [])[i]
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        return None
+
+    for vline_x in [1.0, 1.5]:
+        xpos = _x_position_for_value(vline_x)
+        if xpos is not None:
+            fig.add_vline(x=float(xpos), line_dash="dash", line_color="black", opacity=0.6)
+
+    # Configure x-axis: log scale when numeric, categorical otherwise
+    if is_numeric_x:
+        xaxis_kwargs = dict(title="Stimulus", type='log', tickmode='array', tickvals=tick_vals, ticktext=tick_text)
+    else:
+        xaxis_kwargs = dict(title="Stimulus", tickmode='array', tickvals=tick_vals, ticktext=tick_text)
+
+    fig.update_layout(
+        title="Best Stimulus vs Best Firing Rate per Unit",
+        xaxis=xaxis_kwargs,
+        yaxis_title="Firing rate at best stimulus (spikes/s)",
+        plot_bgcolor='white',
+        paper_bgcolor='white'
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+    # Barplot of unit percentage per stimulus (based on best stimulus)
+    counts_series = pd.Series(best_stimuli_arr).value_counts()
+
+    # Determine denominator based on included units (filters)
+    denom_units = len(unit_indices) if 'unit_indices' in locals() and unit_indices is not None else n_units
+
+    if is_numeric_x:
+        unique_vals = np.sort(np.unique(best_stimuli_arr.astype(float)))
+        bar_x = unique_vals
+        bar_counts = np.array([int(counts_series.get(v, 0)) for v in unique_vals])
+        bar_y = (bar_counts.astype(float) / float(denom_units)) * 100.0
+        bar_xaxis_kwargs = dict(title="Stimulus", type='log', tickmode='array', tickvals=unique_vals, ticktext=[f"{v:.2f}" for v in unique_vals])
+    else:
+        bar_x = list(range(len(tick_text or [])))
+        bar_counts = np.array([int(np.sum(best_stimuli_arr == cat)) for cat in (tick_text or [])])
+        bar_y = (bar_counts.astype(float) / float(denom_units)) * 100.0
+        bar_xaxis_kwargs = dict(title="Stimulus", tickmode='array', tickvals=bar_x, ticktext=(tick_text or []))
+
+    # Base bar: percentage of units per best stimulus
+    fig_bar = go.Figure(
+        data=[go.Bar(x=bar_x, y=bar_y, marker_color=COLOR_ACCENT, name='Units (%)', opacity=0.85)]
+    )
+
+    # Secondary line: average firing rate per best stimulus (sum divided by number of included units)
+    if is_numeric_x:
+        # Align sums to unique_vals order
+        stim_vals = best_stimuli_arr.astype(float)
+        sum_rates = np.array([float(np.sum(best_rates_arr[np.isclose(stim_vals, v)])) for v in unique_vals])
+    else:
+        # Align sums to tick_text order
+        sum_rates = np.array([float(np.sum(best_rates_arr[best_stimuli_arr == cat])) for cat in (tick_text or [])])
+
+    avg_rates = sum_rates / float(denom_units) if float(denom_units) > 0 else np.zeros_like(sum_rates)
+
+    fig_bar.add_trace(
+        go.Scatter(
+            x=bar_x,
+            y=avg_rates,
+            name='Avg FR per unit',
+            mode='lines+markers',
+            line=dict(color=COLOR_ORANGE, width=2),
+            marker=dict(size=6, color=COLOR_ORANGE),
+            yaxis='y2'
+        )
+    )
+    # Add vertical lines at x = 1 and x = 1.5 on the bar plot
+    for vline_x in [1.0, 1.5]:
+        xpos = _x_position_for_value(vline_x)
+        if xpos is not None:
+            fig_bar.add_vline(x=float(xpos), line_dash="dash", line_color="black", opacity=0.6)
+
+    fig_bar.update_layout(
+        title="Best Stimulus Summary",
+        xaxis=bar_xaxis_kwargs,
+        yaxis=dict(title="Units (%)", range=[0, 100]),
+        yaxis2=dict(title="Avg FR per unit (spikes/s)", overlaying='y', side='right', showgrid=False),
+        barmode='overlay',
+        plot_bgcolor='white',
+        paper_bgcolor='white'
+    )
+    st.plotly_chart(fig_bar, use_container_width=True)
+
+
 def advanced_population_analysis_panel(event_windows_matrix, stimuli_outcome_df, metadata):
     """
     Advanced population analysis panel with decoding and other analyses.
@@ -250,7 +491,7 @@ def advanced_population_analysis_panel(event_windows_matrix, stimuli_outcome_df,
         stimuli_outcome_df: DataFrame with trial information
         metadata: Dictionary with recording parameters
     """
-    st.header("🧠 Advanced Population Analysis")
+    st.header("Advanced Population Analysis")
     
     # Create analyzer instances
     try:
@@ -287,7 +528,7 @@ def advanced_population_analysis_panel(event_windows_matrix, stimuli_outcome_df,
 
 def _stimulus_decoding_analysis(stimulus_decoder):
     """Stimulus decoding analysis panel."""
-    st.subheader("🎯 Stimulus Decoding Analysis")
+    st.subheader("Stimulus Decoding Analysis")
     
     if stimulus_decoder.stimulus_labels is None:
         st.warning("No stimulus labels found in the data.")
@@ -340,7 +581,7 @@ def _stimulus_decoding_analysis(stimulus_decoder):
 
 def _choice_decoding_analysis(choice_decoder):
     """Choice decoding analysis panel."""
-    st.subheader("🔄 Choice Decoding Analysis")
+    st.subheader("Choice Decoding Analysis")
     
     if choice_decoder.choice_labels is None:
         st.warning("No choice labels found in the data.")
@@ -394,7 +635,7 @@ def _choice_decoding_analysis(choice_decoder):
 
 def _time_resolved_analysis(stimulus_decoder, choice_decoder):
     """Time-resolved decoding analysis panel."""
-    st.subheader("⏱️ Time-Resolved Decoding")
+    st.subheader("Time-Resolved Decoding")
     
     # Parameters
     col1, col2, col3 = st.columns(3)
@@ -492,7 +733,7 @@ def _time_resolved_analysis(stimulus_decoder, choice_decoder):
 
 def _population_summary(analyzer):
     """Population summary panel."""
-    st.subheader("📊 Population Summary")
+    st.subheader("Population Summary")
     
     # Basic statistics
     col1, col2, col3, col4 = st.columns(4)
@@ -536,10 +777,10 @@ def _population_summary(analyzer):
 
 def _dimensionality_reduction_analysis(dimensionality_reducer):
     """Dimensionality reduction analysis panel."""
-    st.subheader("🔍 Dimensionality Reduction Analysis")
+    st.subheader("Dimensionality Reduction Analysis")
     
     # Method selection
-    method = st.selectbox("Reduction Method", ["PCA", "UMAP"])
+    method = st.selectbox("Reduction Method", ["PCA", "UMAP", "jPCA"])
     
     # Parameters
     col1, col2, col3 = st.columns(3)
@@ -577,15 +818,7 @@ def _dimensionality_reduction_analysis(dimensionality_reducer):
                     # Plot results
                     fig = plot_pca_results(results, "PCA Analysis Results")
                     st.plotly_chart(fig, use_container_width=True)
-                    
-                    # Show explained variance details
-                    st.subheader("Explained Variance by Component")
-                    variance_df = pd.DataFrame({
-                        'Component': range(1, len(results['explained_variance_ratio']) + 1),
-                        'Variance Explained': results['explained_variance_ratio'],
-                        'Cumulative Variance': results['cumulative_variance']
-                    })
-                    st.dataframe(variance_df)
+    
                     
                 except Exception as e:
                     st.error(f"Error in PCA analysis: {e}")
@@ -619,11 +852,59 @@ def _dimensionality_reduction_analysis(dimensionality_reducer):
                     
                 except Exception as e:
                     st.error(f"Error in UMAP analysis: {e}")
+    
+    elif method == "jPCA":
+        # Additional jPCA parameters
+        col1, col2 = st.columns(2)
+        with col1:
+            n_pca_components = st.number_input("PCA Components", value=6, min_value=4, max_value=20)
+        with col2:
+            max_skew = st.number_input("Max Skew", value=0.99, min_value=0.5, max_value=0.99, step=0.01)
+        
+        if st.button("Run jPCA Analysis"):
+            with st.spinner("Running jPCA analysis..."):
+                try:
+                    jpca_analyzer = jPCAAnalyzer(dimensionality_reducer.event_windows_matrix, 
+                                                dimensionality_reducer.stimuli_outcome_df, 
+                                                dimensionality_reducer.metadata)
+                    results = jpca_analyzer.compute_jpca(
+                        time_window=time_window,
+                        n_components=n_pca_components,
+                        max_skew=max_skew
+                    )
+                    
+                    if results is not None:
+                        # Display basic info
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("jPCA Pairs", len(results['jpca_pairs']))
+                        with col2:
+                            st.metric("PCA Components", n_pca_components)
+                        with col3:
+                            st.metric("Singular Values", len(results['singular_values']))
+                        
+                        # Display jPCA pairs information
+                        if len(results['jpca_pairs']) > 0:
+                            st.subheader("jPCA Pairs")
+                            for i, (idx1, idx2) in enumerate(results['jpca_pairs']):
+                                st.write(f"Pair {i+1}: Components {idx1+1} and {idx2+1}")
+                        else:
+                            st.warning("No jPCA pairs found. This may indicate no strong rotational dynamics.")
+                        
+                        # Plot results
+                        fig = plot_jpca_results(results, "jPCA Analysis Results")
+                        if fig is not None:
+                            st.plotly_chart(fig, use_container_width=True)
+                    else:
+                        st.error("jPCA analysis failed!")
+                    
+                except Exception as e:
+                    st.error(f"Error in jPCA analysis: {e}")
 
 
 def _rsa_analysis(rsa_analyzer):
     """RSA analysis panel."""
-    st.subheader("🧩 Representational Similarity Analysis")
+    st.subheader("Representational Similarity Analysis")
     
     # Parameters
     col1, col2, col3 = st.columns(3)
@@ -661,22 +942,7 @@ def _rsa_analysis(rsa_analyzer):
                     fig = plot_rsa_results(results, "RSA Analysis Results")
                     if fig is not None:
                         st.plotly_chart(fig, use_container_width=True)
-                    
-                    # Show condition labels
-                    st.subheader("Conditions Analyzed")
-                    conditions_df = pd.DataFrame({
-                        'Condition': results['condition_labels']
-                    })
-                    st.dataframe(conditions_df)
-                    
-                    # Show RDM values
-                    st.subheader("Representational Dissimilarity Matrix")
-                    rdm_df = pd.DataFrame(
-                        results['rdm'], 
-                        index=results['condition_labels'],
-                        columns=results['condition_labels']
-                    )
-                    st.dataframe(rdm_df.round(3))
+                
                 
             except Exception as e:
                 st.error(f"Error in RSA analysis: {e}") 

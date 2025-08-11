@@ -1,13 +1,5 @@
 """
 Advanced Population Analysis Module for Neuropixels Data
-
-This module implements advanced population-level analyses including:
-- Stimulus decoding with cross-validation
-- Choice decoding (Go/NoGo prediction)
-- Dimensionality reduction (PCA, dPCA)
-- Latency analysis
-- Temporal generalization matrices
-
 """
 
 import numpy as np
@@ -75,6 +67,10 @@ class PopulationAnalyzer:
             # Store original stimulus values for plotting
             self._original_stimulus_values = np.unique(raw_stimuli)
             
+            # Create mapping from label index to actual stimulus value
+            self._label_to_stimulus_map = {}
+            self._stimulus_to_label_map = {}
+            
             # Check if stimuli are continuous (numerical) and convert to categorical
             if np.issubdtype(raw_stimuli.dtype, np.number):
                 # For continuous values, create categorical labels
@@ -99,6 +95,11 @@ class PopulationAnalyzer:
                         label_map = {val: i for i, val in enumerate(unique_vals)}
                         self.stimulus_labels = np.array([label_map[val] for val in raw_stimuli])
                         self.unique_stimuli = np.arange(len(unique_vals))
+                        
+                        # Create mappings
+                        for i, val in enumerate(unique_vals):
+                            self._label_to_stimulus_map[i] = val
+                            self._stimulus_to_label_map[val] = i
                     else:
                         self.stimulus_labels = np.digitize(raw_stimuli, bins) - 1  # 0-indexed
                         # Ensure no empty bins by checking and adjusting
@@ -116,6 +117,13 @@ class PopulationAnalyzer:
                         
                         self.unique_stimuli = np.arange(n_bins)
                         
+                        # Create mappings for binned data
+                        for i in range(n_bins):
+                            if i < len(bins) - 1:
+                                # Use the center of the bin as representative value
+                                bin_center = (bins[i] + bins[i+1]) / 2
+                                self._label_to_stimulus_map[i] = bin_center
+                        
                     st.info(f"Binned {len(np.unique(raw_stimuli))} continuous stimulus values into {n_bins} categories (min samples per category: {np.min(counts)})")
                 else:
                     # Convert to integer labels for discrete classification
@@ -123,15 +131,27 @@ class PopulationAnalyzer:
                     label_map = {val: i for i, val in enumerate(unique_vals)}
                     self.stimulus_labels = np.array([label_map[val] for val in raw_stimuli])
                     self.unique_stimuli = np.arange(len(unique_vals))
+                    
+                    # Create mappings
+                    for i, val in enumerate(unique_vals):
+                        self._label_to_stimulus_map[i] = val
+                        self._stimulus_to_label_map[val] = i
             else:
                 # Already categorical
                 unique_vals = np.unique(raw_stimuli)
                 label_map = {val: i for i, val in enumerate(unique_vals)}
                 self.stimulus_labels = np.array([label_map[val] for val in raw_stimuli])
                 self.unique_stimuli = np.arange(len(unique_vals))
+                
+                # Create mappings
+                for i, val in enumerate(unique_vals):
+                    self._label_to_stimulus_map[i] = val
+                    self._stimulus_to_label_map[val] = i
         else:
             self.stimulus_labels = None
             self.unique_stimuli = None
+            self._label_to_stimulus_map = {}
+            self._stimulus_to_label_map = {}
             
         # Outcome labels (Go/NoGo based on trial types)
         if 'outcome' in self.stimuli_outcome_df.columns:
@@ -661,7 +681,16 @@ class DimensionalityReducer(PopulationAnalyzer):
         if self.stimulus_labels is not None:
             for stim in np.unique(self.stimulus_labels):
                 stim_mask = self.stimulus_labels == stim
-                condition_trajectories[f'Stimulus_{stim}'] = X_pca[stim_mask].mean(axis=0)
+                # Get actual stimulus value for labeling
+                actual_stim = self._label_to_stimulus_map.get(stim, stim)
+                if isinstance(actual_stim, (int, float)):
+                    if isinstance(actual_stim, float):
+                        stim_label = f'Stimulus_{actual_stim:.1f}'
+                    else:
+                        stim_label = f'Stimulus_{actual_stim}'
+                else:
+                    stim_label = f'Stimulus_{actual_stim}'
+                condition_trajectories[stim_label] = X_pca[stim_mask].mean(axis=0)
         
         if self.choice_labels is not None:
             for choice in np.unique(self.choice_labels):
@@ -744,57 +773,226 @@ class RepresentationalSimilarityAnalyzer(PopulationAnalyzer):
         Returns:
             RSA results dictionary
         """
-        # Extract activity matrix [trials × units]
-        X = self.extract_population_activity(time_window=time_window, average_trials=True)
-        
-        # Compute condition-averaged responses
-        condition_responses = {}
-        condition_labels = []
-        
-        # Group by stimulus if available
-        if self.stimulus_labels is not None:
-            for stim in np.unique(self.stimulus_labels):
-                mask = self.stimulus_labels == stim
-                if np.sum(mask) > 0:
-                    avg_response = X[mask].mean(axis=0)
-                    condition_responses[f'Stim_{stim}'] = avg_response
-                    condition_labels.append(f'Stim_{stim}')
-        
-        # Group by choice if available
-        if self.choice_labels is not None:
-            for choice in np.unique(self.choice_labels):
-                mask = self.choice_labels == choice
-                if np.sum(mask) > 0:
-                    avg_response = X[mask].mean(axis=0)
-                    condition_responses[f'Choice_{choice}'] = avg_response
-                    condition_labels.append(f'Choice_{choice}')
-        
-        if len(condition_responses) < 2:
-            st.error("Need at least 2 conditions for RSA")
+        try:
+            # Extract activity matrix [trials × units]
+            X = self.extract_population_activity(time_window=time_window, average_trials=True)
+            
+            if X is None or X.shape[0] == 0:
+                st.error("No valid activity data found for RSA analysis")
+                return None
+            
+            # Compute condition-averaged responses
+            condition_responses = {}
+            condition_labels = []
+            
+            # Group by stimulus if available
+            if self.stimulus_labels is not None:
+                for stim in np.unique(self.stimulus_labels):
+                    mask = self.stimulus_labels == stim
+                    if np.sum(mask) > 0:
+                        avg_response = X[mask].mean(axis=0)
+                        # Get actual stimulus value for labeling
+                        actual_stim = self._label_to_stimulus_map.get(stim, stim)
+                        if isinstance(actual_stim, (int, float)):
+                            # Format numbers nicely
+                            if isinstance(actual_stim, float):
+                                stim_label = f'Stim_{actual_stim:.1f}'
+                            else:
+                                stim_label = f'Stim_{actual_stim}'
+                        else:
+                            stim_label = f'Stim_{actual_stim}'
+                        
+                        condition_responses[stim_label] = avg_response
+                        condition_labels.append(stim_label)
+            
+            # Group by choice if available
+            if self.choice_labels is not None:
+                for choice in np.unique(self.choice_labels):
+                    mask = self.choice_labels == choice
+                    if np.sum(mask) > 0:
+                        avg_response = X[mask].mean(axis=0)
+                        condition_responses[f'Choice_{choice}'] = avg_response
+                        condition_labels.append(f'Choice_{choice}')
+            
+            if len(condition_responses) < 2:
+                st.error("Need at least 2 conditions for RSA")
+                return None
+            
+            # Create condition matrix [conditions × units]
+            condition_matrix = np.array([condition_responses[label] for label in condition_labels])
+            
+            # Compute representational dissimilarity matrix (RDM)
+            if metric == 'correlation':
+                # 1 - correlation for dissimilarity
+                rdm = 1 - np.corrcoef(condition_matrix)
+                # For correlation-based RDM, we need to extract the upper triangle for linkage
+                # since correlation matrix is already symmetric
+                rdm_condensed = rdm[np.triu_indices_from(rdm, k=1)]
+            else:
+                # For other metrics, use pdist to compute pairwise distances
+                rdm_condensed = pdist(condition_matrix, metric=metric)
+                # Convert to square form for visualization
+                rdm = squareform(rdm_condensed)
+            
+            # Hierarchical clustering
+            linkage_matrix = linkage(rdm_condensed, method='average')
+            
+            return {
+                'rdm': rdm,
+                'condition_labels': condition_labels,
+                'condition_matrix': condition_matrix,
+                'linkage_matrix': linkage_matrix,
+                'metric': metric,
+                'time_window': time_window,
+                'analyzer': self  # Pass the analyzer object for color mapping
+            }
+            
+        except Exception as e:
+            st.error(f"Error in RSA computation: {e}")
             return None
+
+
+class jPCAAnalyzer(PopulationAnalyzer):
+    """
+    Class for performing jPCA (joint Principal Component Analysis) to identify 
+    rotational dynamics in neural population activity.
+    """
+    
+    def __init__(self, event_windows_matrix, stimuli_outcome_df, metadata):
+        super().__init__(event_windows_matrix, stimuli_outcome_df, metadata)
         
-        # Create condition matrix [conditions × units]
-        condition_matrix = np.array([condition_responses[label] for label in condition_labels])
+    def compute_jpca(self, time_window=(-0.5, 1.0), n_components=6, max_skew=0.99):
+        """
+        Perform jPCA analysis to identify rotational dynamics.
         
-        # Compute representational dissimilarity matrix (RDM)
-        if metric == 'correlation':
-            # 1 - correlation for dissimilarity
-            rdm = 1 - np.corrcoef(condition_matrix)
-        else:
-            rdm = squareform(pdist(condition_matrix, metric=metric))
+        Args:
+            time_window: time window for analysis (seconds)
+            n_components: number of PCA components to use for jPCA
+            max_skew: maximum skew-symmetric component to consider
+            
+        Returns:
+            jPCA results dictionary
+        """
+        try:
+            # Extract time-resolved activity matrix
+            X = self.extract_population_activity(time_window=time_window, average_trials=False)
+            
+            if X.shape[0] < 2 or X.shape[2] < 2:
+                raise ValueError("Need at least 2 trials and 2 time points for jPCA")
+            
+            # Reshape to [trials*time × units]
+            n_trials, n_units, n_time = X.shape
+            X_reshaped = X.transpose(0, 2, 1).reshape(-1, n_units)
+            
+            # Apply PCA to reduce dimensionality
+            from sklearn.decomposition import PCA
+            from sklearn.preprocessing import StandardScaler
+            
+            scaler = StandardScaler()
+            X_scaled = scaler.fit_transform(X_reshaped)
+            
+            pca = PCA(n_components=min(n_components, n_units))
+            X_pca = pca.fit_transform(X_scaled)
+            
+            # Reshape back to [trials × time × components]
+            X_pca_reshaped = X_pca.reshape(n_trials, n_time, -1)
+            
+            # Compute cross-covariance matrix
+            # Center the data
+            X_centered = X_pca_reshaped - np.mean(X_pca_reshaped, axis=1, keepdims=True)
+            
+            # Compute cross-covariance between consecutive time points
+            cross_cov = np.zeros((X_pca_reshaped.shape[2], X_pca_reshaped.shape[2]))
+            for t in range(n_time - 1):
+                cross_cov += X_centered[:, t, :].T @ X_centered[:, t+1, :]
+            cross_cov /= (n_time - 1)
+            
+            # Find skew-symmetric component
+            skew_sym = (cross_cov - cross_cov.T) / 2
+            
+            # SVD of skew-symmetric matrix
+            U, S, Vt = np.linalg.svd(skew_sym)
+            
+            # Find pairs of components with similar singular values
+            jpca_pairs = []
+            for i in range(0, len(S)-1, 2):
+                if i+1 < len(S):
+                    # Check if singular values are similar (within 10%)
+                    if abs(S[i] - S[i+1]) / max(S[i], S[i+1]) < 0.1:
+                        jpca_pairs.append((i, i+1))
+            
+            # Project data onto jPCA space
+            jpca_projection = U[:, :len(jpca_pairs)*2]
+            X_jpca = X_pca @ jpca_projection
+            
+            # Reshape back to [trials × time × jpca_components]
+            X_jpca_reshaped = X_jpca.reshape(n_trials, n_time, -1)
+            
+            # Compute rotation matrices for each pair
+            rotation_matrices = []
+            for pair_idx, (i, j) in enumerate(jpca_pairs):
+                # Extract the 2D subspace for this pair
+                pair_projection = U[:, [i, j]]
+                X_pair = X_pca @ pair_projection
+                X_pair_reshaped = X_pair.reshape(n_trials, n_time, 2)
+                
+                # Compute rotation matrix for this pair
+                rot_matrix = self._compute_rotation_matrix(X_pair_reshaped)
+                rotation_matrices.append(rot_matrix)
+            
+            # Create time axis
+            time_axis = np.linspace(time_window[0], time_window[1], n_time)
+            
+            return {
+                'X_jpca': X_jpca_reshaped,
+                'jpca_pairs': jpca_pairs,
+                'rotation_matrices': rotation_matrices,
+                'singular_values': S,
+                'U': U,
+                'time_axis': time_axis,
+                'pca_components': X_pca_reshaped,
+                'explained_variance': pca.explained_variance_ratio_,
+                'time_window': time_window,
+                'analyzer': self
+            }
+            
+        except Exception as e:
+            st.error(f"Error in jPCA computation: {str(e)}")
+            return None
+    
+    def _compute_rotation_matrix(self, X_2d):
+        """
+        Compute optimal rotation matrix for 2D data.
         
-        # Hierarchical clustering
-        linkage_matrix = linkage(squareform(rdm), method='average')
+        Args:
+            X_2d: 2D data of shape [trials × time × 2]
+            
+        Returns:
+            rotation matrix
+        """
+        # Compute cross-covariance between consecutive time points
+        n_trials, n_time, _ = X_2d.shape
+        X_centered = X_2d - np.mean(X_2d, axis=1, keepdims=True)
         
-        return {
-            'rdm': rdm,
-            'condition_labels': condition_labels,
-            'condition_matrix': condition_matrix,
-            'linkage_matrix': linkage_matrix,
-            'metric': metric,
-            'time_window': time_window,
-            'analyzer': self  # Pass the analyzer object for color mapping
-        }
+        cross_cov = np.zeros((2, 2))
+        for t in range(n_time - 1):
+            cross_cov += X_centered[:, t, :].T @ X_centered[:, t+1, :]
+        cross_cov /= (n_time - 1)
+        
+        # Find skew-symmetric component
+        skew_sym = (cross_cov - cross_cov.T) / 2
+        
+        # Compute rotation matrix from skew-symmetric matrix
+        # For 2x2 skew-symmetric matrix [[0, -a], [a, 0]], the rotation is exp([[0, -a], [a, 0]])
+        a = skew_sym[0, 1]
+        theta = np.arctan2(a, 1)  # Rotation angle
+        
+        rotation_matrix = np.array([
+            [np.cos(theta), -np.sin(theta)],
+            [np.sin(theta), np.cos(theta)]
+        ])
+        
+        return rotation_matrix
 
 
 def get_go_nogo_colors(n_stimuli, stimulus_go_nogo_map=None):
@@ -886,9 +1084,19 @@ def plot_pca_results(pca_results, title="PCA Analysis"):
             mask = trial_labels['stimulus'] == stim
             color = color_map.get(stim, '#808080')  # Default gray if no mapping
             
+            # Get actual stimulus value for legend
+            actual_stim = pca_results.get('analyzer', {})._label_to_stimulus_map.get(stim, stim)
+            if isinstance(actual_stim, (int, float)):
+                if isinstance(actual_stim, float):
+                    stim_display = f'{actual_stim:.1f}'
+                else:
+                    stim_display = str(actual_stim)
+            else:
+                stim_display = str(actual_stim)
+            
             # Determine if this is Go or NoGo for legend
             go_nogo_status = stimulus_go_nogo_map.get(stim, 'Unknown')
-            legend_name = f'Stimulus {stim} ({go_nogo_status})'
+            legend_name = f'Stimulus {stim_display} ({go_nogo_status})'
             
             fig.add_trace(
                 go.Scatter(
@@ -918,12 +1126,31 @@ def plot_pca_results(pca_results, title="PCA Analysis"):
     # Condition trajectories
     if pca_results['condition_trajectories']:
         for i, (condition, trajectory) in enumerate(pca_results['condition_trajectories'].items()):
-            # Extract stimulus number from condition name
+            # Extract stimulus value from condition name
             if 'Stimulus_' in condition:
-                stim_num = int(condition.split('_')[1])
-                color = color_map.get(stim_num, '#808080')
-                go_nogo_status = stimulus_go_nogo_map.get(stim_num, 'Unknown')
-                legend_name = f'{condition} ({go_nogo_status})'
+                stim_str = condition.split('_', 1)[1]  # Get everything after 'Stimulus_'
+                try:
+                    stim_num = float(stim_str) if '.' in stim_str else int(stim_str)
+                    # Find the corresponding label index for color mapping
+                    label_idx = None
+                    for idx, actual_stim in pca_results.get('analyzer', {})._label_to_stimulus_map.items():
+                        if abs(actual_stim - stim_num) < 1e-6:  # Float comparison
+                            label_idx = idx
+                            break
+                    
+                    color = color_map.get(label_idx, '#808080')
+                    go_nogo_status = stimulus_go_nogo_map.get(label_idx, 'Unknown')
+                    
+                    # Format stimulus value for display
+                    if isinstance(stim_num, float):
+                        stim_display = f'{stim_num:.1f}'
+                    else:
+                        stim_display = str(stim_num)
+                    
+                    legend_name = f'{stim_display} kHz ({go_nogo_status})'
+                except (ValueError, TypeError):
+                    color = '#808080'
+                    legend_name = condition
             else:
                 color = '#808080'  # Default gray for non-stimulus conditions
                 legend_name = condition
@@ -937,8 +1164,8 @@ def plot_pca_results(pca_results, title="PCA Analysis"):
                     line=dict(color=color, width=2),
                     marker=dict(color=color, size=6)
                 ),
-                row=2, col=2
-            )
+                                 row=2, col=2
+             )
     
     # Update layout
     fig.update_xaxes(title_text="PC", row=1, col=1)
@@ -949,27 +1176,6 @@ def plot_pca_results(pca_results, title="PCA Analysis"):
     fig.update_yaxes(title_text="PC3", row=2, col=1)
     fig.update_xaxes(title_text="Component", row=2, col=2)
     fig.update_yaxes(title_text="Loading", row=2, col=2)
-    
-    # Add color legend annotation
-    if stimulus_go_nogo_map:
-        go_count = sum(1 for status in stimulus_go_nogo_map.values() if status == 'Go')
-        nogo_count = sum(1 for status in stimulus_go_nogo_map.values() if status == 'NoGo')
-        
-        legend_text = f"<br><b>Color Legend:</b><br>"
-        legend_text += f"🟢 Green shades: Go stimuli ({go_count} stimuli)<br>"
-        legend_text += f"🔴 Red shades: NoGo stimuli ({nogo_count} stimuli)"
-        
-        fig.add_annotation(
-            x=0.02, y=0.98,
-            xref="paper", yref="paper",
-            text=legend_text,
-            showarrow=False,
-            bgcolor="rgba(255,255,255,0.8)",
-            bordercolor="black",
-            borderwidth=1,
-            font=dict(size=10)
-        )
-    
     fig.update_layout(height=800, title_text=title)
     
     return fig
@@ -1001,9 +1207,19 @@ def plot_umap_results(umap_results, title="UMAP Analysis"):
             mask = trial_labels['stimulus'] == stim
             color = color_map.get(stim, '#808080')  # Default gray if no mapping
             
+            # Get actual stimulus value for legend
+            actual_stim = umap_results.get('analyzer', {})._label_to_stimulus_map.get(stim, stim)
+            if isinstance(actual_stim, (int, float)):
+                if isinstance(actual_stim, float):
+                    stim_display = f'{actual_stim:.1f}'
+                else:
+                    stim_display = str(actual_stim)
+            else:
+                stim_display = str(actual_stim)
+            
             # Determine if this is Go or NoGo for legend
             go_nogo_status = stimulus_go_nogo_map.get(stim, 'Unknown')
-            legend_name = f'Stimulus {stim} ({go_nogo_status})'
+            legend_name = f'{stim_display} kHz ({go_nogo_status})'
             
             fig.add_trace(
                 go.Scatter(
@@ -1039,25 +1255,7 @@ def plot_umap_results(umap_results, title="UMAP Analysis"):
             )
         )
     
-    # Add color legend annotation
-    if stimulus_go_nogo_map:
-        go_count = sum(1 for status in stimulus_go_nogo_map.values() if status == 'Go')
-        nogo_count = sum(1 for status in stimulus_go_nogo_map.values() if status == 'NoGo')
         
-        legend_text = f"<br><b>Color Legend:</b><br>"
-        legend_text += f"🟢 Green shades: Go stimuli ({go_count} stimuli)<br>"
-        legend_text += f"🔴 Red shades: NoGo stimuli ({nogo_count} stimuli)"
-        
-        fig.add_annotation(
-            x=0.02, y=0.98,
-            xref="paper", yref="paper",
-            text=legend_text,
-            showarrow=False,
-            bgcolor="rgba(255,255,255,0.8)",
-            bordercolor="black",
-            borderwidth=1,
-            font=dict(size=10)
-        )
     
     fig.update_layout(
         title=title,
@@ -1080,77 +1278,267 @@ def plot_rsa_results(rsa_results, title="Representational Similarity Analysis"):
     if rsa_results is None:
         return None
     
-    fig = make_subplots(
-        rows=1, cols=2,
-        subplot_titles=('Representational Dissimilarity Matrix', 'Hierarchical Clustering'),
-        specs=[[{"type": "heatmap"}, {"type": "scatter"}]]
-    )
-    
-    # RDM heatmap
-    rdm = rsa_results['rdm']
-    condition_labels = rsa_results['condition_labels']
-    
-    # Get Go/NoGo color mapping for condition labels
-    stimulus_go_nogo_map = getattr(rsa_results.get('analyzer', None), 'stimulus_go_nogo_map', {})
-    
-    # Create color annotations for condition labels
-    label_colors = []
-    for label in condition_labels:
-        if 'Stim_' in label:
-            stim_num = int(label.split('_')[1])
-            go_nogo_status = stimulus_go_nogo_map.get(stim_num, 'Unknown')
-            if go_nogo_status == 'Go':
-                label_colors.append(GO_COLORS[0])  # First green for Go
-            elif go_nogo_status == 'NoGo':
-                label_colors.append(NOGO_COLORS[0])  # First red for NoGo
+    try:
+        # Validate required fields
+        required_fields = ['rdm', 'condition_labels', 'linkage_matrix']
+        for field in required_fields:
+            if field not in rsa_results:
+                st.error(f"Missing required field '{field}' in RSA results")
+                return None
+        
+        fig = make_subplots(
+            rows=1, cols=2,
+            subplot_titles=('Representational Dissimilarity Matrix', 'Hierarchical Clustering'),
+            specs=[[{"type": "heatmap"}, {"type": "scatter"}]]
+        )
+        
+        # RDM heatmap
+        rdm = rsa_results['rdm']
+        condition_labels = rsa_results['condition_labels']
+        
+        # Get Go/NoGo color mapping for condition labels
+        stimulus_go_nogo_map = getattr(rsa_results.get('analyzer', None), 'stimulus_go_nogo_map', {})
+        
+        # Create color annotations for condition labels
+        label_colors = []
+        for label in condition_labels:
+            if 'Stim_' in label:
+                # Extract stimulus value from label
+                stim_str = label.split('_', 1)[1]  # Get everything after 'Stim_'
+                try:
+                    stim_num = float(stim_str) if '.' in stim_str else int(stim_str)
+                    # Find the corresponding label index for Go/NoGo mapping
+                    label_idx = None
+                    for idx, actual_stim in rsa_results.get('analyzer', {})._label_to_stimulus_map.items():
+                        if abs(actual_stim - stim_num) < 1e-6:  # Float comparison
+                            label_idx = idx
+                            break
+                    
+                    go_nogo_status = stimulus_go_nogo_map.get(label_idx, 'Unknown')
+                    if go_nogo_status == 'Go':
+                        label_colors.append(GO_COLORS[0])  # First green for Go
+                    elif go_nogo_status == 'NoGo':
+                        label_colors.append(NOGO_COLORS[0])  # First red for NoGo
+                    else:
+                        label_colors.append('#808080')  # Gray for unknown
+                except (ValueError, TypeError):
+                    label_colors.append('#808080')  # Gray for parsing errors
             else:
-                label_colors.append('#808080')  # Gray for unknown
-        else:
-            label_colors.append('#808080')  # Gray for non-stimulus conditions
+                label_colors.append('#808080')  # Gray for non-stimulus conditions
+        
+        fig.add_trace(
+            go.Heatmap(
+                z=rdm,
+                x=condition_labels,
+                y=condition_labels,
+                colorscale='Viridis',
+                showscale=True,
+                text=np.round(rdm, 3),
+                texttemplate="%{text}",
+                textfont={"size": 10}
+            ),
+            row=1, col=1
+        )
+        
+        # Dendrogram (simplified representation)
+        linkage_matrix = rsa_results['linkage_matrix']
+        
+        # Create a simple dendrogram plot
+        n_conditions = len(condition_labels)
+        y_positions = np.arange(n_conditions)
+        
+        # Plot condition labels
+        fig.add_trace(
+            go.Scatter(
+                x=np.zeros(n_conditions),
+                y=y_positions,
+                mode='markers+text',
+                text=condition_labels,
+                textposition="middle right",
+                marker=dict(size=10),
+                showlegend=False
+            ),
+            row=1, col=2
+        )
+        
+        fig.update_layout(
+            height=600,
+            title_text=title
+        )
+        
+        fig.update_xaxes(title_text="Conditions", row=1, col=1)
+        fig.update_yaxes(title_text="Conditions", row=1, col=1)
+        fig.update_xaxes(title_text="Distance", row=1, col=2)
+        fig.update_yaxes(title_text="Conditions", row=1, col=2)
+        
+        return fig
+        
+    except Exception as e:
+        st.error(f"Error plotting RSA results: {e}")
+        return None
+
+
+def plot_jpca_results(jpca_results, title="jPCA Analysis"):
+    """
+    Plot jPCA analysis results.
     
-    fig.add_trace(
-        go.Heatmap(
-            z=rdm,
-            x=condition_labels,
-            y=condition_labels,
-            colorscale='Viridis',
-            showscale=True,
-            text=np.round(rdm, 3),
-            texttemplate="%{text}",
-            textfont={"size": 10}
-        ),
-        row=1, col=1
-    )
+    Args:
+        jpca_results: results from compute_jpca
+        title: plot title
+    """
+    if jpca_results is None:
+        return None
     
-    # Dendrogram (simplified representation)
-    linkage_matrix = rsa_results['linkage_matrix']
-    
-    # Create a simple dendrogram plot
-    n_conditions = len(condition_labels)
-    y_positions = np.arange(n_conditions)
-    
-    # Plot condition labels
-    fig.add_trace(
-        go.Scatter(
-            x=np.zeros(n_conditions),
-            y=y_positions,
-            mode='markers+text',
-            text=condition_labels,
-            textposition="middle right",
-            marker=dict(size=10),
-            showlegend=False
-        ),
-        row=1, col=2
-    )
-    
-    fig.update_layout(
-        height=600,
-        title_text=title
-    )
-    
-    fig.update_xaxes(title_text="Conditions", row=1, col=1)
-    fig.update_yaxes(title_text="Conditions", row=1, col=1)
-    fig.update_xaxes(title_text="Distance", row=1, col=2)
-    fig.update_yaxes(title_text="Conditions", row=1, col=2)
-    
-    return fig
+    try:
+        fig = make_subplots(
+            rows=2, cols=2,
+            subplot_titles=('Singular Values', 'jPCA Trajectories', 
+                           'Rotation Matrices', 'Phase Space'),
+            specs=[[{"type": "scatter"}, {"type": "scatter"}],
+                   [{"type": "heatmap"}, {"type": "scatter"}]]
+        )
+        
+        # 1. Singular values
+        singular_values = jpca_results['singular_values']
+        fig.add_trace(
+            go.Scatter(
+                x=list(range(1, len(singular_values) + 1)),
+                y=singular_values,
+                mode='lines+markers',
+                name='Singular Values',
+                line=dict(color='blue', width=2),
+                marker=dict(size=6)
+            ),
+            row=1, col=1
+        )
+        
+        # Highlight jPCA pairs
+        jpca_pairs = jpca_results['jpca_pairs']
+        for i, (idx1, idx2) in enumerate(jpca_pairs):
+            fig.add_trace(
+                go.Scatter(
+                    x=[idx1+1, idx2+1],
+                    y=[singular_values[idx1], singular_values[idx2]],
+                    mode='markers',
+                    name=f'jPCA Pair {i+1}',
+                    marker=dict(size=10, color='red', symbol='diamond'),
+                    showlegend=True
+                ),
+                row=1, col=1
+            )
+        
+        # 2. jPCA trajectories (first pair)
+        if len(jpca_pairs) > 0:
+            X_jpca = jpca_results['X_jpca']
+            time_axis = jpca_results['time_axis']
+            
+            # Plot trajectories for first jPCA pair
+            pair_idx = 0
+            if X_jpca.shape[2] >= 2:
+                # Average across trials
+                mean_trajectory = np.mean(X_jpca, axis=0)
+                
+                fig.add_trace(
+                    go.Scatter(
+                        x=time_axis,
+                        y=mean_trajectory[:, 0],
+                        mode='lines+markers',
+                        name='jPCA1',
+                        line=dict(color='blue', width=2),
+                        marker=dict(size=4)
+                    ),
+                    row=1, col=2
+                )
+                
+                fig.add_trace(
+                    go.Scatter(
+                        x=time_axis,
+                        y=mean_trajectory[:, 1],
+                        mode='lines+markers',
+                        name='jPCA2',
+                        line=dict(color='red', width=2),
+                        marker=dict(size=4)
+                    ),
+                    row=1, col=2
+                )
+        
+        # 3. Rotation matrices heatmap
+        rotation_matrices = jpca_results['rotation_matrices']
+        if len(rotation_matrices) > 0:
+            # Show first rotation matrix
+            rot_matrix = rotation_matrices[0]
+            fig.add_trace(
+                go.Heatmap(
+                    z=rot_matrix,
+                    colorscale='RdBu',
+                    showscale=True,
+                    text=np.round(rot_matrix, 3),
+                    texttemplate="%{text}",
+                    textfont={"size": 12}
+                ),
+                row=2, col=1
+            )
+        
+        # 4. Phase space plot (first jPCA pair)
+        if len(jpca_pairs) > 0 and X_jpca.shape[2] >= 2:
+            # Plot phase space for first jPCA pair
+            mean_trajectory = np.mean(X_jpca, axis=0)
+            
+            fig.add_trace(
+                go.Scatter(
+                    x=mean_trajectory[:, 0],
+                    y=mean_trajectory[:, 1],
+                    mode='lines+markers',
+                    name='Phase Space',
+                    line=dict(color='purple', width=3),
+                    marker=dict(size=5, color=time_axis, colorscale='Viridis', 
+                              showscale=True, colorbar=dict(title="Time (s)"))
+                ),
+                row=2, col=2
+            )
+            
+            # Add start and end markers
+            fig.add_trace(
+                go.Scatter(
+                    x=[mean_trajectory[0, 0]],
+                    y=[mean_trajectory[0, 1]],
+                    mode='markers',
+                    name='Start',
+                    marker=dict(size=10, color='green', symbol='diamond')
+                ),
+                row=2, col=2
+            )
+            
+            fig.add_trace(
+                go.Scatter(
+                    x=[mean_trajectory[-1, 0]],
+                    y=[mean_trajectory[-1, 1]],
+                    mode='markers',
+                    name='End',
+                    marker=dict(size=10, color='red', symbol='diamond')
+                ),
+                row=2, col=2
+            )
+        
+        # Update layout
+        fig.update_layout(
+            title=title,
+            height=800,
+            showlegend=True
+        )
+        
+        # Update axes labels
+        fig.update_xaxes(title_text="Component", row=1, col=1)
+        fig.update_yaxes(title_text="Singular Value", row=1, col=1)
+        fig.update_xaxes(title_text="Time (s)", row=1, col=2)
+        fig.update_yaxes(title_text="jPCA Component", row=1, col=2)
+        fig.update_xaxes(title_text="jPCA2", row=2, col=1)
+        fig.update_yaxes(title_text="jPCA1", row=2, col=1)
+        fig.update_xaxes(title_text="jPCA1", row=2, col=2)
+        fig.update_yaxes(title_text="jPCA2", row=2, col=2)
+        
+        return fig
+        
+    except Exception as e:
+        st.error(f"Error plotting jPCA results: {e}")
+        return None

@@ -5,7 +5,7 @@ import numpy as np
 import os
 from Analysis.GNG_bpod_analysis.colors import COLOR_HIT, COLOR_MISS, COLOR_FA, COLOR_CR
 from Analysis.NPXL_analysis.npxl_single_unit_analysis import single_unit_analysis_panel
-from Analysis.NPXL_analysis.population_analysis import plot_population_heatmap, advanced_population_analysis_panel
+from Analysis.NPXL_analysis.population_analysis import plot_population_heatmap, advanced_population_analysis_panel, plot_best_stimulus_panel
 
 # Load the experimental data
 project_data = pd.read_csv(st.session_state.npxl_monitoring_path, delimiter=',', low_memory=False)
@@ -50,6 +50,48 @@ if 'Checkbox' in st_project_data.columns and st_project_data['Checkbox'].any():
                     if d == "analysis_output":
                         analysis_output_dirs.append(os.path.join(root, d))
             
+            # Initialize variables for sharing between tabs
+            selected_folder = None
+            event_windows_matrix = None
+            stimuli_outcome_df = None
+            spike_matrix = None
+            
+            folder_options = []
+            folder_labels = []
+            for folder in analysis_output_dirs:
+                folder_name = os.path.basename(folder)
+                folder_parent = os.path.dirname(folder)[-5:]
+                if "0" in folder_parent:
+                    folder_parent_label = "ACx"
+                else:
+                    folder_parent_label = "OFC"
+                label = f"{folder_parent_label} ({folder_parent})"
+                folder_options.append(folder)
+                folder_labels.append(label)
+            
+            if folder_options:
+                default_index = 0
+                if f"selected_analysis_output_{idx}" in st.session_state:
+                    try:
+                        default_index = folder_options.index(st.session_state[f"selected_analysis_output_{idx}"])
+                    except ValueError:
+                        default_index = 0
+                selected_label = st.selectbox(
+                    "Select analysis output folder",
+                    options=folder_labels,
+                    index=default_index,
+                    key=f"selectbox_analysis_output_{idx}"
+                )
+                selected_folder = folder_options[folder_labels.index(selected_label)]
+                st.session_state[f"selected_analysis_output_{idx}"] = selected_folder
+            else:
+                selected_folder = None
+
+            if selected_folder:
+                # Use the load_event_windows_data function from NPXL_Preprocessing
+                from Analysis.NPXL_analysis.NPXL_Preprocessing import load_event_windows_data    
+                loaded_data = load_event_windows_data(selected_folder)
+
             FRA_session = False
             if 'FRA' in root:
                 st.badge("FRA Analysis")
@@ -63,65 +105,31 @@ if 'Checkbox' in st_project_data.columns and st_project_data['Checkbox'].any():
                 single_unit_tab, population_tab, advanced_tab, multi_tab = st.tabs(["Single Unit", "Population", "Advanced", "Multi"])
 
 
-            # Initialize variables for sharing between tabs
-            selected_folder = None
-            event_windows_matrix = None
-            stimuli_outcome_df = None
-            spike_matrix = None
-            
+
+
+
             with single_unit_tab:
                 st.write("### Single Unit Analysis")
-                folder_options = []
-                folder_labels = []
-                for folder in analysis_output_dirs:
-                    folder_name = os.path.basename(folder)
-                    folder_parent = os.path.dirname(folder)[-5:]
-                    if "0" in folder_parent:
-                        folder_parent_label = "ACx"
-                    else:
-                        folder_parent_label = "OFC"
-                    label = f"{folder_parent_label} ({folder_parent})"
-                    folder_options.append(folder)
-                    folder_labels.append(label)
-                if folder_options:
-                    default_index = 0
-                    if f"selected_analysis_output_{idx}" in st.session_state:
-                        try:
-                            default_index = folder_options.index(st.session_state[f"selected_analysis_output_{idx}"])
-                        except ValueError:
-                            default_index = 0
-                    selected_label = st.selectbox(
-                        "Select analysis output folder",
-                        options=folder_labels,
-                        index=default_index,
-                        key=f"selectbox_analysis_output_{idx}"
-                    )
-                    selected_folder = folder_options[folder_labels.index(selected_label)]
-                    st.session_state[f"selected_analysis_output_{idx}"] = selected_folder
+                
+                if loaded_data:
+                    event_windows_matrix, time_axis_from_load, valid_event_indices, stimuli_outcome_df, metadata, lick_event_windows_matrix = loaded_data
+                    single_unit_analysis_panel(event_windows_matrix, stimuli_outcome_df, selected_folder)
                 else:
-                    selected_folder = None
-
-                if selected_folder:
-                    # Use the load_event_windows_data function from NPXL_Preprocessing
-                    from Analysis.NPXL_analysis.NPXL_Preprocessing import load_event_windows_data
-                    
-                    loaded_data = load_event_windows_data(selected_folder)
-                    if loaded_data:
-                        event_windows_matrix, time_axis_from_load, valid_event_indices, stimuli_outcome_df, metadata, lick_event_windows_matrix = loaded_data
-                        single_unit_analysis_panel(event_windows_matrix, stimuli_outcome_df, selected_folder)
-                    else:
-                        st.error(f"Event windows data could not be loaded from: {selected_folder}")
-                        st.info("Please ensure the event windows data has been generated.")
-                        # Set variables to None to prevent errors in other tabs
-                        event_windows_matrix = None
-                        stimuli_outcome_df = None
-                        metadata = None
+                    st.error(f"Event windows data could not be loaded from: {selected_folder}")
+                    st.info("Please ensure the event windows data has been generated.")
+                    # Set variables to None to prevent errors in other tabs
+                    event_windows_matrix = None
+                    stimuli_outcome_df = None
+                    metadata = None
 
             with population_tab:
                 st.write("### Population Analysis")
                 if selected_folder and event_windows_matrix is not None and stimuli_outcome_df is not None and metadata is not None:
                     # Pass metadata instead of window_size*3
                     plot_population_heatmap(event_windows_matrix, stimuli_outcome_df, metadata)
+                    st.divider()
+                    st.subheader("Best Stimulus Across Units")
+                    plot_best_stimulus_panel(event_windows_matrix, stimuli_outcome_df, metadata)
                 else:
                     st.warning("Event windows data not available for population analysis")
             

@@ -1,24 +1,47 @@
 # Advanced Analyses for Neuropixels ↔ Bpod Data
 
 ## Single-Unit Analysis
-For each isolated neuron in AC or OFC, advanced analyses can reveal how it encodes stimuli and task events beyond basic firing rates:
+For each isolated neuron in AC or OFC, we provide a comprehensive suite of analyses and interactive visualizations to quantify tuning, temporal dynamics, and task modulation.
 
-[] **stimulus selectivity** - compute per-unit frequency tuning curves (e.g., firing rate across tone frequencies); extract best frequency and response bandwidth.
-[] **go/no‑go coding** - use d′ or ROC AUC to measure how well single neurons discriminate Go vs No-Go stimuli.
+- [x] **Stimulus selectivity (tuning curves)**
+  - Computes firing-rate tuning across stimuli using a configurable analysis window relative to event onset.
+  - Returns the tuning mean and SEM per stimulus and identifies the best stimulus (maximum response).
+  - UI: The Single Unit tab shows the tuning curve with shaded SEM and a metric readout of the best stimulus value.
+  - Implementation: `compute_stimulus_selectivity(event_windows_data, stimuli_outcome_df, unit_idx, window)`.
 
-[] **outcome modulation** - compare responses between rewarded (Hit) and non-rewarded (Miss/FA) trials to identify reward-related signals.
+- [x] **Peri-stimulus time histogram (PSTH) and metrics**
+  - PSTH computed from event-aligned windows; baseline and response statistics extracted.
+  - Metrics include: baseline rate/STD, response magnitude, onset and peak latencies, FWHM, rise/decay times, trial variability, signal-to-noise, and suppression/excitation classification.
+  - Implementation highlights: `calculate_psth_metrics(...)`, integrated in the Single Unit UI.
 
-[] **lick modulation** - align spikes to lick times; assess motor-related activity using peri-lick histograms.
+- [x] **Significance testing and p-values**
+  - Mann–Whitney U test compares baseline (≤ 0 s) vs post-stimulus (> 0 s) periods on the averaged PSTH.
+  - Supports computing and saving p-values across units; UI shows total vs significant counts and allows filtering to significant units (α configurable).
+  - Implementation: `compute_psth_pvalues_from_event_windows(event_windows_matrix, event_times, bin_size, window)`; p-values are used throughout the UI for filtering and labeling.
 
-[] **choice probability/d′** - calculate choice probability (CP) or trial-by-trial correlations between spike counts and Go/No-Go choice.
+- [x] **Go/No‑Go coding**
+  - Computes d′ and ROC AUC for Go vs NoGo discrimination using trial-averaged rates in a specified time window.
+  - Implementation: `compute_go_nogo_coding(...)` with outcome-based trial masks.
 
-[] **Generalized Linear Models (GLMs) for task encoding** – Fit single-neuron spike trains with a GLM (e.g. Poisson regression) to quantify how behavioral variables affect firing. **Input:** a design matrix of trial events (stimulus identity, Go/No-Go cue, choice, reward timing, etc.) and the neuron’s spike counts. **Output:** coefficients (“tuning weights”) for each factor, plus goodness-of-fit. Helps find "functional fingerprints" of each neuron.
+- [x] **Outcome modulation**
+  - Tests reward modulation (e.g., Hit vs non-rewarded) using Mann–Whitney U over trial-averaged rates; reports p-value and effect size.
+  - Implementation: `compute_outcome_modulation(...)`.
 
-[] **Spike-Triggered Averages (STAs)** – Compute the average of stimuli preceding each spike to estimate the neuron’s receptive field. **Input:** time-varying stimulus or behavioral signal. **Output:** the STA, e.g. preferred tone frequency or timing features.
+- [x] **Choice probability (CP)**
+  - Estimates the probability that a blind observer could predict choice from the neuron’s trial-by-trial activity.
+  - Implementation: `compute_choice_probability(...)`.
 
-[] **Mutual Information Analysis** – Measure information content between spike trains and conditions. **Input:** conditions (Go vs No-Go, tones), and neuron spike counts. **Output:** information in bits; non-parametric insight into nonlinear encoding.
+- [ ] **GLM (task encoding)**
+  - Fits a GLM to quantify how task variables contribute to firing; exposes coefficients and basic model diagnostics. TODO BETTER!
+  - Implementation: `fit_glm_single_unit(...)` and `plot_advanced_unit_analysis(...)` panels.
 
-[] **Time-Resolved Selectivity Metrics** – Sliding-window analysis to track when a neuron differentiates task conditions. **Input:** aligned spike trains; **Output:** selectivity (e.g. d′ or AUC) as a function of time.
+- [ ] **Lick modulation**
+  - Planned: PSTHs aligned to lick events and peri-lick modulation metrics (UI hooks already load lick-aligned matrices).
+
+### How to use (UI)
+- Open the monitoring app’s Behavior Analysis → Single Unit tab.
+- Select a unit and set the analysis window; view PSTH, tuning curve (with best stimulus), and advanced metrics.
+- Toggle “Only significant units (p < α)” to restrict analyses/plots to significant neurons where relevant.
 
 ## Population Analysis
 Explore collective dynamics in AC or OFC:
@@ -56,6 +79,8 @@ Explore collective dynamics in AC or OFC:
 - [x] `RepresentationalSimilarityAnalyzer` class implemented
 - [x] UI integration for Phase 3 analyses
 - [x] Interactive parameter controls and visualizations
+- [x] Fixed RSA distance matrix computation error
+- [x] Enhanced plot labels to show actual stimulus values (e.g., frequency in kHz) instead of generic indices
 
 [x] **Low-dimensional trajectories** – apply PCA/dPCA to trial-averaged population activity to visualize state-space trajectories by condition.
    - ✅ Implemented: PCA with explained variance analysis
@@ -74,6 +99,25 @@ Explore collective dynamics in AC or OFC:
    - ✅ Representational Dissimilarity Matrix (RDM) computation
    - ✅ Hierarchical clustering of conditions
    - ✅ Interactive metric selection and visualization
+   - ✅ Fixed correlation metric distance matrix computation
+   - ✅ Added robust error handling and validation
+   - ✅ Display actual stimulus values instead of generic labels (e.g., "Stim_4.5" instead of "Stim_0")
+
+**Phase 4: jPCA Analysis** ✅
+- [x] `jPCAAnalyzer` class implemented
+- [x] Skew-symmetric matrix decomposition and SVD
+- [x] jPCA pair identification and rotation matrix computation
+- [x] Comprehensive visualization with singular values, trajectories, rotation matrices, and phase space plots
+- [x] Integration into dimensionality reduction analysis panel
+
+[x] **jPCA (joint Principal Component Analysis)** – Identify rotational dynamics in neural population activity by finding skew-symmetric components in cross-covariance matrices.
+   - ✅ Implemented: Cross-covariance matrix computation between consecutive time points
+   - ✅ Skew-symmetric matrix decomposition using SVD
+   - ✅ jPCA pair identification based on similar singular values
+   - ✅ Rotation matrix computation for each jPCA pair
+   - ✅ Multi-panel visualization (singular values, trajectories, rotation matrices, phase space)
+   - ✅ Interactive parameter controls (PCA components, max skew)
+   - ✅ Integration with existing dimensionality reduction framework
 
 [] **Latency differences** – estimate onset latency of stimulus or decision signals in AC vs OFC.
 
@@ -87,7 +131,6 @@ Explore collective dynamics in AC or OFC:
 
 [] **Latent Factor Inference (LFADS, GPFA)** – Model underlying latent neural states on a trial-by-trial basis. Useful for uncovering shared or hidden dynamics.
 
-[] **Stimulus/Outcome Decoders** – Predict trial labels from ensemble activity. **Output:** classification accuracy, feature weights. Explores what’s decodable from the population.
 
 [] **Temporal Generalization Matrices** – Cross-time decoding to test stability of codes. **Output:** 2D matrix of decoding accuracy (train-time × test-time).
 
