@@ -1341,65 +1341,180 @@ def single_unit_analysis_panel(
         else:
             available_units = range(event_windows_matrix.shape[0])
         
-        # Unit selection
-        if len(available_units) > 0:
-            unit_idx_adv = st.slider(
-                "Select Unit", 
-                int(np.min(available_units)), 
-                int(np.max(available_units)), 
-                int(available_units[0])
-            )
-        else:
-            unit_idx_adv = 0
-        
-        # Analysis window
+        # Analysis window (define before sorting so metrics reflect current window)
         analysis_window = st.slider("Analysis window", 0.1, 2.0, 1.0, step=0.1)
         window = (-0.1, analysis_window)
-        
+
+        # Unit sorting/selection
+        st.subheader("Unit Selection")
+        sort_by = st.selectbox(
+            "Sort units by",
+            ["Unit Index", "Choice Probability (CP)", "Outcome Modulation p-value", "Go/NoGo d'"] ,
+            index=0,
+            help="Order the unit list by the selected metric"
+        )
+
+        def _safe_cp(uidx):
+            try:
+                cp_val, _ = compute_choice_probability(event_windows_data, stimuli_outcome_df, uidx, window)
+                return float(cp_val) if cp_val is not None else np.nan
+            except Exception:
+                return np.nan
+
+        def _safe_outcome_p(uidx):
+            try:
+                p_val, *_ = compute_outcome_modulation(event_windows_data, stimuli_outcome_df, uidx, window)
+                return float(p_val) if p_val is not None else np.nan
+            except Exception:
+                return np.nan
+
+        def _safe_dprime(uidx):
+            try:
+                d_val, _, _ = compute_go_nogo_coding(event_windows_data, stimuli_outcome_df, uidx, window)
+                return float(d_val) if d_val is not None else np.nan
+            except Exception:
+                return np.nan
+
+        if len(available_units) > 0:
+            available_units = np.array(list(available_units), dtype=int)
+            cp_values = None
+            outcome_p_values = None
+            dprime_values = None
+
+            if sort_by == "Choice Probability (CP)":
+                cp_values = np.array([_safe_cp(u) for u in available_units])
+                # Descending CP (higher first), NaNs go to the end
+                order = np.argsort(np.where(np.isnan(cp_values), -np.inf, cp_values))
+                order = order[::-1]
+            elif sort_by == "Outcome Modulation p-value":
+                outcome_p_values = np.array([_safe_outcome_p(u) for u in available_units])
+                # Ascending p-value (smaller first), NaNs go to the end
+                order = np.argsort(np.where(np.isnan(outcome_p_values), np.inf, outcome_p_values))
+            elif sort_by == "Go/NoGo d'":
+                dprime_values = np.array([_safe_dprime(u) for u in available_units])
+                # Descending d' (higher first), NaNs go to the end
+                order = np.argsort(np.where(np.isnan(dprime_values), -np.inf, dprime_values))
+                order = order[::-1]
+            else:
+                # Natural order by unit index
+                order = np.argsort(available_units)
+
+            sorted_units = available_units[order]
+
+            # Build labels with metrics for convenience
+            labels = []
+            for rank, u in enumerate(sorted_units):
+                if cp_values is None:
+                    cp_values = np.array([_safe_cp(x) for x in available_units])[order]
+                if outcome_p_values is None:
+                    outcome_p_values = np.array([_safe_outcome_p(x) for x in available_units])[order]
+                if dprime_values is None:
+                    dprime_values = np.array([_safe_dprime(x) for x in available_units])[order]
+                cp_txt = f"{cp_values[rank]:.3f}" if np.isfinite(cp_values[rank]) else "NA"
+                p_txt = f"{outcome_p_values[rank]:.3g}" if np.isfinite(outcome_p_values[rank]) else "NA"
+                d_txt = f"{dprime_values[rank]:.3f}" if np.isfinite(dprime_values[rank]) else "NA"
+                labels.append(f"#{rank+1} • Unit {u} • d'={d_txt} • CP={cp_txt} • p={p_txt}")
+
+            default_index = 0
+            selection = st.selectbox("Select unit (sorted)", options=list(range(len(sorted_units))), format_func=lambda i: labels[i], index=default_index)
+            unit_idx_adv = int(sorted_units[selection])
+        else:
+            unit_idx_adv = 0
+        st.subheader("Stimulus Selectivity")
+        stimuli, tuning_curve, tuning_sem, best_stim = compute_stimulus_selectivity(
+            event_windows_data, stimuli_outcome_df, unit_idx_adv, window
+        )
+        if stimuli is not None:
+            fig_tuning = go.Figure()
+            
+            # Convert to numpy arrays for arithmetic operations
+            tuning_curve_array = np.array(tuning_curve)
+            tuning_sem_array = np.array(tuning_sem)
+            
+            # Add shaded area for error bars
+            fig_tuning.add_trace(go.Scatter(
+                x=np.concatenate([stimuli, stimuli[::-1]]),
+                y=np.concatenate([tuning_curve_array + tuning_sem_array, (tuning_curve_array - tuning_sem_array)[::-1]]),
+                fill='toself',
+                fillcolor=COLOR_BLUE_TRANSPARENT,
+                line=dict(color='rgba(255,255,255,0)'),
+                showlegend=False,
+                name='Error'
+            ))
+            
+            # Add main line
+            fig_tuning.add_trace(go.Scatter(
+                x=stimuli, y=tuning_curve, mode='lines+markers',
+                name=f'Best stimulus: {best_stim:.2f}',
+                line=dict(color=COLOR_BLUE, width=2),
+                marker=dict(color=COLOR_BLUE, size=6)
+            ))
+            
+            fig_tuning.update_layout(
+                title="Stimulus Tuning Curve",
+                xaxis_title="Stimulus",
+                yaxis_title="Firing Rate (spikes/s)",
+                plot_bgcolor='white',
+                paper_bgcolor='white'
+            )
+            st.plotly_chart(fig_tuning, use_container_width=True)
+            st.metric("Best stimulus", f"{best_stim:.2f}")
+        else:
+            st.write("No stimulus data available")
         col1, col2 = st.columns(2)
         
         with col1:
-            st.subheader("Stimulus Selectivity")
-            stimuli, tuning_curve, tuning_sem, best_stim = compute_stimulus_selectivity(
+            st.subheader("Outcome Modulation")
+            outcome_p, (rewarded_rates, non_rewarded_rates), (rewarded_mean, non_rewarded_mean) = compute_outcome_modulation(
                 event_windows_data, stimuli_outcome_df, unit_idx_adv, window
             )
-            if stimuli is not None:
-                st.metric("Best stimulus", f"{best_stim:.2f}")
-                fig_tuning = go.Figure()
-                
-                # Convert to numpy arrays for arithmetic operations
-                tuning_curve_array = np.array(tuning_curve)
-                tuning_sem_array = np.array(tuning_sem)
-                
-                # Add shaded area for error bars
-                fig_tuning.add_trace(go.Scatter(
-                    x=np.concatenate([stimuli, stimuli[::-1]]),
-                    y=np.concatenate([tuning_curve_array + tuning_sem_array, (tuning_curve_array - tuning_sem_array)[::-1]]),
-                    fill='toself',
-                    fillcolor=COLOR_BLUE_TRANSPARENT,
-                    line=dict(color='rgba(255,255,255,0)'),
-                    showlegend=False,
-                    name='Error'
-                ))
-                
-                # Add main line
-                fig_tuning.add_trace(go.Scatter(
-                    x=stimuli, y=tuning_curve, mode='lines+markers',
-                    name=f'Best stimulus: {best_stim:.2f}',
-                    line=dict(color=COLOR_BLUE, width=2),
-                    marker=dict(color=COLOR_BLUE, size=6)
-                ))
-                
-                fig_tuning.update_layout(
-                    title="Stimulus Tuning Curve",
-                    xaxis_title="Stimulus",
-                    yaxis_title="Firing Rate (spikes/s)",
-                    plot_bgcolor='white',
-                    paper_bgcolor='white'
+            if outcome_p is not None:
+                fig_outcome = go.Figure()
+                center_label_out = 'Reward Outcome'
+                fig_outcome.add_trace(
+                    go.Violin(
+                        x=[center_label_out] * len(rewarded_rates),
+                        y=rewarded_rates,
+                        name="Rewarded",
+                        side='negative',
+                        line_color=COLOR_HIT,
+                        fillcolor=COLOR_HIT,
+                        opacity=0.5,
+                        points='all',
+                        meanline_visible=True,
+                        scalegroup='outcome',
+                        alignmentgroup='outcome'
+                    )
                 )
-                st.plotly_chart(fig_tuning, use_container_width=True)
+                fig_outcome.add_trace(
+                    go.Violin(
+                        x=[center_label_out] * len(non_rewarded_rates),
+                        y=non_rewarded_rates,
+                        name="Non-rewarded",
+                        side='positive',
+                        line_color=COLOR_FA,
+                        fillcolor=COLOR_FA,
+                        opacity=0.5,
+                        points='all',
+                        meanline_visible=True,
+                        scalegroup='outcome',
+                        alignmentgroup='outcome'
+                    )
+                )
+                fig_outcome.update_layout(
+                    title="Rewarded vs Non-rewarded Firing Rates",
+                    xaxis_title="",
+                    yaxis_title="Firing Rate (spikes/s)",
+                    violingap=0,
+                    violingroupgap=0,
+                    violinmode='overlay'
+                )
+                st.plotly_chart(fig_outcome, use_container_width=True)
+                st.metric("p-value", f"{outcome_p:.3g}")
+                st.metric("Rewarded mean", f"{rewarded_mean:.2f}")
+                st.metric("Non-rewarded mean", f"{non_rewarded_mean:.2f}")
             else:
-                st.write("No stimulus data available")
+                st.write("Insufficient data for outcome analysis")
         
         with col2:
             st.subheader("Go/NoGo Coding")
@@ -1407,44 +1522,57 @@ def single_unit_analysis_panel(
                 event_windows_data, stimuli_outcome_df, unit_idx_adv, window
             )
             if d_prime is not None:
-                st.metric("d'", f"{d_prime:.3f}")
-                st.metric("ROC AUC", f"{roc_auc:.3f}")
-                
-                # Plot Go vs NoGo rates with colors
+                # Plot Go vs NoGo as split half-violin plots
                 fig_gng = go.Figure()
-                fig_gng.add_trace(go.Box(y=go_rates, name="Go", boxpoints='all', marker_color=COLOR_GO))
-                fig_gng.add_trace(go.Box(y=nogo_rates, name="NoGo", boxpoints='all', marker_color=COLOR_NOGO))
+                center_label = 'Go vs NoGo'
+                fig_gng.add_trace(
+                    go.Violin(
+                        x=[center_label] * len(go_rates),
+                        y=go_rates,
+                        name="Go",
+                        side='negative',
+                        line_color=COLOR_GO,
+                        fillcolor=COLOR_GO,
+                        opacity=0.5,
+                        points='all',
+                        meanline_visible=True,
+                        scalegroup='gng',
+                        alignmentgroup='gng'
+                    )
+                )
+                fig_gng.add_trace(
+                    go.Violin(
+                        x=[center_label] * len(nogo_rates),
+                        y=nogo_rates,
+                        name="NoGo",
+                        side='positive',
+                        line_color=COLOR_NOGO,
+                        fillcolor=COLOR_NOGO,
+                        opacity=0.5,
+                        points='all',
+                        meanline_visible=True,
+                        scalegroup='gng',
+                        alignmentgroup='gng'
+                    )
+                )
                 fig_gng.update_layout(
                     title="Go vs NoGo Firing Rates",
-                    yaxis_title="Firing Rate (spikes/s)"
+                    xaxis_title="",
+                    yaxis_title="Firing Rate (spikes/s)",
+                    violingap=0,
+                    violingroupgap=0,
+                    violinmode='overlay'
                 )
                 st.plotly_chart(fig_gng, use_container_width=True)
+                st.metric("d'", f"{d_prime:.3f}")
+                st.metric("ROC AUC", f"{roc_auc:.3f}")
             else:
                 st.write("Insufficient data for Go/NoGo analysis")
         
         col3, col4 = st.columns(2)
-        
         with col3:
-            st.subheader("Outcome Modulation")
-            outcome_p, (rewarded_rates, non_rewarded_rates), (rewarded_mean, non_rewarded_mean) = compute_outcome_modulation(
-                event_windows_data, stimuli_outcome_df, unit_idx_adv, window
-            )
-            if outcome_p is not None:
-                st.metric("p-value", f"{outcome_p:.3g}")
-                st.metric("Rewarded mean", f"{rewarded_mean:.2f}")
-                st.metric("Non-rewarded mean", f"{non_rewarded_mean:.2f}")
-                
-                fig_outcome = go.Figure()
-                fig_outcome.add_trace(go.Box(y=rewarded_rates, name="Rewarded", boxpoints='all', marker_color=COLOR_HIT))
-                fig_outcome.add_trace(go.Box(y=non_rewarded_rates, name="Non-rewarded", boxpoints='all', marker_color=COLOR_FA))
-                fig_outcome.update_layout(
-                    title="Rewarded vs Non-rewarded Firing Rates",
-                    yaxis_title="Firing Rate (spikes/s)"
-                )
-                st.plotly_chart(fig_outcome, use_container_width=True)
-            else:
-                st.write("Insufficient data for outcome analysis")
-        
+            st.subheader("🦄🦜🦩🦥🦚")
+
         with col4:
             st.subheader("Choice Probability")
             cp, cp_corr = compute_choice_probability(
