@@ -78,53 +78,72 @@ class PopulationAnalyzer:
                 
                 # If there are too many unique values, bin them
                 if len(self.unique_stimuli) > 10:
-                    # Use quantile-based binning to ensure balanced categories
-                    n_bins = min(10, len(self.unique_stimuli) // 2)
-                    
-                    # Use quantiles to ensure roughly equal numbers in each bin
-                    quantiles = np.linspace(0, 1, n_bins + 1)
-                    bins = np.quantile(raw_stimuli, quantiles)
-                    
-                    # Ensure bins are unique (remove duplicates)
-                    bins = np.unique(bins)
-                    n_bins = len(bins) - 1
-                    
-                    if n_bins < 2:
-                        # Fall back to simple unique value mapping
-                        unique_vals = np.unique(raw_stimuli)
-                        label_map = {val: i for i, val in enumerate(unique_vals)}
-                        self.stimulus_labels = np.array([label_map[val] for val in raw_stimuli])
-                        self.unique_stimuli = np.arange(len(unique_vals))
-                        
-                        # Create mappings
-                        for i, val in enumerate(unique_vals):
-                            self._label_to_stimulus_map[i] = val
-                            self._stimulus_to_label_map[val] = i
+                    # Prefer binning by stimulus identity (Go/NoGo) to avoid mixing identities
+                    if 'outcome' in self.stimuli_outcome_df.columns:
+                        outcomes = self.stimuli_outcome_df['outcome'].astype(str).values
+                        is_go = np.isin(outcomes, ['Hit', 'Miss'])
+                        stim_vals = raw_stimuli
+                        unique_vals = np.unique(stim_vals)
+                        # Determine identity per stimulus value by majority vote
+                        val_to_label = {}
+                        for val in unique_vals:
+                            mask = stim_vals == val
+                            if np.sum(mask) == 0:
+                                continue
+                            go_fraction = np.mean(is_go[mask])
+                            val_to_label[val] = 1 if go_fraction >= 0.5 else 0  # Go=1, NoGo=0
+                        # Map trials to identity labels
+                        self.stimulus_labels = np.array([val_to_label.get(val, -1) for val in stim_vals])
+                        valid_mask = self.stimulus_labels >= 0
+                        if not np.any(valid_mask):
+                            # Fallback to unique mapping if identity failed
+                            label_map = {val: i for i, val in enumerate(unique_vals)}
+                            self.stimulus_labels = np.array([label_map[val] for val in raw_stimuli])
+                            self.unique_stimuli = np.arange(len(unique_vals))
+                            for i, val in enumerate(unique_vals):
+                                self._label_to_stimulus_map[i] = val
+                                self._stimulus_to_label_map[val] = i
+                        else:
+                            # Keep only valid trials for downstream decoders that might use labels
+                            # Note: we still store full labels; decoders filter trials as needed
+                            present_labels = np.unique(self.stimulus_labels[self.stimulus_labels >= 0])
+                            self.unique_stimuli = present_labels
+                            # Map label indices to identity strings for readability
+                            self._label_to_stimulus_map = {0: 'NoGo', 1: 'Go'}
+                            # Stimulus to label map cannot be strictly defined here due to grouping many values
+                            st.info(f"Binned {len(np.unique(raw_stimuli))} continuous stimulus values by identity into {len(present_labels)} categories (Go/NoGo)")
                     else:
-                        self.stimulus_labels = np.digitize(raw_stimuli, bins) - 1  # 0-indexed
-                        # Ensure no empty bins by checking and adjusting
-                        unique_labels, counts = np.unique(self.stimulus_labels, return_counts=True)
-                        min_count = np.min(counts)
-                        
-                        # If any bin has too few samples, reduce number of bins
-                        while min_count < 5 and n_bins > 2:
-                            n_bins = n_bins - 1
-                            quantiles = np.linspace(0, 1, n_bins + 1)
-                            bins = np.unique(np.quantile(raw_stimuli, quantiles))
+                        # Fallback to quantile-based binning if outcomes are not available
+                        n_bins = min(10, len(self.unique_stimuli) // 2)
+                        quantiles = np.linspace(0, 1, n_bins + 1)
+                        bins = np.quantile(raw_stimuli, quantiles)
+                        bins = np.unique(bins)
+                        n_bins = len(bins) - 1
+                        if n_bins < 2:
+                            unique_vals = np.unique(raw_stimuli)
+                            label_map = {val: i for i, val in enumerate(unique_vals)}
+                            self.stimulus_labels = np.array([label_map[val] for val in raw_stimuli])
+                            self.unique_stimuli = np.arange(len(unique_vals))
+                            for i, val in enumerate(unique_vals):
+                                self._label_to_stimulus_map[i] = val
+                                self._stimulus_to_label_map[val] = i
+                        else:
                             self.stimulus_labels = np.digitize(raw_stimuli, bins) - 1
                             unique_labels, counts = np.unique(self.stimulus_labels, return_counts=True)
                             min_count = np.min(counts)
-                        
-                        self.unique_stimuli = np.arange(n_bins)
-                        
-                        # Create mappings for binned data
-                        for i in range(n_bins):
-                            if i < len(bins) - 1:
-                                # Use the center of the bin as representative value
-                                bin_center = (bins[i] + bins[i+1]) / 2
-                                self._label_to_stimulus_map[i] = bin_center
-                        
-                    st.info(f"Binned {len(np.unique(raw_stimuli))} continuous stimulus values into {n_bins} categories (min samples per category: {np.min(counts)})")
+                            while min_count < 5 and n_bins > 2:
+                                n_bins = n_bins - 1
+                                quantiles = np.linspace(0, 1, n_bins + 1)
+                                bins = np.unique(np.quantile(raw_stimuli, quantiles))
+                                self.stimulus_labels = np.digitize(raw_stimuli, bins) - 1
+                                unique_labels, counts = np.unique(self.stimulus_labels, return_counts=True)
+                                min_count = np.min(counts)
+                            self.unique_stimuli = np.arange(n_bins)
+                            for i in range(n_bins):
+                                if i < len(bins) - 1:
+                                    bin_center = (bins[i] + bins[i+1]) / 2
+                                    self._label_to_stimulus_map[i] = bin_center
+                        st.info(f"Binned {len(np.unique(raw_stimuli))} continuous stimulus values into {len(self.unique_stimuli)} categories")
                 else:
                     # Convert to integer labels for discrete classification
                     unique_vals = np.unique(raw_stimuli)
@@ -298,7 +317,7 @@ class PopulationAnalyzer:
 class StimulusDecoder(PopulationAnalyzer):
     """Specialized class for stimulus decoding analysis."""
     
-    def decode_stimuli(self, time_window=(-0.1, 0.5), classifier='logistic', cv_folds=5):
+    def decode_stimuli(self, time_window=(-0.1, 0.5), classifier='logistic', cv_folds=5, group_by_identity=False):
         """
         Decode stimulus identity from population activity.
         
@@ -316,6 +335,23 @@ class StimulusDecoder(PopulationAnalyzer):
         # Extract activity matrix
         X = self.extract_population_activity(time_window=time_window, average_trials=True)
         y = self.stimulus_labels
+
+        # Optionally group stimuli by identity (Go/NoGo)
+        actual_values = None
+        if group_by_identity:
+            # Build mapping from stimulus label index -> 'Go'/'NoGo'
+            stim_to_identity = getattr(self, 'stimulus_go_nogo_map', {})
+            if stim_to_identity is None or len(stim_to_identity) == 0:
+                raise ValueError("Cannot group by identity: stimulus-to-identity map is missing")
+            identities = np.array([stim_to_identity.get(lbl, 'Unknown') for lbl in y])
+            # Keep only Go/NoGo and drop Unknown
+            valid_mask = (identities == 'Go') | (identities == 'NoGo')
+            X = X[valid_mask]
+            y = identities[valid_mask]
+            # Convert to binary labels
+            label_map = {'NoGo': 0, 'Go': 1}
+            y = np.array([label_map[val] for val in y], dtype=int)
+            actual_values = np.array(['NoGo', 'Go'])
         
         # Remove trials with missing labels
         valid_trials = ~pd.isna(y)
@@ -340,17 +376,23 @@ class StimulusDecoder(PopulationAnalyzer):
         results = self.cross_validate_decoder(X, y, classifier=classifier, cv_folds=cv_folds)
         
         # Add stimulus-specific information
-        results['unique_stimuli'] = self.unique_stimuli
-        results['n_stimuli'] = len(self.unique_stimuli)
+        if group_by_identity:
+            results['unique_stimuli'] = np.array([0, 1])
+            results['n_stimuli'] = 2
+            results['actual_stimulus_values'] = actual_values
+            results['grouping'] = 'identity'
+        else:
+            results['unique_stimuli'] = self.unique_stimuli
+            results['n_stimuli'] = len(self.unique_stimuli)
         results['time_window'] = time_window
         
         # Store actual stimulus values for plotting
-        if hasattr(self, '_original_stimulus_values'):
+        if not group_by_identity and hasattr(self, '_original_stimulus_values'):
             results['actual_stimulus_values'] = self._original_stimulus_values
         
         return results
     
-    def time_resolved_stimulus_decoding(self, window_size=0.1, step_size=0.05, classifier='logistic'):
+    def time_resolved_stimulus_decoding(self, window_size=0.1, step_size=0.05, classifier='logistic', group_by_identity: bool = False):
         """
         Perform time-resolved stimulus decoding analysis.
         
@@ -378,7 +420,8 @@ class StimulusDecoder(PopulationAnalyzer):
                 results = self.decode_stimuli(
                     time_window=(start_time, end_time), 
                     classifier=classifier, 
-                    cv_folds=3  # Fewer folds for speed
+                    cv_folds=3,  # Fewer folds for speed
+                    group_by_identity=group_by_identity
                 )
                 accuracies.append(results['mean_accuracy'])
                 window_centers.append(window_center)

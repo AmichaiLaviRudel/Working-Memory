@@ -5,10 +5,13 @@ import numpy as np
 import os
 from Analysis.GNG_bpod_analysis.colors import COLOR_HIT, COLOR_MISS, COLOR_FA, COLOR_CR
 from Analysis.NPXL_analysis.npxl_single_unit_analysis import single_unit_analysis_panel
+from Analysis.NPXL_analysis.cross_session_analysis import render_across_sessions_panel
 from Analysis.NPXL_analysis.population_analysis import plot_population_heatmap, advanced_population_analysis_panel, plot_best_stimulus_panel
 
 # Load the experimental data
 project_data = pd.read_csv(st.session_state.npxl_monitoring_path, delimiter=',', low_memory=False)
+
+# Session type is now provided explicitly by the monitoring table (column: 'Session Type')
 
 # Streamlit App
 st.title("Neuropixels Data Management")
@@ -19,6 +22,7 @@ st_project_data = st.data_editor(
     height=400,
     column_config={
         "spike glx file": st.column_config.TextColumn(help="File Name"),
+        "Session Type": st.column_config.TextColumn(help="Session Type (provided)"),
         "status": st.column_config.SelectboxColumn(
             label=None,
             help="Status of the recordings processing",
@@ -130,6 +134,12 @@ if 'Checkbox' in st_project_data.columns and st_project_data['Checkbox'].any():
                     st.divider()
                     st.subheader("Best Stimulus Across Units")
                     plot_best_stimulus_panel(event_windows_matrix, stimuli_outcome_df, metadata)
+                    
+                    # ──────────────────────────────────────────────────────────────────────────────
+                    # Across Sessions (Same Animal) Comparison
+                    # ──────────────────────────────────────────────────────────────────────────────
+                    render_across_sessions_panel(st_project_data)
+
                 else:
                     st.warning("Event windows data not available for population analysis")
             

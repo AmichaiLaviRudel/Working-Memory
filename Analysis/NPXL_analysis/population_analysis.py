@@ -502,12 +502,14 @@ def advanced_population_analysis_panel(event_windows_matrix, stimuli_outcome_df,
         # Analysis type selection
         analysis_type = st.selectbox(
             "Select Analysis Type",
-            ["Stimulus Decoding", "Choice Decoding", "Time-Resolved Decoding", 
+            ["Stimulus Decoding", "Stimulus Decoding (Grouped by Identity)", "Choice Decoding", "Time-Resolved Decoding", 
              "Dimensionality Reduction", "Representational Similarity", "Population Summary"]
         )
         
         if analysis_type == "Stimulus Decoding":
             _stimulus_decoding_analysis(stimulus_decoder)
+        elif analysis_type == "Stimulus Decoding (Grouped by Identity)":
+            _stimulus_decoding_analysis(stimulus_decoder, group_by_identity=True)
         elif analysis_type == "Choice Decoding":
             _choice_decoding_analysis(choice_decoder)
         elif analysis_type == "Time-Resolved Decoding":
@@ -526,7 +528,7 @@ def advanced_population_analysis_panel(event_windows_matrix, stimuli_outcome_df,
         st.info("Please ensure your data has the required columns: 'stimulus', 'outcome'")
 
 
-def _stimulus_decoding_analysis(stimulus_decoder):
+def _stimulus_decoding_analysis(stimulus_decoder, group_by_identity: bool = False):
     """Stimulus decoding analysis panel."""
     st.subheader("Stimulus Decoding Analysis")
     
@@ -552,7 +554,8 @@ def _stimulus_decoding_analysis(stimulus_decoder):
                 results = stimulus_decoder.decode_stimuli(
                     time_window=time_window,
                     classifier=classifier,
-                    cv_folds=5
+                    cv_folds=5,
+                    group_by_identity=group_by_identity
                 )
                 
                 # Display results
@@ -567,7 +570,8 @@ def _stimulus_decoding_analysis(stimulus_decoder):
                 
                 # Plot results
                 actual_values = results.get('actual_stimulus_values', None)
-                fig = plot_decoding_results(results, "Stimulus Decoding Results", actual_values)
+                title = "Stimulus Decoding Results (Grouped by Identity)" if group_by_identity else "Stimulus Decoding Results"
+                fig = plot_decoding_results(results, title, actual_values)
                 st.plotly_chart(fig, use_container_width=True)
                 
                 # Show classification report
@@ -645,7 +649,7 @@ def _time_resolved_analysis(stimulus_decoder, choice_decoder):
     with col2:
         step_size = st.number_input("Step Size (s)", value=0.05, step=0.01)
     with col3:
-        classifier = st.selectbox("Classifier", ["logistic", "svm", "lda"], key="time_classifier")
+        classifier = st.selectbox("Classifier", [ "svm", "logistic", "lda"], key="time_classifier")
     
     analysis_options = []
     if stimulus_decoder.stimulus_labels is not None:
@@ -657,6 +661,9 @@ def _time_resolved_analysis(stimulus_decoder, choice_decoder):
         st.warning("No valid labels found for time-resolved analysis.")
         return
     
+    # Identity grouping toggle
+    group_by_identity = st.checkbox("Group stimuli by identity (Go/NoGo)", value=False)
+
     selected_analysis = st.multiselect("Analysis Type", analysis_options, default=analysis_options)
     
     if st.button("Run Time-Resolved Analysis"):
@@ -668,7 +675,8 @@ def _time_resolved_analysis(stimulus_decoder, choice_decoder):
                     stimulus_results = stimulus_decoder.time_resolved_stimulus_decoding(
                         window_size=window_size,
                         step_size=step_size,
-                        classifier=classifier
+                        classifier=classifier,
+                        group_by_identity=group_by_identity
                     )
                     
                     fig.add_trace(
@@ -700,7 +708,10 @@ def _time_resolved_analysis(stimulus_decoder, choice_decoder):
                 
                 # Add reference lines with proper chance levels
                 if "Stimulus" in selected_analysis and stimulus_decoder.stimulus_labels is not None:
-                    stimulus_chance = 1.0 / len(stimulus_decoder.unique_stimuli) if stimulus_decoder.unique_stimuli is not None else 0.5
+                    if group_by_identity:
+                        stimulus_chance = 0.5
+                    else:
+                        stimulus_chance = 1.0 / len(stimulus_decoder.unique_stimuli) if stimulus_decoder.unique_stimuli is not None else 0.5
                 elif "Choice" in selected_analysis and choice_decoder.choice_labels is not None:
                     choice_chance = 0.5  # Binary Go/NoGo
                 else:
