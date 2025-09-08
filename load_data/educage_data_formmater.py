@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 
 # Source file path
-path = r"Z:\\Shared\\Noam\\results\\pilot_amichai_07_09_2025\\pilot_amichai_07_09_2025.txt"
+path = r"Z:\Shared\Noam\results\pilot_amichai_07_09_2025\pilot_amichai_07_09_2025.txt"
 
 # Read file
 df = pd.read_csv(path)

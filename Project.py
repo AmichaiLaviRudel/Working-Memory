@@ -3,6 +3,7 @@ import pandas as pd
 import streamlit as st
 import traceback
 import os
+import runpy
 from Analysis.session_states import initialize_session_state
 initialize_session_state()
 
@@ -199,6 +200,15 @@ else:
     project_types_str = str(project_types_str)
 project_types_str = str(project_types_str)[1:-1]  # Remove brackets if present
 project_types = [x.strip().strip("'") for x in project_types_str.split(",")]
+
+# If this project includes 'Educage', run the data formatter to ensure CSV is generated
+try:
+    if any(t.lower() == 'educage' for t in project_types):
+        script_path = os.path.join(os.path.dirname(__file__), 'load_data', 'educage_data_formmater.py')
+        runpy.run_path(script_path, run_name='__main__')
+        st.toast('Educage data is up to date', icon='🎉')
+except Exception as e:
+    st.warning(f"Educage data formatting script failed to run. Proceeding without it.\n\n{e}")
 
 # Display the current project overview and get edited project data
 project_data = current_project_overview(

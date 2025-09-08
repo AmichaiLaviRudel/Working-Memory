@@ -10,12 +10,12 @@ import pandas as pd
 import plotly.graph_objects as go
 import altair as alt
 from plotly.subplots import make_subplots
-
+import streamlit as st
 
 def responses(selected_data, index=0):
     import numpy as np
     import ast
-    import streamlit as st
+
 
     # Extract the outcomes list (make sure it's in list format, not a string)
     outcomes = selected_data["Outcomes"].values[index]
