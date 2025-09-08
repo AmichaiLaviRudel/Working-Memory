@@ -46,86 +46,91 @@ def current_project_overview(existing_projects, selected_project, path, types):
             st.success(f"DataFrame saved as {filename}")
 
     st.divider()
-    st.text("You can edit this table, but don't forget to save the changes")
+    try:
+        st.text("You can edit this table, but don't forget to save the changes")
 
-    # Load the experimental data for the selected project
-    project_csv = os.path.join(path, f"{selected_project}_experimental_data.csv")
-    project_data = pd.read_csv(project_csv, delimiter = ',', low_memory = False)
+        # Load the experimental data for the selected project
+        project_csv = os.path.join(path, f"{selected_project}_experimental_data.csv")
+        project_data = pd.read_csv(project_csv, delimiter = ',', low_memory = False)
 
 
 
-    # Ensure that a 'Checkbox' column exists for selecting rows
-    if 'Checkbox' not in project_data.columns:
-        project_data.insert(0, 'Checkbox', False)
+        # Ensure that a 'Checkbox' column exists for selecting rows
+        if 'Checkbox' not in project_data.columns:
+            project_data.insert(0, 'Checkbox', False)
 
-    columns_to_present = ["Checkbox", "MouseName", "SessionDate", "SessionTime", "WaterConsumption","Notes", "FilePath"]
-    # Display the project data editor with column configurations
-    st_project_data = st.data_editor(
-        data = project_data,
-        height = 400,
-        use_container_width = True,
-        hide_index = True,
-        column_order = columns_to_present,
-        column_config = {
-            "Checkbox":         st.column_config.CheckboxColumn(
-                "Analyse?", help = "Select rows for analysis", default = False,
-            ),
-            "SessionDate":      st.column_config.Column(
-                width = "small", help = "Date of the session", disabled = True
-            ),
-            "SessionTime":      st.column_config.Column(
-                width = "small", help = "Time of the session", disabled = True
-            ),
-            "TrialTypes":       st.column_config.Column(
-                width = "medium", help = "Types of trials", disabled = True
-            ),
-            "Outcomes":         st.column_config.Column(
-                width = "medium", help = "Outcomes of trials", disabled = True            ),
-            "Stimuli":          st.column_config.Column(
-                width = "medium", help = "Stimuli used in trials", disabled = True
-            ),
-            "FilePath":         st.column_config.Column(
-                width = "small", help = "Path to the file", disabled = True
-            ),
-            "WaterConsumption": st.column_config.Column(
-                width = "small", help = "Water consumption in mL", disabled = True
-            ),
-            "Notes":            st.column_config.Column(
-                width = "medium", help = "Editable notes field", disabled = False
-            ),
-            "Animal":           st.column_config.Column(
-                width = "large", help = "Editable animal field", disabled = False
-            ),
-            "Date":             st.column_config.Column(
-                width = "large", help = "Editable date field", disabled = False
-            ),
-        }
-    )
-    st.divider()
-
-    # Download button for the project data
-    col1, col2, col3 = st.columns([30, 70, 25])
-    with col3:
-        st.download_button(
-            label = "Download data",
-            data = project_data.to_csv().encode("utf-8"),
-            file_name = f"{selected_project}_data.csv",
-            mime = 'text/csv'
+        columns_to_present = ["Checkbox", "MouseName", "SessionDate", "SessionTime", "WaterConsumption","Notes", "FilePath"]
+        # Display the project data editor with column configurations
+        st_project_data = st.data_editor(
+            data = project_data,
+            height = 400,
+            use_container_width = True,
+            hide_index = True,
+            column_order = columns_to_present,
+            column_config = {
+                "Checkbox":         st.column_config.CheckboxColumn(
+                    "Analyse?", help = "Select rows for analysis", default = False,
+                ),
+                "SessionDate":      st.column_config.Column(
+                    width = "small", help = "Date of the session", disabled = True
+                ),
+                "SessionTime":      st.column_config.Column(
+                    width = "small", help = "Time of the session", disabled = True
+                ),
+                "TrialTypes":       st.column_config.Column(
+                    width = "medium", help = "Types of trials", disabled = True
+                ),
+                "Outcomes":         st.column_config.Column(
+                    width = "medium", help = "Outcomes of trials", disabled = True            ),
+                "Stimuli":          st.column_config.Column(
+                    width = "medium", help = "Stimuli used in trials", disabled = True
+                ),
+                "FilePath":         st.column_config.Column(
+                    width = "small", help = "Path to the file", disabled = True
+                ),
+                "WaterConsumption": st.column_config.Column(
+                    width = "small", help = "Water consumption in mL", disabled = True
+                ),
+                "Notes":            st.column_config.Column(
+                    width = "medium", help = "Editable notes field", disabled = False
+                ),
+                "Animal":           st.column_config.Column(
+                    width = "large", help = "Editable animal field", disabled = False
+                ),
+                "Date":             st.column_config.Column(
+                    width = "large", help = "Editable date field", disabled = False
+                ),
+            }
         )
+        st.divider()
 
-    # Button to save changes made to the project data
-    with col1:
-        if st.button("Save changes"):
-            st.warning("Are you sure?")
-            c1, c2 = st.columns(2)
-            with c1:
-                # Use a lambda so that the on_click callback is not executed immediately
-                if st.button("Yes", on_click = lambda: save_changes(st_project_data, path, selected_project)):
-                    st.rerun()
-            with c2:
-                if st.button("Cancel", key = "save_denied"):
-                    st.rerun()
-    return st_project_data
+        # Download button for the project data
+        col1, col2, col3 = st.columns([30, 70, 25])
+        with col3:
+            st.download_button(
+                label = "Download data",
+                data = project_data.to_csv().encode("utf-8"),
+                file_name = f"{selected_project}_data.csv",
+                mime = 'text/csv'
+            )
+
+        # Button to save changes made to the project data
+        with col1:
+            if st.button("Save changes"):
+                st.warning("Are you sure?")
+                c1, c2 = st.columns(2)
+                with c1:
+                    # Use a lambda so that the on_click callback is not executed immediately
+                    if st.button("Yes", on_click = lambda: save_changes(st_project_data, path, selected_project)):
+                        st.rerun()
+                with c2:
+                    if st.button("Cancel", key = "save_denied"):
+                        st.rerun()
+        return st_project_data
+    except Exception as e:
+        st.error(f"Something went wrong in the project overview.\n\n{e}")
+        st.text(traceback.format_exc())
+        return None
 
 
 # =============================================================================
@@ -148,7 +153,7 @@ def analysis(project_data, analysis_type):
         index = selected_indices.values[0]
         st.markdown(f"### {analysis_type}")
 
-        if analysis_type == 'Behavior-Bpod GUI':
+        if analysis_type == 'Behavior-Bpod GUI' or analysis_type == 'Educage':
             from Analysis.GNG_bpod_analysis.GNG_Bpod_Analysis import gng_bpod_analysis
             gng_bpod_analysis(project_data, index)
 
@@ -159,7 +164,7 @@ def analysis(project_data, analysis_type):
     with st.expander("Multianimal Analysis"):
         st.markdown(f"### {analysis_type}")
 
-        if analysis_type == 'Behavior-Bpod GUI':
+        if analysis_type == 'Behavior-Bpod GUI' or analysis_type == 'Educage':
             try:
                 from Analysis.GNG_bpod_analysis.GNG_Bpod_Analysis import gng_bpod_analysis_multipule
                 gng_bpod_analysis_multipule(project_data, selected_indices)
@@ -169,7 +174,7 @@ def analysis(project_data, analysis_type):
 
         else:
             st.info("Analysis for this project type is coming soon...")
-
+        
 
 # =============================================================================
 # Main App Code

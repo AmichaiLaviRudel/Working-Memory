@@ -360,8 +360,6 @@ def get_csv_path(directory_path):
     csv_path = fr'Z:\Shared\Amichai\Code\DB\users_data\Amichai\{group_name}_experimental_data.csv'
     return group_name, csv_path
 
-
-
 if __name__ == "__main__":
     # Main logic to handle directory selection
     default_directory = r"Z:\Shared\Amichai\Behavior\data"  # Replace with your hardcoded default

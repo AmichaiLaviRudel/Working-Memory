@@ -33,7 +33,7 @@ def plot_population_heatmap(event_windows_matrix, stimuli_outcome_df, metadata):
     bin_size = float(metadata.get('bin_size', 0.1))
     
     # Navigation controls
-    st.subheader("Heatmap Navigation")
+    st.subheader("Heatmap Navigation 🗺️")
     display_window_duration = st.slider(
         "Display Window Duration (seconds)", 
         min_value=5.0, 
@@ -176,7 +176,7 @@ def plot_population_heatmap(event_windows_matrix, stimuli_outcome_df, metadata):
     time_subset = time_axis_seconds[display_start_bin:display_end_bin]
     
     # Display information about the current view
-    st.info(f"Showing {display_window_duration}s window from {start_time_position:.1f}s to {start_time_position + display_window_duration:.1f}s | Total duration: {total_duration_seconds:.1f}s")
+    st.info(f"Showing {display_window_duration}s window from {start_time_position:.1f}s to {start_time_position + display_window_duration:.1f}s | Total duration: {total_duration_seconds:.1f}s 🖥️")
     
     fig = go.Figure(
         data=go.Heatmap(
@@ -491,13 +491,15 @@ def advanced_population_analysis_panel(event_windows_matrix, stimuli_outcome_df,
         stimuli_outcome_df: DataFrame with trial information
         metadata: Dictionary with recording parameters
     """
-    st.header("Advanced Population Analysis")
+    st.header("Advanced Population Analysis 🧠")
     
     # Create analyzer instances
     try:
-        analyzer = PopulationAnalyzer(event_windows_matrix, stimuli_outcome_df, metadata)
-        stimulus_decoder = StimulusDecoder(event_windows_matrix, stimuli_outcome_df, metadata)
-        choice_decoder = ChoiceDecoder(event_windows_matrix, stimuli_outcome_df, metadata)
+        # lick_event_windows_matrix can be provided by the caller; not available here
+        lick_event_windows_matrix = None
+        analyzer = PopulationAnalyzer(event_windows_matrix, stimuli_outcome_df, metadata, lick_event_windows_matrix)
+        stimulus_decoder = StimulusDecoder(event_windows_matrix, stimuli_outcome_df, metadata, lick_event_windows_matrix)
+        choice_decoder = ChoiceDecoder(event_windows_matrix, stimuli_outcome_df, metadata, lick_event_windows_matrix)
         
         # Analysis type selection
         analysis_type = st.selectbox(
@@ -530,7 +532,7 @@ def advanced_population_analysis_panel(event_windows_matrix, stimuli_outcome_df,
 
 def _stimulus_decoding_analysis(stimulus_decoder, group_by_identity: bool = False):
     """Stimulus decoding analysis panel."""
-    st.subheader("Stimulus Decoding Analysis")
+    st.subheader("Stimulus Decoding Analysis 🎯")
     
     if stimulus_decoder.stimulus_labels is None:
         st.warning("No stimulus labels found in the data.")
@@ -585,7 +587,7 @@ def _stimulus_decoding_analysis(stimulus_decoder, group_by_identity: bool = Fals
 
 def _choice_decoding_analysis(choice_decoder):
     """Choice decoding analysis panel."""
-    st.subheader("Choice Decoding Analysis")
+    st.subheader("Choice Decoding Analysis 🐭🥤")
     
     if choice_decoder.choice_labels is None:
         st.warning("No choice labels found in the data.")
@@ -639,7 +641,7 @@ def _choice_decoding_analysis(choice_decoder):
 
 def _time_resolved_analysis(stimulus_decoder, choice_decoder):
     """Time-resolved decoding analysis panel."""
-    st.subheader("Time-Resolved Decoding")
+    st.subheader("Time-Resolved Decoding ⏱️")
     
     # Parameters
     col1, col2, col3 = st.columns(3)
@@ -706,25 +708,19 @@ def _time_resolved_analysis(stimulus_decoder, choice_decoder):
                         )
                     )
                 
-                # Add reference lines with proper chance levels
+                # Add reference lines with proper chance levels for each plotted trace
                 if "Stimulus" in selected_analysis and stimulus_decoder.stimulus_labels is not None:
                     if group_by_identity:
                         stimulus_chance = 0.5
                     else:
                         stimulus_chance = 1.0 / len(stimulus_decoder.unique_stimuli) if stimulus_decoder.unique_stimuli is not None else 0.5
-                elif "Choice" in selected_analysis and choice_decoder.choice_labels is not None:
-                    choice_chance = 0.5  # Binary Go/NoGo
-                else:
-                    chance_level = 0.5
-                
-                # Use the appropriate chance level based on the first analysis
-                if "Stimulus" in selected_analysis and stimulus_decoder.stimulus_labels is not None:
-                    chance_level = 1.0 / len(stimulus_decoder.unique_stimuli)
-                else:
-                    chance_level = 0.5
-                    
-                fig.add_hline(y=chance_level, line_dash="dash", line_color="gray", 
-                             annotation_text=f"Chance Level ({chance_level:.1%})")
+                    fig.add_hline(y=stimulus_chance, line_dash="dash", line_color="blue",
+                                  annotation_text=f"Stimulus Chance ({stimulus_chance:.1%})")
+
+                if "Choice" in selected_analysis and choice_decoder.choice_labels is not None:
+                    choice_chance = 0.5
+                    fig.add_hline(y=choice_chance, line_dash="dash", line_color="red",
+                                  annotation_text=f"Choice Chance ({choice_chance:.1%})")
                 fig.add_vline(x=0, line_dash="dash", line_color="black", 
                              annotation_text="Event Onset")
                 
@@ -744,7 +740,7 @@ def _time_resolved_analysis(stimulus_decoder, choice_decoder):
 
 def _population_summary(analyzer):
     """Population summary panel."""
-    st.subheader("Population Summary")
+    st.subheader("Population Summary 📊")
     
     # Basic statistics
     col1, col2, col3, col4 = st.columns(4)
@@ -788,7 +784,7 @@ def _population_summary(analyzer):
 
 def _dimensionality_reduction_analysis(dimensionality_reducer):
     """Dimensionality reduction analysis panel."""
-    st.subheader("Dimensionality Reduction Analysis")
+    st.subheader("Dimensionality Reduction Analysis 🔻")
     
     # Method selection
     method = st.selectbox("Reduction Method", ["PCA", "UMAP", "jPCA"])
@@ -915,7 +911,7 @@ def _dimensionality_reduction_analysis(dimensionality_reducer):
 
 def _rsa_analysis(rsa_analyzer):
     """RSA analysis panel."""
-    st.subheader("Representational Similarity Analysis")
+    st.subheader("Representational Similarity Analysis 🧩")
     
     # Parameters
     col1, col2, col3 = st.columns(3)

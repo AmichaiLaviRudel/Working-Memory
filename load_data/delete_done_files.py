@@ -16,5 +16,5 @@ def delete_done_files(root_dir):
                     print(f"Error deleting {file_path}: {e}")
 
 
-root_dir = r"Z:\Shared\Amichai\Behavior\data\Group_5"
+root_dir = r"Z:\Shared\Amichai\Behavior\data\Group_6"
 delete_done_files(root_dir)

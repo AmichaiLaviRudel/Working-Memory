@@ -34,7 +34,7 @@ class PopulationAnalyzer:
     Main class for advanced population analysis of neural data.
     """
     
-    def __init__(self, event_windows_matrix, stimuli_outcome_df, metadata):
+    def __init__(self, event_windows_matrix, stimuli_outcome_df, metadata, lick_event_windows_matrix=None):
         """
         Initialize the analyzer with neural data and metadata.
         
@@ -46,6 +46,7 @@ class PopulationAnalyzer:
         self.event_windows_matrix = event_windows_matrix
         self.stimuli_outcome_df = stimuli_outcome_df
         self.metadata = metadata
+        self.lick_event_windows_matrix = lick_event_windows_matrix  # Optional: [1 × time × events]
         
         # Extract key parameters
         self.n_units, self.n_time_bins, self.n_trials = event_windows_matrix.shape
@@ -172,12 +173,10 @@ class PopulationAnalyzer:
             self._label_to_stimulus_map = {}
             self._stimulus_to_label_map = {}
             
-        # Outcome labels (Go/NoGo based on trial types)
+        # Outcome labels (Go/NoGo based on trial types) — legacy, not used for lick/no-lick decoding
         if 'outcome' in self.stimuli_outcome_df.columns:
             outcomes = self.stimuli_outcome_df['outcome'].values
-            # Convert to Go/NoGo
-            self.choice_labels = np.array(['Go' if outcome in ['Hit', 'Miss'] else 'NoGo' 
-                                         for outcome in outcomes])
+            self.choice_labels = np.array(['Go' if outcome in ['Hit', 'Miss'] else 'NoGo' for outcome in outcomes])
         else:
             self.choice_labels = None
             
@@ -438,7 +437,7 @@ class StimulusDecoder(PopulationAnalyzer):
 
 
 class ChoiceDecoder(PopulationAnalyzer):
-    """Specialized class for choice (Go/NoGo) decoding analysis."""
+    """Specialized class for choice (lick vs no-lick) decoding analysis using outcomes."""
     
     def decode_choice(self, time_window=(-0.1, 0.5), classifier='logistic', cv_folds=5):
         """
@@ -452,12 +451,19 @@ class ChoiceDecoder(PopulationAnalyzer):
         Returns:
             decoding results dictionary
         """
-        if self.choice_labels is None:
-            raise ValueError("No choice labels available for decoding")
+        # Build choice labels from outcomes: Hit/False Alarm => lick (1); Miss/CR => no-lick (0)
+        if 'outcome' not in self.stimuli_outcome_df.columns:
+            raise ValueError("Outcome column not available. Cannot decode lick vs no-lick from outcomes.")
+        outcomes = self.stimuli_outcome_df['outcome'].astype(str).values
+        lick_outcomes = set(['Hit', 'False Alarm'])
+        n_lick_outcomes = set(['Miss', 'CR'])
+        choice_labels = np.array([1 if o in lick_outcomes else (0 if o in n_lick_outcomes else np.nan) for o in outcomes])
+        # Filter unknowns if any
+        valid_mask = ~np.isnan(choice_labels)
         
         # Extract activity matrix
         X = self.extract_population_activity(time_window=time_window, average_trials=True)
-        y = self.choice_labels
+        y = choice_labels[valid_mask].astype(int)
         
         # Remove trials with missing labels
         valid_trials = ~pd.isna(y)
@@ -484,7 +490,7 @@ class ChoiceDecoder(PopulationAnalyzer):
         
         return results
     
-    def time_resolved_choice_decoding(self, window_size=0.1, step_size=0.05, classifier='logistic'):
+    def     _choice_decoding(self, window_size=0.1, step_size=0.05, classifier='logistic'):
         """
         Perform time-resolved choice decoding analysis.
         

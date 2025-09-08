@@ -23,7 +23,7 @@ def render_across_sessions_panel(project_df: pd.DataFrame) -> None:
         project_df: DataFrame from the monitoring table (edited data).
     """
     st.divider()
-    st.header("Across Sessions (Same Animal)")
+    st.header("Across Sessions (Same Animal) 🐭📆")
 
     if len(project_df) == 0:
         st.info("No data available.")
