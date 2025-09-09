@@ -3,7 +3,7 @@ from Analysis.GNG_bpod_analysis.metric import *
 from Analysis.GNG_bpod_analysis.GNG_bpod_general import *
 from Analysis.GNG_bpod_analysis.licking_and_outcome import *
 from Analysis.GNG_bpod_analysis.biases import plot_bias_analysis, bias_multiple_sessions
-from Analysis.GNG_bpod_analysis.daily_activity_functions import daily_activity_single_animal, daily_activity_multi_animal
+from Analysis.GNG_bpod_analysis.colors import *
 
 import traceback
 import streamlit as st
@@ -18,7 +18,7 @@ def gng_bpod_analysis(project_data, index):
     bin = st.slider("Choose bin size", 5, 50, 15, 5)
 
 
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([ "👨‍🎓Matrices", "👅 Lick Rate", "📈 Learning Curve", "👂 Psychometric Curve", "🎯 Bias Analysis", "⏰ Daily Activity"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([ "👨‍🎓Matrices", "👅 Lick Rate", "📈 Learning Curve", "👂 Psychometric Curve", "🎯 Bias Analysis"])
 
     with tab1:
         try:
@@ -50,6 +50,11 @@ def gng_bpod_analysis(project_data, index):
         except Exception as e:
             st.warning(f"something went wrong with latency analysis :|\n\n{e}")
             st.text(traceback.format_exc())
+        try:
+            daily_activity_single_animal(project_data, index)
+        except Exception as e:
+            st.warning(f"something went wrong with daily activity analysis :|\n\n{e}")
+            st.text(traceback.format_exc())
 
     with tab3:
         try:
@@ -73,12 +78,8 @@ def gng_bpod_analysis(project_data, index):
             st.warning(f"something went wrong with bias analysis :|\n\n{e}")
             st.text(traceback.format_exc())
 
-    with tab6:
-        try:
-            daily_activity_single_animal(project_data, index)
-        except Exception as e:
-            st.warning(f"something went wrong with daily activity analysis :|\n\n{e}")
-            st.text(traceback.format_exc())
+
+
 
 
 def gng_bpod_analysis_multipule(project_data, index):
@@ -86,7 +87,7 @@ def gng_bpod_analysis_multipule(project_data, index):
     animal_name = st.selectbox("Choose an Animal",
         sorted(project_data["MouseName"].unique()),  # Convert to list and sort
         key = "animal_select")
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["👅 Lick Rate", "👨‍🎓 D Prime", "👂 Psychometric Slope", "🎯 Bias Analysis", "⏰ Daily Activity"])
+    tab1, tab2, tab3, tab4 = st.tabs(["👅 Lick Rate", "👨‍🎓 D Prime", "👂 Psychometric Slope", "🎯 Bias Analysis"])
 
 
     with tab1:
@@ -104,6 +105,11 @@ def gng_bpod_analysis_multipule(project_data, index):
             daily_multi_animal_lick_rate(project_data, t=bin)
         except Exception as e:
             st.warning(f"Something went wrong with daily multi-animal lick rate :|\n\n{e}")
+            st.text(traceback.format_exc())
+        try:
+            daily_activity_multi_animal(project_data)
+        except Exception as e:
+            st.warning(f"Something went wrong with daily activity analysis :|\n\n{e}")
             st.text(traceback.format_exc())
 
     with tab2:
@@ -151,12 +157,7 @@ def gng_bpod_analysis_multipule(project_data, index):
             st.warning(f"Something went wrong with bias analysis :|\n\n{e}")
             st.text(traceback.format_exc())
 
-    with tab5:
-        try:
-            daily_activity_multi_animal(project_data)
-        except Exception as e:
-            st.warning(f"Something went wrong with daily activity analysis :|\n\n{e}")
-            st.text(traceback.format_exc())
+
 
 def object_to_array(obj_array, pad_value=np.nan):
     """
@@ -172,128 +173,4 @@ def object_to_array(obj_array, pad_value=np.nan):
         arr = np.asarray(arr, dtype=float)
         out[i, :len(arr)] = arr
     return out
-
-def daily_multi_animal_lick_rate(project_data, t=15):
-    """
-    Plot lick rate data for all unique mice on a selected date, overlaid on the same plot.
-    Uses the same logic as the licking_rate function but for multiple animals.
-    """
-    if project_data is None or project_data.empty:
-        st.info("No data loaded.")
-        return
-
-    # Get unique dates
-    dates = sorted(project_data["SessionDate"].astype(str).unique())
-    if len(dates) == 0:
-        st.info("No dates found in data.")
-        return
-
-    selected_date = st.selectbox("Select a date", options=dates, 
-                                index=max(0, len(dates) - 1), 
-                                key="daily_multi_lick_date")
-
-    # Filter data for selected date
-    date_data = project_data[project_data["SessionDate"].astype(str) == str(selected_date)]
-    
-    if date_data.empty:
-        st.info(f"No data found for date {selected_date}")
-        return
-    # Get unique mice for this date
-    mice = sorted(date_data["MouseName"].unique())
-    if len(mice) == 0:
-        st.info("No animals found for selected date.")
-        return
-    
-    fig = go.Figure()
-
-    for mouse in mice:
-        mouse_data = date_data[date_data["MouseName"] == mouse]
-        if len(mouse_data) == 0:
-            continue
-        # Compute Go hit-rate series using existing function and selected bin size t
-        _, frac = licking_rate(mouse_data, index=0, t=t, plot=False)
-        go_series = frac["Go"].dropna()
-        if len(go_series) == 0:
-            continue
-        x = np.arange(1, len(go_series) + 1)
-        fig.add_trace(go.Scatter(
-            x=x,
-            y=go_series.values,
-            mode='lines',
-            name=str(mouse),
-            line=dict(width=2)
-        ))
-
-    if len(fig.data) == 0:
-        st.info("No lick data found for any animals on selected date.")
-        return
-
-    fig.update_layout(
-        title=f"Go Hit Rate by Animal — {selected_date} (rolling window={t})",
-        xaxis_title="Trial index",
-        yaxis_title="Hit rate (%)",
-        yaxis=dict(range=[0, 100]),
-        height=500,
-        width=900,
-        showlegend=True
-    )
-    st.plotly_chart(fig, use_container_width=True)
-
-
-def daily_multi_animal_dprime(project_data, t=10):
-    """
-    Plot d' over trials (bins of t) for all unique mice on a selected date, overlaid.
-    """
-    if project_data is None or project_data.empty:
-        st.info("No data loaded.")
-        return
-    dates = sorted(project_data["SessionDate"].astype(str).unique())
-    if len(dates) == 0:
-        st.info("No dates found in data.")
-        return
-    selected_date = st.selectbox("Select a date", options=dates,
-                                 index=max(0, len(dates) - 1), key="daily_multi_dprime_date")
-    date_data = project_data[project_data["SessionDate"].astype(str) == str(selected_date)]
-    if date_data.empty:
-        st.info(f"No data found for date {selected_date}")
-        return
-    mice = sorted(date_data["MouseName"].unique())
-    if len(mice) == 0:
-        st.info("No animals found for selected date.")
-        return
-
-    fig = go.Figure()
-    for mouse in mice:
-        rows = date_data.index[date_data["MouseName"] == mouse].tolist()
-        if not rows:
-            continue
-        row_idx = rows[0]
-        try:
-            d_vals = d_prime(project_data, index=row_idx, t=t, plot=False)
-        except Exception:
-            d_vals = d_prime(project_data.loc[[row_idx]], index=0, t=t, plot=False)
-        if d_vals is None or len(d_vals) == 0:
-            continue
-        x = np.arange(1, len(d_vals) + 1)
-        fig.add_trace(go.Scatter(
-            x=x,
-            y=np.asarray(d_vals, dtype=float),
-            mode='lines',
-            name=str(mouse),
-            line=dict(width=2)
-        ))
-
-    if len(fig.data) == 0:
-        st.info("No d' data found for any animals on selected date.")
-        return
-
-    fig.update_layout(
-        title=f"d' by Animal — {selected_date} (bin size={t})",
-        xaxis_title="Bin index",
-        yaxis_title="d'",
-        height=500,
-        width=900,
-        showlegend=True
-    )
-    st.plotly_chart(fig, use_container_width=True)
 

@@ -1,7 +1,7 @@
 from Analysis.GNG_bpod_analysis.psychometric_curves import *
 from Analysis.GNG_bpod_analysis.metric import *
 from Analysis.GNG_bpod_analysis.GNG_bpod_general import *
-from Analysis.GNG_bpod_analysis.colors import COLOR_FA, OUTCOME_COLOR_MAP
+from Analysis.GNG_bpod_analysis.colors import COLOR_FA, OUTCOME_COLOR_MAP, COLOR_ACCENT, COLOR_ORANGE, COLOR_GO, COLOR_NOGO, COLOR_BLUE, COLOR_D_PRIME, COLOR_HIT, COLOR_CR
 
 import re
 import ast
@@ -731,3 +731,392 @@ def plot_first_lick_latency_multiple_sessions(selected_data, animal_name="None",
         st.dataframe(summary_df, use_container_width=True)
     
     return results_df
+
+
+import pandas as pd
+import plotly.graph_objects as go
+import streamlit as st
+import ast
+
+
+def daily_activity_single_animal(project_data, index):
+    """
+    Plot daily activity for a single animal showing trial counts over time of day (15-min bins).
+    """
+    if project_data is None or project_data.empty:
+        st.info("No data loaded.")
+        return
+    
+    if "StartTime" not in project_data.columns:
+        st.info("No StartTime data available for activity analysis.")
+        return
+    
+    # Get the specific session data
+    session_data = project_data.iloc[index]
+    start_times = session_data["StartTime"]
+    
+    if pd.isna(start_times) or not start_times:
+        st.info("No start time data available for this session.")
+        return
+    
+    # Parse start times from string format
+    try:
+        if isinstance(start_times, str):
+            start_times_list = ast.literal_eval(start_times)
+        else:
+            start_times_list = start_times
+        
+        # Convert to datetime objects
+        times = []
+        for time_str in start_times_list:
+            try:
+                # Parse time string like '11:49:57.236554'
+                time_obj = pd.to_datetime(time_str, format='%H:%M:%S.%f').time()
+                times.append(time_obj)
+            except:
+                try:
+                    # Fallback for different format
+                    time_obj = pd.to_datetime(time_str).time()
+                    times.append(time_obj)
+                except:
+                    continue
+        
+        if not times:
+            st.info("Could not parse start times.")
+            return
+            
+    except Exception as e:
+        st.error(f"Error parsing start times: {e}")
+        return
+    
+    # Create 15-minute bins throughout the day
+    bin_size_minutes = 30
+    bins = []
+    bin_labels = []
+    
+    for hour in range(24):
+        for minute in range(0, 60, bin_size_minutes):
+            start_time = pd.Timestamp.combine(pd.Timestamp.today().date(), 
+                                            pd.Timestamp(f"{hour:02d}:{minute:02d}:00").time())
+            end_time = start_time + pd.Timedelta(minutes=bin_size_minutes)
+            bins.append((start_time.time(), end_time.time()))
+            bin_labels.append(f"{hour:02d}:{minute:02d}")
+    
+    # Count trials in each bin
+    bin_counts = [0] * len(bins)
+    
+    for time_obj in times:
+        for i, (bin_start, bin_end) in enumerate(bins):
+            if bin_start <= time_obj < bin_end:
+                bin_counts[i] += 1
+                break
+    
+    # Create the plot
+    fig = go.Figure()
+    
+    # Convert bin labels to datetime for proper x-axis
+    x_values = [pd.Timestamp(f"2024-01-01 {label}:00") for label in bin_labels]
+    
+    fig.add_trace(go.Scatter(
+        x=x_values,
+        y=bin_counts,
+        mode='lines+markers',
+        name="Trial Count",
+        line=dict(color=COLOR_ACCENT, width=2),
+        marker=dict(size=4, color=COLOR_ACCENT),
+        opacity=0.3
+    ))
+    
+    # Add average line
+    avg_count = np.mean(bin_counts)
+    fig.add_hline(
+        y=avg_count,
+        line_dash="solid",
+        line_color=COLOR_ACCENT,
+        line_width=4,
+        opacity=0.8,
+        annotation_text=f"Average: {avg_count:.1f}",
+        annotation_position="top right"
+    )
+    
+    # Update layout
+    fig.update_layout(
+        title=f"Daily Activity Pattern - {session_data['MouseName']} ({session_data['SessionDate']})",
+        xaxis_title="Time of Day",
+        yaxis_title=f"Number of Trials ({bin_size_minutes}-min bins)",
+        xaxis=dict(
+            tickformat="%H:%M",
+            tickmode='array',
+            tickvals=x_values[::4],  # Show every 4th tick (hourly)
+            ticktext=[label for i, label in enumerate(bin_labels) if i % 4 == 0]
+        ),
+        height=500,
+        width=900,
+        showlegend=False
+    )
+    
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def daily_activity_multi_animal(project_data):
+    """
+    Plot daily activity for multiple animals on a selected date, showing trial counts over time of day.
+    """
+    if project_data is None or project_data.empty:
+        st.info("No data loaded.")
+        return
+    
+    if "StartTime" not in project_data.columns:
+        st.info("No StartTime data available for activity analysis.")
+        return
+    
+    # Get unique dates
+    dates = sorted(project_data["SessionDate"].astype(str).unique())
+    if len(dates) == 0:
+        st.info("No dates found in data.")
+        return
+    
+    selected_date = st.selectbox("Select a date", options=dates, 
+                                index=max(0, len(dates) - 1), 
+                                key="daily_activity_date")
+    
+    # Filter data for selected date
+    date_data = project_data[project_data["SessionDate"].astype(str) == str(selected_date)]
+    
+    if date_data.empty:
+        st.info(f"No data found for date {selected_date}")
+        return
+    
+    # Get unique mice for this date
+    mice = sorted(date_data["MouseName"].unique())
+    if len(mice) == 0:
+        st.info("No animals found for selected date.")
+        return
+    
+    # Create 15-minute bins throughout the day
+    bin_size_minutes = 30
+    bins = []
+    bin_labels = []
+    
+    for hour in range(24):
+        for minute in range(0, 60, bin_size_minutes):
+            start_time = pd.Timestamp.combine(pd.Timestamp.today().date(), 
+                                            pd.Timestamp(f"{hour:02d}:{minute:02d}:00").time())
+            end_time = start_time + pd.Timedelta(minutes=bin_size_minutes)
+            bins.append((start_time.time(), end_time.time()))
+            bin_labels.append(f"{hour:02d}:{minute:02d}")
+    
+    fig = go.Figure()
+    
+    # Convert bin labels to datetime for proper x-axis
+    x_values = [pd.Timestamp(f"2024-01-01 {label}:00") for label in bin_labels]
+    
+    # Use colors from the colors file
+    colors = [COLOR_ACCENT, COLOR_ORANGE, COLOR_GO, COLOR_NOGO, COLOR_BLUE, COLOR_D_PRIME, COLOR_HIT, COLOR_CR]
+    
+    for i, mouse in enumerate(mice):
+        mouse_data = date_data[date_data["MouseName"] == mouse]
+        if len(mouse_data) == 0:
+            continue
+            
+        # Get start times for this mouse
+        start_times = mouse_data.iloc[0]["StartTime"]
+        
+        if pd.isna(start_times) or not start_times:
+            continue
+        
+        # Parse start times
+        try:
+            if isinstance(start_times, str):
+                start_times_list = ast.literal_eval(start_times)
+            else:
+                start_times_list = start_times
+            
+            # Convert to datetime objects
+            times = []
+            for time_str in start_times_list:
+                try:
+                    time_obj = pd.to_datetime(time_str, format='%H:%M:%S.%f').time()
+                    times.append(time_obj)
+                except:
+                    try:
+                        time_obj = pd.to_datetime(time_str).time()
+                        times.append(time_obj)
+                    except:
+                        continue
+            
+            if not times:
+                continue
+                
+        except Exception:
+            continue
+        
+        # Count trials in each bin
+        bin_counts = [0] * len(bins)
+        
+        for time_obj in times:
+            for j, (bin_start, bin_end) in enumerate(bins):
+                if bin_start <= time_obj < bin_end:
+                    bin_counts[j] += 1
+                    break
+        
+        # Add trace for this mouse
+        fig.add_trace(go.Scatter(
+            x=x_values,
+            y=bin_counts,
+            mode='lines+markers',
+            name=str(mouse),
+            line=dict(color=colors[i % len(colors)], width=2),
+            marker=dict(size=4, color=colors[i % len(colors)]),
+            opacity=0.3
+        ))
+    
+    if len(fig.data) == 0:
+        st.info("No activity data found for any animals on selected date.")
+        return
+    
+    # Calculate and add average line across all animals
+    all_bin_counts = []
+    for i, mouse in enumerate(mice):
+        mouse_data = date_data[date_data["MouseName"] == mouse]
+        if len(mouse_data) == 0:
+            continue
+            
+        start_times = mouse_data.iloc[0]["StartTime"]
+        if pd.isna(start_times) or not start_times:
+            continue
+        
+        try:
+            if isinstance(start_times, str):
+                start_times_list = ast.literal_eval(start_times)
+            else:
+                start_times_list = start_times
+            
+            times = []
+            for time_str in start_times_list:
+                try:
+                    time_obj = pd.to_datetime(time_str, format='%H:%M:%S.%f').time()
+                    times.append(time_obj)
+                except:
+                    try:
+                        time_obj = pd.to_datetime(time_str).time()
+                        times.append(time_obj)
+                    except:
+                        continue
+            
+            if not times:
+                continue
+                
+        except Exception:
+            continue
+        
+        # Count trials in each bin for this mouse
+        mouse_bin_counts = [0] * len(bins)
+        for time_obj in times:
+            for j, (bin_start, bin_end) in enumerate(bins):
+                if bin_start <= time_obj < bin_end:
+                    mouse_bin_counts[j] += 1
+                    break
+        
+        all_bin_counts.append(mouse_bin_counts)
+    
+    # Calculate average across all animals
+    if all_bin_counts:
+        avg_bin_counts = np.mean(all_bin_counts, axis=0)
+        fig.add_trace(go.Scatter(
+            x=x_values,
+            y=avg_bin_counts,
+            mode='lines',
+            name='Average',
+            line=dict(color='black', width=4),
+            opacity=0.9
+        ))
+    
+    # Update layout
+    fig.update_layout(
+        title=f"Daily Activity Pattern by Animal — {selected_date} ({bin_size_minutes}-min bins)",
+        xaxis_title="Time of Day",
+        yaxis_title="Number of Trials",
+        xaxis=dict(
+            tickformat="%H:%M",
+            tickmode='array',
+            tickvals=x_values[::4],  # Show every 4th tick (hourly)
+            ticktext=[label for i, label in enumerate(bin_labels) if i % 4 == 0]
+        ),
+        height=500,
+        width=900,
+        showlegend=True
+    )
+    
+    st.plotly_chart(fig, use_container_width=True)
+
+
+
+
+
+def daily_multi_animal_lick_rate(project_data, t=15):
+    """
+    Plot lick rate data for all unique mice on a selected date, overlaid on the same plot.
+    Uses the same logic as the licking_rate function but for multiple animals.
+    """
+    if project_data is None or project_data.empty:
+        st.info("No data loaded.")
+        return
+
+    # Get unique dates
+    dates = sorted(project_data["SessionDate"].astype(str).unique())
+    if len(dates) == 0:
+        st.info("No dates found in data.")
+        return
+
+    selected_date = st.selectbox("Select a date", options=dates, 
+                                index=max(0, len(dates) - 1), 
+                                key="daily_multi_lick_date")
+
+    # Filter data for selected date
+    date_data = project_data[project_data["SessionDate"].astype(str) == str(selected_date)]
+    
+    if date_data.empty:
+        st.info(f"No data found for date {selected_date}")
+        return
+    # Get unique mice for this date
+    mice = sorted(date_data["MouseName"].unique())
+    if len(mice) == 0:
+        st.info("No animals found for selected date.")
+        return
+    
+    fig = go.Figure()
+
+    for mouse in mice:
+        mouse_data = date_data[date_data["MouseName"] == mouse]
+        if len(mouse_data) == 0:
+            continue
+        # Compute Go hit-rate series using existing function and selected bin size t
+        _, frac = licking_rate(mouse_data, index=0, t=t, plot=False)
+        go_series = frac["Go"].dropna()
+        if len(go_series) == 0:
+            continue
+        x = np.arange(1, len(go_series) + 1)
+        fig.add_trace(go.Scatter(
+            x=x,
+            y=go_series.values,
+            mode='lines',
+            name=str(mouse),
+            line=dict(width=2)
+        ))
+
+    if len(fig.data) == 0:
+        st.info("No lick data found for any animals on selected date.")
+        return
+
+    fig.update_layout(
+        title=f"Go Hit Rate by Animal — {selected_date} (rolling window={t})",
+        xaxis_title="Trial index",
+        yaxis_title="Hit rate (%)",
+        yaxis=dict(range=[0, 100]),
+        height=500,
+        width=900,
+        showlegend=True
+    )
+    st.plotly_chart(fig, use_container_width=True)
+

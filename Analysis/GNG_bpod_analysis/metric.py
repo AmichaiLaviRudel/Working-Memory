@@ -1,4 +1,6 @@
 from Analysis.GNG_bpod_analysis.psychometric_curves import *
+from Analysis.GNG_bpod_analysis.licking_and_outcome import *
+
 from Analysis.GNG_bpod_analysis.GNG_bpod_general import *
 import Analysis.GNG_bpod_analysis.colors as colors
 
@@ -668,3 +670,62 @@ def to_array(val):
         return np.array(val)
     else:
         return np.array([])
+
+
+
+def daily_multi_animal_dprime(project_data, t=10):
+    """
+    Plot d' over trials (bins of t) for all unique mice on a selected date, overlaid.
+    """
+    if project_data is None or project_data.empty:
+        st.info("No data loaded.")
+        return
+    dates = sorted(project_data["SessionDate"].astype(str).unique())
+    if len(dates) == 0:
+        st.info("No dates found in data.")
+        return
+    selected_date = st.selectbox("Select a date", options=dates,
+                                 index=max(0, len(dates) - 1), key="daily_multi_dprime_date")
+    date_data = project_data[project_data["SessionDate"].astype(str) == str(selected_date)]
+    if date_data.empty:
+        st.info(f"No data found for date {selected_date}")
+        return
+    mice = sorted(date_data["MouseName"].unique())
+    if len(mice) == 0:
+        st.info("No animals found for selected date.")
+        return
+
+    fig = go.Figure()
+    for mouse in mice:
+        rows = date_data.index[date_data["MouseName"] == mouse].tolist()
+        if not rows:
+            continue
+        row_idx = rows[0]
+        try:
+            d_vals = d_prime(project_data, index=row_idx, t=t, plot=False)
+        except Exception:
+            d_vals = d_prime(project_data.loc[[row_idx]], index=0, t=t, plot=False)
+        if d_vals is None or len(d_vals) == 0:
+            continue
+        x = np.arange(1, len(d_vals) + 1)
+        fig.add_trace(go.Scatter(
+            x=x,
+            y=np.asarray(d_vals, dtype=float),
+            mode='lines',
+            name=str(mouse),
+            line=dict(width=2)
+        ))
+
+    if len(fig.data) == 0:
+        st.info("No d' data found for any animals on selected date.")
+        return
+
+    fig.update_layout(
+        title=f"d' by Animal — {selected_date} (bin size={t})",
+        xaxis_title="Bin index",
+        yaxis_title="d'",
+        height=500,
+        width=900,
+        showlegend=True
+    )
+    st.plotly_chart(fig, use_container_width=True)
