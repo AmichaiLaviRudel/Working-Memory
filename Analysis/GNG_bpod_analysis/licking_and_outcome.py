@@ -203,31 +203,39 @@ def process_and_plot_lick_data(project_data, index, plot=True):
     # Extract data from DataFrame
     licks_str = project_data.iloc[index]["Licks"]
     trials_str = project_data.iloc[index]["TrialTypes"]
-    states_str = (project_data.iloc[index]["States"])
+
 
     # Convert trial types from string to list safely
     trials = ast.literal_eval(trials_str) if isinstance(trials_str, str) else trials_str
     trials = np.array(trials)
 
+    try:
+        states_str = (project_data.iloc[index]["States"])
+        # Replace 'array(' with 'np.array(' so Python can evaluate it correctly
+        # Regular expression to extract state names and arrays
+        pattern = r"\['(.*?)' array\(\[(.*?)\]\)\]"
 
-    # Replace 'array(' with 'np.array(' so Python can evaluate it correctly
-    # Regular expression to extract state names and arrays
-    pattern = r"\['(.*?)' array\(\[(.*?)\]\)\]"
+        # Extract matches
+        matches = re.findall(pattern, states_str)
 
-    # Extract matches
-    matches = re.findall(pattern, states_str)
+        # Convert matches to structured numpy array
+        data = [(name, np.array(list(map(float, values.split(','))))) for name, values in matches]
 
-    # Convert matches to structured numpy array
-    data = [(name, np.array(list(map(float, values.split(','))))) for name, values in matches]
+        # Convert to numpy array with dtype=object
+        states_array = np.array(data, dtype = object)
+        index = np.where(states_array[:, 0] == "ReinforsmentDelay")[0]
+        index_end_trial = np.where(states_array[:, 0] == "ResponseWindow")[0]
+        tone_onset = states_array[index-1,1][0][0]
+        reinforsment_delay_end = round(states_array[index,1][0][1] - tone_onset,3)
+        response_window_end = round(states_array[index_end_trial,1][0][1] - tone_onset,3)
+        response_window_end = max(response_window_end,reinforsment_delay_end+2)
+    except Exception as e:
+        reinforsment_delay_end = 0.2
+        response_window_end = 2
+        response_window_end = 2+0.2
+        response_window_end = max(response_window_end,reinforsment_delay_end+3)
 
-    # Convert to numpy array with dtype=object
-    states_array = np.array(data, dtype = object)
-    index = np.where(states_array[:, 0] == "ReinforsmentDelay")[0]
-    index_end_trial = np.where(states_array[:, 0] == "ResponseWindow")[0]
-    tone_onset = states_array[index-1,1][0][0]
-    reinforsment_delay_end = round(states_array[index,1][0][1] - tone_onset,3)
-    response_window_end = round(states_array[index_end_trial,1][0][1] - tone_onset,3)
-    response_window_end = max(response_window_end,reinforsment_delay_end+2)
+
 
     # Convert licks from string to array safely
     if isinstance(licks_str, str):

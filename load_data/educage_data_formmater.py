@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 
 # Source file path
-path = r"Z:\Shared\Noam\results\pilot_amichai_07_09_2025\pilot_amichai_07_09_2025.txt"
+path = r"Z:\Shared\Noam\results\pilot_amichai_08_09_2025\pilot_amichai_08_09_2025.txt"
 
 # Read file
 df = pd.read_csv(path)
@@ -79,11 +79,10 @@ grouped = (
           score=("score", list) if "score" in df_sorted.columns else ("go_no_go", list),
           rt_first_ms=("rt_first_ms", list) if "rt_first_ms" in df_sorted.columns else ("stim_name", lambda s: [pd.NA] * len(s)),
           licks=("licks_rel", list) if "licks_rel" in df_sorted.columns else ("stim_name", lambda s: [None] * len(s)),
+          start_time=("start_time", list) if "start_time" in df_sorted.columns else ("stim_name", lambda s: [pd.NA] * len(s)),
       )
       .sort_values(["date", "mouse_id", "level"]) 
 )
-print(df.columns)
-print(grouped.head())
 
 # Save grouped to parent of the source path
 base_dir = Path(path).resolve().parent
@@ -150,9 +149,10 @@ grouped_out = (
           "score": "Outcomes",
           "stim_name": "Stimuli",
           "licks": "Licks",
+          "start_time": "StartTime",
       })
       .assign(FilePath=path)[
-          ["MouseName", "SessionDate", "TrialTypes", "Outcomes", "Stimuli", "Licks", "Notes", "FilePath", "Tones_per_class", "N_Boundaries"]
+          ["MouseName", "SessionDate", "TrialTypes", "Outcomes", "Stimuli", "Licks", "StartTime", "Notes", "FilePath", "Tones_per_class", "N_Boundaries"]
       ]
 )
 out_csv = Path(r"Z:\\Shared\\Amichai\\Code\\DB\\users_data\\Amichai\\Educage_experimental_data.csv")
