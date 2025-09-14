@@ -4,10 +4,61 @@ import streamlit as st
 import plotly.graph_objects as go
 from scipy import stats
 import Analysis.GNG_bpod_analysis.colors as colors
+import hashlib
+
+@st.cache_data(show_spinner="Computing choice bias...")
+def calculate_choice_bias_cached(trial_types_tuple, outcomes_tuple, n_previous_trials, data_hash):
+    """Cached version of choice bias calculation."""
+    return _calculate_choice_bias_core(np.array(trial_types_tuple), np.array(outcomes_tuple), n_previous_trials)
+
+def _calculate_choice_bias_core(trial_types, outcomes, n_previous_trials=3):
+    """Core choice bias calculation logic."""
+    # Create response array (1 for lick, 0 for no lick)
+    responses = np.zeros(len(outcomes))
+    responses[(outcomes == 'Hit') | (outcomes == 'False Alarm')] = 1
+    
+    bias_scores = []
+    
+    for i in range(n_previous_trials, len(responses)):
+        # Get previous n trials
+        prev_responses = responses[i-n_previous_trials:i]
+        
+        # Calculate bias as the proportion of licks in previous trials
+        # Positive bias = tendency to lick, Negative bias = tendency to withhold
+        bias = np.mean(prev_responses) - 0.5  # Center around 0
+        bias_scores.append(bias)
+    
+    bias_scores = np.array(bias_scores)
+    
+    # Calculate bias by response type
+    bias_by_response = {}
+    response_trials = outcomes[n_previous_trials:]  # Align with bias_scores
+    
+    for response_type in ['Hit', 'Miss', 'CR', 'False Alarm']:
+        mask = response_trials == response_type
+        if np.sum(mask) > 0:
+            bias_by_response[response_type] = {
+                'mean': np.mean(bias_scores[mask]),
+                'std': np.std(bias_scores[mask]),
+                'count': np.sum(mask)
+            }
+        else:
+            bias_by_response[response_type] = {
+                'mean': 0,
+                'std': 0,
+                'count': 0
+            }
+    
+    return {
+        'bias_scores': bias_scores,
+        'mean_bias': np.mean(bias_scores),
+        'std_bias': np.std(bias_scores),
+        'bias_by_response_type': bias_by_response
+    }
 
 def calculate_choice_bias(trial_types, outcomes, n_previous_trials=3):
     """
-    Calculate choice bias (response carry-over from previous trials).
+    Calculate choice bias (response carry-over from previous trials) with caching.
     
     Choice bias measures the tendency for mice to repeat (or avoid) licking 
     simply because they licked (or withheld) on the last few trials.
@@ -35,45 +86,11 @@ def calculate_choice_bias(trial_types, outcomes, n_previous_trials=3):
     trial_types = np.array(trial_types)
     outcomes = np.array(outcomes)
     
-    # Create response array (1 for lick, 0 for no lick)
-    responses = np.zeros(len(outcomes))
-    responses[(outcomes == 'Hit') | (outcomes == 'False Alarm')] = 1
+    # Create hash for caching
+    data_hash = hashlib.md5(f"{trial_types.tobytes()}_{outcomes.tobytes()}_{n_previous_trials}".encode()).hexdigest()
     
-    bias_scores = []
-    
-    for i in range(n_previous_trials, len(responses)):
-        # Get previous n trials
-        prev_responses = responses[i-n_previous_trials:i]
-        
-        # Calculate bias as the proportion of licks in previous trials
-        # Positive bias = tendency to lick, Negative bias = tendency to withhold
-        bias = np.mean(prev_responses) - 0.5  # Center around 0
-        bias_scores.append(bias)
-    
-    # Pad the beginning with NaN
-    bias_scores = [np.nan] * n_previous_trials + bias_scores
-    
-    # Calculate statistics
-    valid_bias = [b for b in bias_scores if not np.isnan(b)]
-    mean_bias = np.mean(valid_bias) if valid_bias else 0
-    std_bias = np.std(valid_bias) if valid_bias else 0
-    
-    # Calculate bias by response type
-    bias_by_response_type = {}
-    for response_type in ['Hit', 'Miss', 'CR', 'False Alarm']:
-        mask = outcomes == response_type
-        if np.any(mask):
-            response_bias = [bias_scores[i] for i in range(len(bias_scores)) if mask[i] and not np.isnan(bias_scores[i])]
-            bias_by_response_type[response_type] = np.mean(response_bias) if response_bias else 0
-        else:
-            bias_by_response_type[response_type] = 0
-    
-    return {
-        'bias_scores': np.array(bias_scores),
-        'mean_bias': mean_bias,
-        'std_bias': std_bias,
-        'bias_by_response_type': bias_by_response_type
-    }
+    # Use cached version
+    return calculate_choice_bias_cached(tuple(trial_types), tuple(outcomes), n_previous_trials, data_hash)
 
 def calculate_stimulus_bias(stimuli, trial_types, outcomes, n_previous_trials=3):
     """

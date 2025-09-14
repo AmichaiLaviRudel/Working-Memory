@@ -143,14 +143,3 @@ DB/
 - **Educage Data**: Automated home-cage monitoring
 - **Custom Protocols**: Flexible analysis framework
 
-## 🤝 Contributing
-
-This platform is designed for neuroscience research and can be extended for additional experimental paradigms. The modular structure allows for easy integration of new analysis methods and data types.
-
-## 📞 Support
-
-For technical issues or questions about analysis methods, refer to the inline documentation within each analysis module or contact the development team.
-
----
-
-*Working Memory Platform - Bridging Behavior and Neural Activity for Comprehensive Neuroscience Research*

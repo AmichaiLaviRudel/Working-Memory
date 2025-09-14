@@ -10,12 +10,20 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 import numpy as np
+import hashlib
+from functools import lru_cache
 
 
 def gng_bpod_analysis(project_data, index):
     name, session = getNameAndSession(project_data, index)
     st.header(f"{name}  ___#{session}___")
-    bin = st.slider("Choose bin size", 5, 50, 15, 5)
+    
+    # Performance info
+    with st.expander("ℹ️ Performance Info"):
+        st.info("🚀 Analysis results are cached for faster performance. Change parameters to trigger recomputation.")
+        st.caption(f"📊 Session: {name} #{session}")
+    
+    bin = st.slider("Choose bin size", 5, 50, 15, 5, help="⚡ Cached - only recomputes when changed")
 
 
     tab1, tab2, tab3, tab4, tab5 = st.tabs([ "👨‍🎓Matrices", "👅 Lick Rate", "📈 Learning Curve", "👂 Psychometric Curve", "🎯 Bias Analysis"])
@@ -72,21 +80,31 @@ def gng_bpod_analysis(project_data, index):
 
     with tab5:
         try:
-            n_previous_trials = st.slider("Number of previous trials to consider", 1, 10, 3, 1)
+            n_previous_trials = st.slider("Number of previous trials to consider", 1, 10, 3, 1, help="⚡ Bias computation cached")
             plot_bias_analysis(project_data, index, n_previous_trials=n_previous_trials, plot=True)
         except Exception as e:
             st.warning(f"something went wrong with bias analysis :|\n\n{e}")
             st.text(traceback.format_exc())
+            
+        # Add cache management
+        if st.button("🗑️ Clear GNG Analysis Cache"):
+            st.cache_data.clear()
+            st.toast("GNG analysis cache cleared - next computation will be fresh")
 
 
 
 
 
 def gng_bpod_analysis_multipule(project_data, index):
-    bin = st.slider("Choose bin size", 5, 50, 30, 5)
+    # Performance info
+    with st.expander("ℹ️ Performance Info"):
+        st.info("🚀 Multi-session analysis uses caching for faster performance.")
+        st.caption(f"📊 Dataset: {len(project_data)} sessions across {len(project_data['MouseName'].unique())} animals")
+    
+    bin = st.slider("Choose bin size", 5, 50, 30, 5, help="⚡ Cached computation")
     animal_name = st.selectbox("Choose an Animal",
         sorted(project_data["MouseName"].unique()),  # Convert to list and sort
-        key = "animal_select")
+        key = "animal_select", help="⚡ Results cached per animal")
     tab1, tab2, tab3, tab4 = st.tabs(["👅 Lick Rate", "👨‍🎓 D Prime", "👂 Psychometric Slope", "🎯 Bias Analysis"])
 
 

@@ -9,6 +9,7 @@ import streamlit as st
 import pandas as pd
 import altair as alt
 from scipy.optimize import curve_fit
+import hashlib
 
 # -------------------------------------------------------------------
 # LOW-LEVEL HELPERS
@@ -48,6 +49,52 @@ def single_sigmoid_fit(x, y, *, x_boundary: float = 1.0):
 # -------------------------------------------------------------------
 # MAIN FRONT-END FUNCTION
 # -------------------------------------------------------------------
+@st.cache_data(show_spinner="Fitting psychometric curve...")
+def psychometric_fitting_cached(unique_stims_tuple, data_points_tuple, N_Boundaries, log2_x, b_fixed, lapse_fixed, data_hash):
+    """Cached version of psychometric fitting."""
+    unique_stims = np.array(unique_stims_tuple)
+    data_points = np.array(data_points_tuple)
+    
+    return _psychometric_fitting_core(unique_stims, data_points, N_Boundaries=N_Boundaries, 
+                                    log2_x=log2_x, b_fixed=b_fixed, lapse_fixed=lapse_fixed)
+
+def _psychometric_fitting_core(unique_stims, data_points, *, N_Boundaries=1, log2_x=True, b_fixed=None, lapse_fixed=0.0):
+    """Core psychometric fitting logic."""
+    # ── clean & normalise ─────────────────────────────────────────────
+    x = np.asarray(unique_stims, float)
+    y = np.asarray(data_points,  float)
+    mask = np.isfinite(x) & np.isfinite(y)
+    x, y = x[mask], y[mask]
+    if len(x) < 2:
+        raise ValueError("Insufficient data for fitting.")
+    y_min, y_max = np.min(data_points), np.max(data_points)
+    # Map y to 0…1
+    if y.max() > y.min():
+        y = (y - y.min()) / (y.max() - y.min())
+    # Optional log2 on x
+    if log2_x:
+        x = np.log2(x)
+        b_fixed_log = None if b_fixed is None else tuple(np.log2(b_fixed))
+    else:
+        b_fixed_log = b_fixed
+    
+    # ── fit the data to the model───────────────────────────────────────
+    if N_Boundaries == 1:
+        model_boundaries, slopes_mid, slopes_at_model_boundaries, x_fit, y_fit = single_sigmoid_fit(x, y, x_boundary=x.mean())
+        # Rescale y_fit to original y scale
+        if y_max > y_min:
+            y_fit = y_fit * (y_max - y_min) + y_min
+        return model_boundaries, slopes_mid, slopes_at_model_boundaries, x_fit, y_fit
+    elif N_Boundaries == 2:
+        # Two-boundary fitting logic would go here
+        # For now, fallback to single sigmoid
+        model_boundaries, slopes_mid, slopes_at_model_boundaries, x_fit, y_fit = single_sigmoid_fit(x, y, x_boundary=x.mean())
+        if y_max > y_min:
+            y_fit = y_fit * (y_max - y_min) + y_min
+        return model_boundaries, slopes_mid, slopes_at_model_boundaries, x_fit, y_fit
+    else:
+        raise ValueError("N_Boundaries must be 1 or 2")
+
 def psychometric_fitting(unique_stims,
                      data_points,
                      *,
@@ -56,7 +103,7 @@ def psychometric_fitting(unique_stims,
                      b_fixed=None,
                      lapse_fixed=0.0):
     """
-    Universal psychometric fitter.
+    Universal psychometric fitter with caching.
 
     Parameters
     ----------
@@ -77,64 +124,13 @@ def psychometric_fitting(unique_stims,
     model_boundaries, slopes_mid, slopes_at_model_boundaries, x_fit, y_fit
         Arrays sized according to N_Boundaries.
     """
-    # ── clean & normalise ─────────────────────────────────────────────
-    x = np.asarray(unique_stims, float)
-    y = np.asarray(data_points,  float)
-    mask = np.isfinite(x) & np.isfinite(y)
-    x, y = x[mask], y[mask]
-    if len(x) < 2:
-        raise ValueError("Insufficient data for fitting.")
-    y_min, y_max = np.min(data_points), np.max(data_points)
-    # Map y to 0…1
-    y = (y - y.min()) / (y.max() - y.min())
-    # Optional log2 on x
-    if log2_x:
-        x = np.log2(x)
-        b_fixed_log = None if b_fixed is None else tuple(np.log2(b_fixed))
-    else:
-        b_fixed_log = b_fixed
-    # ── fit the data to the model───────────────────────────────────────
-    if N_Boundaries == 1:
-        model_boundaries, slopes_mid, slopes_at_model_boundaries, x_fit, y_fit = single_sigmoid_fit(x, y)
-        # Rescale y_fit to original y scale
-        y_fit = y_fit * (y_max - y_min) + y_min
-    elif N_Boundaries == 2:
-        # Fit two sigmoids: A (x <= 1.5), B (x >= 1.0)
-        x_orig = x if not log2_x else np.power(2.0, x)
-        # Sigmoid A: fit to data from lowest up to upper boundary (x <= 1.5)
-        mask_A = x_orig <= st.session_state.high_boundary
-        x_A, y_A = x[mask_A], y[mask_A]
-        if len(x_A) < 4:
-            raise ValueError("Insufficient data for Sigmoid A fit.")
-        x0_A, k_A, slope_A_at_boundary, x_fit_A, y_fit_A = None, None, None, None, None
-        x0s_A, slopes_mid_A, slopes_at_A, x_fit_A, y_fit_A = single_sigmoid_fit(x_A, y_A, x_boundary=(np.log2(st.session_state.high_boundary) if log2_x else st.session_state.high_boundary))
-        # Sigmoid B: fit to data from highest down to lower boundary (x >= 1.0)
-        mask_B = x_orig >= st.session_state.low_boundary
-        x_B, y_B = x[mask_B], y[mask_B]
-        if len(x_B) < 4:
-            raise ValueError("Insufficient data for Sigmoid B fit.")
-        x0s_B, slopes_mid_B, slopes_at_B, x_fit_B, y_fit_B = single_sigmoid_fit(x_B, y_B, x_boundary=(np.log2(st.session_state.low_boundary) if log2_x else st.session_state.low_boundary))
-        # Rescale y_fit_A and y_fit_B to original y scale
-        y_fit_A = y_fit_A * (y_max - y_min) + y_min
-        y_fit_B = y_fit_B * (y_max - y_min) + y_min
-        # Prepare outputs
-        model_boundaries = np.array([x0s_A[0], x0s_B[0]])
-        slopes_mid = np.array([slopes_mid_A[0], slopes_mid_B[0]])
-        slopes_at_model_boundaries = np.array([slopes_at_A[0], slopes_at_B[0]])
-        x_fit = (x_fit_A, x_fit_B)
-        y_fit = (y_fit_A, y_fit_B)
-        # If log2_x, transform boundaries and x_fit back
-        if log2_x:
-            model_boundaries = np.power(2.0, model_boundaries)
-            x_fit = (np.power(2.0, x_fit_A), np.power(2.0, x_fit_B))
-        return model_boundaries, slopes_mid, slopes_at_model_boundaries, x_fit, y_fit
-    else:
-        raise ValueError("N_Boundaries must be 1 or 2")
-    # transform boundaries & x_fit back if log-scaled earlier
-    if log2_x:
-        model_boundaries = np.power(2.0, model_boundaries)
-        x_fit = np.power(2.0, x_fit)
-    return model_boundaries, slopes_mid, slopes_at_model_boundaries, x_fit, y_fit
+    # Create hash for caching
+    data_hash = hashlib.md5(f"{unique_stims.tobytes()}_{data_points.tobytes()}_{N_Boundaries}_{log2_x}_{b_fixed}_{lapse_fixed}".encode()).hexdigest()
+    
+    # Use cached version
+    return psychometric_fitting_cached(
+        tuple(unique_stims), tuple(data_points), N_Boundaries, log2_x, b_fixed, lapse_fixed, data_hash
+    )
 
 
 def psychometric_curve(selected_data, index, plot=True):

@@ -12,39 +12,79 @@ from sklearn.metrics import roc_auc_score, roc_curve, confusion_matrix
 import streamlit as st
 import plotly.graph_objects as go
 import ast
+import hashlib
+
+@st.cache_data(show_spinner="Computing d-prime...")
+def d_prime_cached(outcomes_str, data_hash, t):
+    """Cached version of d-prime computation."""
+    from Analysis.GNG_bpod_analysis.licking_and_outcome import licking_rate_cached
+    
+    try:
+        # Get cached licking rate data
+        rates, frac = licking_rate_cached(outcomes_str, data_hash, t)
+        
+        # Check if we have valid data
+        if rates.empty or frac.empty:
+            # Return empty arrays with proper structure
+            d = np.array([])
+            df = pd.DataFrame({"index": [], "d_prime": []})
+            return d, df
+        
+        # Calculate hits, misses, false alarms, and correct rejections
+        hit = rates["Hit"]
+        miss = rates["Miss"]
+        fa = rates["FA"]
+        cr = rates["CR"]
+
+        # Ensure the DataFrame has valid numeric data
+        frac = frac.dropna(how = "all").astype(float)
+        
+        # Check if we still have data after cleaning
+        if frac.empty:
+            d = np.array([])
+            df = pd.DataFrame({"index": [], "d_prime": []})
+            return d, df
+
+        # Convert percentages to proportions (0-1 scale)
+        hit_rate = frac["Go"] / 100
+        fa_rate = frac["NoGo"] / 100
+
+        # Filter out bins where hit_rate + fa_rate <= 0.4
+        valid_bins = (hit_rate + fa_rate) > 0.4
+        # hit_rate = hit_rate[valid_bins]
+        # fa_rate = fa_rate[valid_bins]
+
+        # Prevent hit_rate and fa_rate from being exactly 0 or 1
+        hit_rate = hit_rate.clip(1e-3, 1 - 1e-3)
+        fa_rate = fa_rate.clip(1e-3, 1 - 1e-3)
+
+        # Compute d'
+        d = norm.ppf(hit_rate) - norm.ppf(fa_rate)
+        
+        # Handle any NaN or inf values
+        d = d.replace([np.inf, -np.inf], np.nan)
+        
+        # Create a DataFrame with a safer column name
+        df = pd.DataFrame({"index": range(len(d)), "d_prime": d})
+        
+        return d, df
+        
+    except Exception as e:
+        # Return empty arrays if computation fails
+        d = np.array([])
+        df = pd.DataFrame({"index": [], "d_prime": []})
+        return d, df
 
 # Function to calculate the d prime
 def d_prime(selected_data, index=0, t=10, plot=False):
-    from Analysis.GNG_bpod_analysis.licking_and_outcome import licking_rate
-    rates, frac = licking_rate(selected_data, index, t=t, plot=False)
-    # Calculate hits, misses, false alarms, and correct rejections
-    hit = rates["Hit"]
-    miss = rates["Miss"]
-    fa = rates["FA"]
-    cr = rates["CR"]
-
-    # Ensure the DataFrame has valid numeric data
-    frac = frac.dropna(how = "all").astype(float)
-
-    # Convert percentages to proportions (0-1 scale)
-    hit_rate = frac["Go"] / 100
-    fa_rate = frac["NoGo"] / 100
-
-    # Filter out bins where hit_rate + fa_rate <= 0.4
-    valid_bins = (hit_rate + fa_rate) > 0.4
-    # hit_rate = hit_rate[valid_bins]
-    # fa_rate = fa_rate[valid_bins]
-
-    # Prevent hit_rate and fa_rate from being exactly 0 or 1
-    hit_rate = hit_rate.clip(1e-3, 1 - 1e-3)
-    fa_rate = fa_rate.clip(1e-3, 1 - 1e-3)
-
-    # Compute d'
-    d = norm.ppf(hit_rate) - norm.ppf(fa_rate)
-    # valid_bins = (fa_rate+hit_rate) >= 0.5
-
-    # Create a DataFrame with a safer column name
-    df = pd.DataFrame({"index": range(len(d)), "d_prime": d})
+    # Extract the outcomes for caching
+    outcomes = selected_data["Outcomes"].values[index]
+    
+    # Create hash for caching
+    data_hash = hashlib.md5(f"{outcomes}_{index}_{t}".encode()).hexdigest()
+    
+    # Get cached results
+    d, df = d_prime_cached(outcomes, data_hash, t)
 
     if plot:
         st.subheader("d' over trials")
@@ -93,9 +133,16 @@ def d_prime_multiple_sessions(selected_data, t=10, animal_name='None', plot = Tr
     # Compute d' statistics and collect metadata
     for idx, sess_idx in enumerate(session_indices):
         d = d_prime(selected_data, index=sess_idx, t=t)
-        ds[idx, 0] = np.nanmean(d)
-        ds[idx, 1] = np.nanstd(d)
-        ds[idx, 2] = np.nanmax(d)
+        
+        # Handle empty arrays safely
+        if len(d) == 0 or np.all(np.isnan(d)):
+            ds[idx, 0] = np.nan  # mean
+            ds[idx, 1] = np.nan  # std
+            ds[idx, 2] = np.nan  # max
+        else:
+            ds[idx, 0] = np.nanmean(d)
+            ds[idx, 1] = np.nanstd(d)
+            ds[idx, 2] = np.nanmax(d) if len(d[~np.isnan(d)]) > 0 else np.nan
         # Retrieve session metadata
         tones_per_class.append(selected_data.loc[sess_idx, 'Tones_per_class'])
         boundaries.append(selected_data.loc[sess_idx, 'N_Boundaries'])

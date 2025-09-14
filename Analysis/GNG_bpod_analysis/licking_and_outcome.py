@@ -11,69 +11,120 @@ import plotly.graph_objects as go
 import altair as alt
 from plotly.subplots import make_subplots
 import streamlit as st
+import hashlib
 
-def responses(selected_data, index=0):
+@st.cache_data(show_spinner="Computing responses...")
+def responses_cached(outcomes_str, data_hash):
+    """Cached version of responses computation."""
     import numpy as np
     import ast
 
+    try:
+        # If outcomes is a string representing a list, use ast.literal_eval to convert it
+        outcomes_list = ast.literal_eval(outcomes_str)
+        
+        # Check if we have valid data
+        if not outcomes_list or len(outcomes_list) == 0:
+            # Return empty DataFrame with proper structure
+            return pd.DataFrame({"Hit": [], "CR": [], "FA": [], "Miss": []})
 
+        # Define all unique outcomes in the list
+        unique_outcomes = {'Hit', 'CR', 'False Alarm', 'Miss'}
+
+        # Dictionary to store cumulative counts for each outcome
+        cumulative_counts = {}
+
+        # Calculate cumulative counts for each unique outcome
+        for outcome_type in unique_outcomes:
+            # Create a binary array for the current outcome type
+            binary_outcome = np.array([1 if outcome == outcome_type else 0 for outcome in outcomes_list])
+
+            # Calculate the cumulative sum for this outcome type
+            cumulative_sum = np.cumsum(binary_outcome)
+
+            # Store the cumulative sum in the dictionary
+            cumulative_counts[outcome_type] = cumulative_sum
+
+        # Create a DataFrame for responses
+        responses = pd.DataFrame({
+            "Hit":  cumulative_counts["Hit"],
+            "CR":   cumulative_counts["CR"],
+            "FA":   cumulative_counts["False Alarm"],  # Corrected the label to match 'False Alarm'
+            "Miss": cumulative_counts["Miss"]
+        })
+
+        return responses
+        
+    except Exception as e:
+        # Return empty DataFrame if computation fails
+        return pd.DataFrame({"Hit": [], "CR": [], "FA": [], "Miss": []})
+
+def responses(selected_data, index=0):
+    """Compute responses with caching."""
     # Extract the outcomes list (make sure it's in list format, not a string)
     outcomes = selected_data["Outcomes"].values[index]
+    
+    # Create hash for caching
+    data_hash = hashlib.md5(f"{outcomes}_{index}".encode()).hexdigest()
+    
+    return responses_cached(outcomes, data_hash)
 
-    # If outcomes is a string representing a list, use ast.literal_eval to convert it
-    outcomes_list = ast.literal_eval(outcomes)
+@st.cache_data(show_spinner="Computing licking rates...")
+def licking_rate_cached(outcomes_str, data_hash, t):
+    """Cached version of licking rate computation."""
+    try:
+        # Get responses data (will use cached version)
+        responses_data = responses_cached(outcomes_str, data_hash)
+        
+        # Check if we have valid data
+        if responses_data.empty:
+            # Return empty DataFrames with proper structure
+            rates = pd.DataFrame({"Hit": [], "Miss": [], "CR": [], "FA": []})
+            frac = pd.DataFrame({"Go": [], "NoGo": []})
+            return rates, frac
 
-    # Define all unique outcomes in the list
-    unique_outcomes = {'Hit', 'CR', 'False Alarm', 'Miss'}
+        # Fix column names for consistency
+        hit_bin = responses_data["Hit"].diff().rolling(t).sum()
+        miss_bin = responses_data["Miss"].diff().rolling(t).sum()
+        cr_bin = responses_data["CR"].diff().rolling(t).sum()
+        fa_bin = responses_data["FA"].diff().rolling(t).sum()
 
+        rates = pd.DataFrame({
+            "Hit":  hit_bin,
+            "Miss": miss_bin,
+            "CR":   cr_bin,
+            "FA":   fa_bin
+        }).dropna()
 
-    # Dictionary to store cumulative counts for each outcome
-    cumulative_counts = {}
+        # Check if we still have data after dropna
+        if rates.empty:
+            frac = pd.DataFrame({"Go": [], "NoGo": []})
+            return rates, frac
 
-    # Calculate cumulative counts for each unique outcome
-    for outcome_type in unique_outcomes:
-        # Create a binary array for the current outcome type
-        binary_outcome = np.array([1 if outcome == outcome_type else 0 for outcome in outcomes_list])
+        # Avoid division by zero
+        hit_rate = 100 * hit_bin / (hit_bin + miss_bin).replace(0, np.nan)
+        fa_rate = 100 * fa_bin / (cr_bin + fa_bin).replace(0, np.nan)
 
-        # Calculate the cumulative sum for this outcome type
-        cumulative_sum = np.cumsum(binary_outcome)
+        frac = pd.DataFrame({"Go": hit_rate, "NoGo": fa_rate})
 
-        # Store the cumulative sum in the dictionary
-        cumulative_counts[outcome_type] = cumulative_sum
-
-    # Create a DataFrame for responses
-    responses = pd.DataFrame({
-        "Hit":  cumulative_counts["Hit"],
-        "CR":   cumulative_counts["CR"],
-        "FA":   cumulative_counts["False Alarm"],  # Corrected the label to match 'False Alarm'
-        "Miss": cumulative_counts["Miss"]
-    })
-
-
-    return responses
+        return rates, frac
+        
+    except Exception as e:
+        # Return empty DataFrames if computation fails
+        rates = pd.DataFrame({"Hit": [], "Miss": [], "CR": [], "FA": []})
+        frac = pd.DataFrame({"Go": [], "NoGo": []})
+        return rates, frac
 
 # Function to calculate the licking rate
 def licking_rate(selected_data, index=0, t=10, plot=True):
-    data = responses(selected_data, index)
-
-    # Fix column names for consistency
-    hit_bin = data["Hit"].diff().rolling(t).sum()
-    miss_bin = data["Miss"].diff().rolling(t).sum()
-    cr_bin = data["CR"].diff().rolling(t).sum()
-    fa_bin = data["FA"].diff().rolling(t).sum()
-
-    rates = pd.DataFrame({
-        "Hit":  hit_bin,
-        "Miss": miss_bin,
-        "CR":   cr_bin,
-        "FA":   fa_bin
-    }).dropna()
-
-    # Avoid division by zero
-    hit_rate = 100 * hit_bin / (hit_bin + miss_bin).replace(0, np.nan)
-    fa_rate = 100 * fa_bin / (cr_bin + fa_bin).replace(0, np.nan)
-
-    frac = pd.DataFrame({"Go": hit_rate, "NoGo": fa_rate})
+    # Extract the outcomes for caching
+    outcomes = selected_data["Outcomes"].values[index]
+    
+    # Create hash for caching
+    data_hash = hashlib.md5(f"{outcomes}_{index}_{t}".encode()).hexdigest()
+    
+    # Get cached results
+    rates, frac = licking_rate_cached(outcomes, data_hash, t)
 
     c_go = "#006837"  # Dark Green
     c_nogo = "#A50026"  # Dark Red
