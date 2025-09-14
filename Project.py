@@ -202,11 +202,33 @@ project_types_str = str(project_types_str)[1:-1]  # Remove brackets if present
 project_types = [x.strip().strip("'") for x in project_types_str.split(",")]
 
 # If this project includes 'Educage', run the data formatter to ensure CSV is generated
+# Only run if it hasn't been executed for 15 minutes
 try:
     if any(t.lower() == 'educage' for t in project_types):
-        script_path = os.path.join(os.path.dirname(__file__), 'load_data', 'educage_data_formmater.py')
-        runpy.run_path(script_path, run_name='__main__')
-        st.toast('Educage data is up to date', icon='🎉')
+        import time
+        
+        # Check when the script was last run
+        last_run_key = 'educage_script_last_run'
+        current_time = time.time()
+        
+        # Get last run time from session state (defaults to 0 if never run)
+        last_run_time = st.session_state.get(last_run_key, 0)
+        
+        # Check if 15 minutes (900 seconds) have passed since last run
+        time_since_last_run = current_time - last_run_time
+        
+        if time_since_last_run >= 900:  # 15 minutes = 900 seconds
+            script_path = os.path.join(os.path.dirname(__file__), 'load_data', 'educage_data_formmater.py')
+            runpy.run_path(script_path, run_name='__main__')
+            
+            # Update the last run time in session state
+            st.session_state[last_run_key] = current_time
+            
+            st.toast('Educage data is up to date', icon='🎉')
+        else:
+            remaining_time = int((900 - time_since_last_run) / 60)  # Convert to minutes
+            st.info(f"Educage data was recently updated. Next update available in {remaining_time} minutes.")
+            
 except Exception as e:
     st.warning(f"Educage data formatting script failed to run. Proceeding without it.\n\n{e}")
 

@@ -63,6 +63,9 @@ if "stim_name" in df.columns:
           .str.replace("-", ".", regex=False)
     )
 
+# Exclude specific mouse_id before processing
+df = df[df["mouse_id"] != "000799EB9B"]
+
 # Group by mouse ID, date, and level; include trial lists per group
 # Sort within groups by start_time to preserve chronological order
 sort_cols = ["mouse_id", "date", "level", "start_time"]

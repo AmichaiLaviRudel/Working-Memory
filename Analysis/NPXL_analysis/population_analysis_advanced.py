@@ -490,7 +490,7 @@ class ChoiceDecoder(PopulationAnalyzer):
         
         return results
     
-    def     _choice_decoding(self, window_size=0.1, step_size=0.05, classifier='logistic'):
+    def time_resolved_choice_decoding(self, window_size=0.1, step_size=0.05, classifier='logistic'):
         """
         Perform time-resolved choice decoding analysis.
         
@@ -516,6 +516,103 @@ class ChoiceDecoder(PopulationAnalyzer):
             
             try:
                 results = self.decode_choice(
+                    time_window=(start_time, end_time), 
+                    classifier=classifier, 
+                    cv_folds=3  # Fewer folds for speed
+                )
+                accuracies.append(results['mean_accuracy'])
+                window_centers.append(window_center)
+            except:
+                accuracies.append(np.nan)
+                window_centers.append(window_center)
+        
+        return {
+            'time_centers': np.array(window_centers),
+            'accuracies': np.array(accuracies),
+            'window_size': window_size,
+            'step_size': step_size
+        }
+
+
+class OutcomeDecoder(PopulationAnalyzer):
+    """Specialized class for outcome (reward vs punishment) decoding analysis."""
+    
+    def decode_outcome(self, time_window=(-0.1, 0.5), classifier='logistic', cv_folds=5):
+        """
+        Decode reward vs punishment outcome from population activity.
+        
+        Args:
+            time_window: time window for analysis (seconds)
+            classifier: classifier type
+            cv_folds: cross-validation folds
+            
+        Returns:
+            decoding results dictionary
+        """
+        # Build outcome labels from outcomes: Hit => reward (1); Miss/False Alarm/CR => punishment (0)
+        if 'outcome' not in self.stimuli_outcome_df.columns:
+            raise ValueError("Outcome column not available. Cannot decode reward vs punishment from outcomes.")
+        outcomes = self.stimuli_outcome_df['outcome'].astype(str).values
+        reward_outcomes = set(['Hit'])
+        punishment_outcomes = set(['Miss', 'False Alarm', 'CR'])
+        outcome_labels = np.array([1 if o in reward_outcomes else (0 if o in punishment_outcomes else np.nan) for o in outcomes])
+        
+        # Filter unknowns if any
+        valid_mask = ~np.isnan(outcome_labels)
+        
+        # Extract activity matrix
+        X = self.extract_population_activity(time_window=time_window, average_trials=True)
+        y = outcome_labels[valid_mask].astype(int)
+        X = X[valid_mask]
+        
+        # Remove trials with missing labels
+        valid_trials = ~pd.isna(y)
+        X = X[valid_trials]
+        y = y[valid_trials]
+        
+        # Validate that we have enough samples for each class
+        unique_labels, counts = np.unique(y, return_counts=True)
+        min_samples = np.min(counts)
+        
+        if len(unique_labels) < 2:
+            raise ValueError(f"Need at least 2 outcome classes for decoding, found {len(unique_labels)}")
+        
+        if min_samples < cv_folds:
+            cv_folds = max(2, min_samples)
+            st.warning(f"Reduced CV folds to {cv_folds} due to insufficient samples per class (min: {min_samples})")
+        
+        # Perform cross-validated decoding
+        results = self.cross_validate_decoder(X, y, classifier=classifier, cv_folds=cv_folds)
+        
+        # Add outcome-specific information
+        results['outcome_types'] = np.unique(y)
+        results['time_window'] = time_window
+        
+        return results
+    
+    def time_resolved_outcome_decoding(self, window_size=0.1, step_size=0.05, classifier='logistic'):
+        """
+        Perform time-resolved outcome decoding analysis.
+        
+        Args:
+            window_size: size of sliding window (seconds)
+            step_size: step_size for sliding window (seconds)
+            classifier: classifier type
+            
+        Returns:
+            time-resolved decoding accuracies
+        """
+        # Define time windows
+        start_times = np.arange(-self.window_duration, self.window_duration - window_size, step_size)
+        accuracies = []
+        window_centers = []
+        
+        for start_time in start_times:
+            end_time = start_time + window_size
+            window_center = (start_time + end_time) / 2
+            
+            try:
+                results = self.decode_outcome(
                     time_window=(start_time, end_time), 
                     classifier=classifier, 
                     cv_folds=3  # Fewer folds for speed

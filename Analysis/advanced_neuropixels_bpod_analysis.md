@@ -56,9 +56,11 @@ Explore collective dynamics in AC or OFC:
 **Phase 2: Decoding Analyses** ✅
 - [x] `StimulusDecoder` class implemented
 - [x] `ChoiceDecoder` class implemented  
-- [x] Time-resolved decoding support
+- [x] `OutcomeDecoder` class implemented
+- [x] Time-resolved decoding support for all three signal types
 - [x] UI integration (Advanced tab in monitoring interface)
 - [x] Fixed continuous stimulus labeling issue with quantile-based binning
+- [x] Comprehensive time-resolved analysis with simultaneous stimulus, choice, and outcome decoding
 
 [x] **Stimulus decoding** – apply linear classifiers to population activity to decode stimulus identity; use cross-validation to assess accuracy.
    - ✅ Implemented: Logistic Regression, SVM, LDA classifiers
@@ -73,6 +75,41 @@ Explore collective dynamics in AC or OFC:
    - ✅ Time window selection
    - ✅ Performance metrics with chance level comparison
    - ✅ Time-resolved decoding analysis
+
+[x] **Outcome decoding** – predict reward vs punishment outcomes from population activity; assess outcome signal representation.
+   - ✅ Implemented: Reward (Hit) vs Punishment (Miss/False Alarm/CR) classification
+   - ✅ Multiple classifier options (Logistic Regression, SVM, LDA)
+   - ✅ Cross-validation with performance metrics
+   - ✅ Time-resolved decoding analysis
+   - ✅ Interactive UI integration with dedicated analysis panel
+
+### Time-Resolved Decoding Framework ⏱️
+
+The system now supports comprehensive time-resolved decoding across three key neural signals:
+
+**1. Stimulus Decoding Over Time**
+- Sliding window analysis to track when stimulus information becomes decodable
+- Support for both individual stimulus identity and Go/NoGo identity grouping
+- Configurable window size and step size for temporal precision
+
+**2. Action/Choice Decoding Over Time** 
+- Tracks the emergence and evolution of lick vs no-lick decision signals
+- Based on behavioral outcomes: Hit/False Alarm (lick) vs Miss/CR (no-lick)
+- Reveals decision formation dynamics in neural populations
+
+**3. Outcome Decoding Over Time**
+- Monitors reward vs punishment signal representation over time
+- Reward: Hit trials; Punishment: Miss/False Alarm/CR trials
+- Shows how outcome expectations and feedback are encoded
+
+**Integrated Analysis Features:**
+- ✅ Simultaneous multi-signal decoding in single plot
+- ✅ Individual chance level lines for each signal type
+- ✅ Event onset markers for temporal reference
+- ✅ Interactive parameter controls (window size, step size, classifier type)
+- ✅ Cross-validated accuracy with error handling for insufficient samples
+
+**Usage:** Select "Time-Resolved Decoding" in the Advanced Population Analysis panel, choose which signals to decode (Stimulus, Choice, Outcome), and configure temporal parameters.
 
 **Phase 3: Dimensionality Reduction & RSA** ✅
 - [x] `DimensionalityReducer` class implemented

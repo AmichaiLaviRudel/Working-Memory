@@ -4,7 +4,7 @@ import streamlit as st
 import numpy as np
 import pandas as pd
 from Analysis.NPXL_analysis.population_analysis_advanced import (
-    PopulationAnalyzer, StimulusDecoder, ChoiceDecoder, 
+    PopulationAnalyzer, StimulusDecoder, ChoiceDecoder, OutcomeDecoder,
     DimensionalityReducer, RepresentationalSimilarityAnalyzer, jPCAAnalyzer,
     plot_decoding_results, plot_time_resolved_decoding,
     plot_pca_results, plot_umap_results, plot_rsa_results, plot_jpca_results
@@ -500,11 +500,12 @@ def advanced_population_analysis_panel(event_windows_matrix, stimuli_outcome_df,
         analyzer = PopulationAnalyzer(event_windows_matrix, stimuli_outcome_df, metadata, lick_event_windows_matrix)
         stimulus_decoder = StimulusDecoder(event_windows_matrix, stimuli_outcome_df, metadata, lick_event_windows_matrix)
         choice_decoder = ChoiceDecoder(event_windows_matrix, stimuli_outcome_df, metadata, lick_event_windows_matrix)
+        outcome_decoder = OutcomeDecoder(event_windows_matrix, stimuli_outcome_df, metadata, lick_event_windows_matrix)
         
         # Analysis type selection
         analysis_type = st.selectbox(
             "Select Analysis Type",
-            ["Stimulus Decoding", "Stimulus Decoding (Grouped by Identity)", "Choice Decoding", "Time-Resolved Decoding", 
+            ["Stimulus Decoding", "Stimulus Decoding (Grouped by Identity)", "Choice Decoding", "Outcome Decoding", "Time-Resolved Decoding", 
              "Dimensionality Reduction", "Representational Similarity", "Population Summary"]
         )
         
@@ -514,8 +515,10 @@ def advanced_population_analysis_panel(event_windows_matrix, stimuli_outcome_df,
             _stimulus_decoding_analysis(stimulus_decoder, group_by_identity=True)
         elif analysis_type == "Choice Decoding":
             _choice_decoding_analysis(choice_decoder)
+        elif analysis_type == "Outcome Decoding":
+            _outcome_decoding_analysis(outcome_decoder)
         elif analysis_type == "Time-Resolved Decoding":
-            _time_resolved_analysis(stimulus_decoder, choice_decoder)
+            _time_resolved_analysis(stimulus_decoder, choice_decoder, outcome_decoder)
         elif analysis_type == "Dimensionality Reduction":
             dimensionality_reducer = DimensionalityReducer(event_windows_matrix, stimuli_outcome_df, metadata)
             _dimensionality_reduction_analysis(dimensionality_reducer)
@@ -639,7 +642,61 @@ def _choice_decoding_analysis(choice_decoder):
                 st.error(f"Error in choice decoding: {e}")
 
 
-def _time_resolved_analysis(stimulus_decoder, choice_decoder):
+def _outcome_decoding_analysis(outcome_decoder):
+    """Outcome decoding analysis panel."""
+    st.subheader("Outcome Decoding Analysis 🏆💔")
+    
+    if outcome_decoder.reward_labels is None:
+        st.warning("No reward labels found in the data.")
+        return
+    
+    # Parameters
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        start_time = st.number_input("Start Time (s)", value=-0.1, step=0.1, key="outcome_start")
+    with col2:
+        end_time = st.number_input("End Time (s)", value=0.5, step=0.1, key="outcome_end")
+    with col3:
+        classifier = st.selectbox("Classifier", ["logistic", "svm", "lda"], key="outcome_classifier")
+    
+    time_window = (start_time, end_time)
+    
+    if st.button("Run Outcome Decoding"):
+        with st.spinner("Running outcome decoding analysis..."):
+            try:
+                results = outcome_decoder.decode_outcome(
+                    time_window=time_window,
+                    classifier=classifier,
+                    cv_folds=5
+                )
+                
+                # Display results
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    st.metric("Mean Accuracy", f"{results['mean_accuracy']:.3f}")
+                with col2:
+                    st.metric("Std Accuracy", f"{results['std_accuracy']:.3f}")
+                with col3:
+                    chance_level = 1.0 / len(results['outcome_types'])
+                    st.metric("Chance Level", f"{chance_level:.3f}")
+                
+                # Plot results
+                outcome_values = results.get('outcome_types', None)
+                fig = plot_decoding_results(results, "Outcome Decoding Results (Reward vs Punishment)", outcome_values)
+                st.plotly_chart(fig, use_container_width=True)
+                
+                # Show classification report
+                st.subheader("Classification Report")
+                report_df = pd.DataFrame(results['classification_report']).transpose()
+                st.dataframe(report_df)
+                
+            except Exception as e:
+                st.error(f"Error in outcome decoding: {e}")
+
+
+def _time_resolved_analysis(stimulus_decoder, choice_decoder, outcome_decoder):
     """Time-resolved decoding analysis panel."""
     st.subheader("Time-Resolved Decoding ⏱️")
     
@@ -647,9 +704,9 @@ def _time_resolved_analysis(stimulus_decoder, choice_decoder):
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        window_size = st.number_input("Window Size (s)", value=0.2, step=0.05)
+        window_size = st.number_input("Window Size (s)", value=0.3, step=0.05)
     with col2:
-        step_size = st.number_input("Step Size (s)", value=0.05, step=0.01)
+        step_size = st.number_input("Step Size (s)", value=0.3, step=0.1)
     with col3:
         classifier = st.selectbox("Classifier", [ "svm", "logistic", "lda"], key="time_classifier")
     
@@ -658,6 +715,8 @@ def _time_resolved_analysis(stimulus_decoder, choice_decoder):
         analysis_options.append("Stimulus")
     if choice_decoder.choice_labels is not None:
         analysis_options.append("Choice")
+    if outcome_decoder.reward_labels is not None:
+        analysis_options.append("Outcome")
     
     if not analysis_options:
         st.warning("No valid labels found for time-resolved analysis.")
@@ -708,6 +767,23 @@ def _time_resolved_analysis(stimulus_decoder, choice_decoder):
                         )
                     )
                 
+                if "Outcome" in selected_analysis and outcome_decoder.reward_labels is not None:
+                    outcome_results = outcome_decoder.time_resolved_outcome_decoding(
+                        window_size=window_size,
+                        step_size=step_size,
+                        classifier=classifier
+                    )
+                    
+                    fig.add_trace(
+                        go.Scatter(
+                            x=outcome_results['time_centers'],
+                            y=outcome_results['accuracies'],
+                            mode='lines+markers',
+                            name='Outcome Decoding',
+                            line=dict(color='orange', width=2)
+                        )
+                    )
+                
                 # Add reference lines with proper chance levels for each plotted trace
                 if "Stimulus" in selected_analysis and stimulus_decoder.stimulus_labels is not None:
                     if group_by_identity:
@@ -721,6 +797,12 @@ def _time_resolved_analysis(stimulus_decoder, choice_decoder):
                     choice_chance = 0.5
                     fig.add_hline(y=choice_chance, line_dash="dash", line_color="red",
                                   annotation_text=f"Choice Chance ({choice_chance:.1%})")
+
+                if "Outcome" in selected_analysis and outcome_decoder.reward_labels is not None:
+                    outcome_chance = 0.5
+                    fig.add_hline(y=outcome_chance, line_dash="dash", line_color="orange",
+                                  annotation_text=f"Outcome Chance ({outcome_chance:.1%})")
+                
                 fig.add_vline(x=0, line_dash="dash", line_color="black", 
                              annotation_text="Event Onset")
                 
@@ -760,7 +842,7 @@ def _population_summary(analyzer):
     data_status = {
         "Stimulus Labels": "✅" if analyzer.stimulus_labels is not None else "❌",
         "Choice Labels": "✅" if analyzer.choice_labels is not None else "❌", 
-        "Reward Labels": "✅" if analyzer.reward_labels is not None else "❌"
+        "Outcome Labels": "✅" if analyzer.reward_labels is not None else "❌"
     }
     
     for label, status in data_status.items():
