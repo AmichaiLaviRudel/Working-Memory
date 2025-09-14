@@ -3,6 +3,7 @@ import streamlit as st
 import time
 import numpy as np
 import os
+import plotly.graph_objects as go
 from Analysis.GNG_bpod_analysis.colors import COLOR_HIT, COLOR_MISS, COLOR_FA, COLOR_CR
 from Analysis.NPXL_analysis.npxl_single_unit_analysis import single_unit_analysis_panel
 from Analysis.NPXL_analysis.cross_session_analysis import render_across_sessions_panel
@@ -31,6 +32,39 @@ st_project_data = st.data_editor(
         )
     }
 )
+
+# Display session type summary
+if 'Session Type' in st_project_data.columns:
+    st.subheader("Session Type Summary")
+    session_type_counts = st_project_data['Session Type'].value_counts()
+    
+    # Create bar plot with horizontal line at y=12
+    fig = go.Figure()
+    
+    # Add bar plot
+    fig.add_trace(go.Bar(
+        x=session_type_counts.index,
+        y=session_type_counts.values,
+        name='Session Count',
+        marker_color='lightblue'
+    ))
+    
+    # Add horizontal line at y=12
+    fig.add_hline(y=12, line_dash="dash", line_color="red", 
+                  annotation_text="Target: 12", annotation_position="bottom right")
+    
+    # Update layout
+    fig.update_layout(
+        title="Session Type Distribution",
+        xaxis_title="Session Type",
+        yaxis_title="Count",
+        showlegend=False,
+        height=400
+    )
+    
+    # Display the plot
+    st.plotly_chart(fig, use_container_width=True)
+
 # Add a save button
 if st.button("Save Changes"):
     # Save the modified data to your CSV/database

@@ -7,6 +7,8 @@ from sklearn.preprocessing import StandardScaler
 import pandas as pd
 import os
 import streamlit as st
+import hashlib
+from functools import lru_cache
 
 # Add color imports
 from Analysis.GNG_bpod_analysis.colors import COLOR_GO, COLOR_GRAY, COLOR_NOGO, COLOR_HIT, COLOR_FA, COLOR_CR, COLOR_MISS, COLOR_BLUE, COLOR_BLUE_TRANSPARENT, COLOR_ACCENT, COLOR_ACCENT_TRANSPARENT
@@ -886,11 +888,26 @@ def calculate_psth_metrics(unit_data, time_axis, baseline_window=(-0.5, 0)):
         'peak_rate': peak_rate
     }
 
-def compute_psth_pvalues_from_event_windows(event_windows_matrix, event_times, bin_size=0.01, window=(-1, 2)):
+def _create_matrix_hash(matrix, additional_params=None):
     """
-    Compute p-values using event windows data for more accurate statistical analysis.
+    Create a hash for caching based on matrix content and parameters.
+    """
+    # Use a subset of the matrix for hashing to improve performance
+    sample_data = matrix[::max(1, matrix.shape[0]//100), ::max(1, matrix.shape[1]//100), ::max(1, matrix.shape[2]//100)]
+    hash_input = f"{sample_data.shape}_{np.mean(sample_data):.6f}_{np.std(sample_data):.6f}"
+    
+    if additional_params:
+        hash_input += f"_{additional_params}"
+    
+    return hashlib.md5(hash_input.encode()).hexdigest()
+
+@st.cache_data(show_spinner="Computing p-values...")
+def compute_psth_pvalues_from_event_windows_cached(matrix_hash, event_windows_matrix, event_times, bin_size=0.01, window=(-1, 2)):
+    """
+    Cached version of p-values computation.
     
     Args:
+        matrix_hash: Hash of the matrix for cache invalidation
         event_windows_matrix: 3D array [units × time × events]
         event_times: 1D array of event times
         bin_size: float, bin size in seconds
@@ -933,12 +950,68 @@ def compute_psth_pvalues_from_event_windows(event_windows_matrix, event_times, b
     
     return np.array(pvals)
 
-def load_event_windows_data(folder):
+@st.cache_data(show_spinner="Computing unit metrics...")
+def compute_all_unit_metrics_cached(event_windows_data, stimuli_outcome_df, available_units_tuple, window):
     """
-    Loads the event windows data and associated metadata.
+    Compute all metrics for available units and cache the results.
+    """
+    available_units = np.array(available_units_tuple)
+    
+    metrics = {
+        'cp_values': {},
+        'outcome_p_values': {},
+        'dprime_values': {}
+    }
+    
+    for unit_idx in available_units:
+        try:
+            cp_val, _ = compute_choice_probability(event_windows_data, stimuli_outcome_df, unit_idx, window)
+            metrics['cp_values'][unit_idx] = float(cp_val) if cp_val is not None else np.nan
+        except Exception:
+            metrics['cp_values'][unit_idx] = np.nan
+        
+        try:
+            p_val, *_ = compute_outcome_modulation(event_windows_data, stimuli_outcome_df, unit_idx, window)
+            metrics['outcome_p_values'][unit_idx] = float(p_val) if p_val is not None else np.nan
+        except Exception:
+            metrics['outcome_p_values'][unit_idx] = np.nan
+        
+        try:
+            d_val, _, _ = compute_go_nogo_coding(event_windows_data, stimuli_outcome_df, unit_idx, window)
+            metrics['dprime_values'][unit_idx] = float(d_val) if d_val is not None else np.nan
+        except Exception:
+            metrics['dprime_values'][unit_idx] = np.nan
+    
+    return metrics
+
+def compute_psth_pvalues_from_event_windows(event_windows_matrix, event_times, bin_size=0.01, window=(-1, 2)):
+    """
+    Compute p-values using event windows data for more accurate statistical analysis.
+    
+    Args:
+        event_windows_matrix: 3D array [units × time × events]
+        event_times: 1D array of event times
+        bin_size: float, bin size in seconds
+        window: tuple, time window around event (start, end) in seconds
+        
+    Returns:
+        numpy array of p-values for each unit
+    """
+    # Create hash for caching
+    matrix_hash = _create_matrix_hash(event_windows_matrix, f"{bin_size}_{window[0]}_{window[1]}")
+    
+    return compute_psth_pvalues_from_event_windows_cached(
+        matrix_hash, event_windows_matrix, event_times, bin_size, window
+    )
+
+@st.cache_data(show_spinner="Loading event windows data...")
+def load_event_windows_data_cached(folder, folder_mtime):
+    """
+    Cached version of event windows data loading.
     
     Args:
         folder (str): Directory containing the saved data
+        folder_mtime (float): Modification time of folder for cache invalidation
         
     Returns:
         tuple: (event_windows_matrix, time_axis, valid_event_indices, stimuli_outcome_df, metadata) or None if not found
@@ -962,13 +1035,35 @@ def load_event_windows_data(folder):
         if os.path.exists(metadata_file):
             with open(metadata_file, 'r') as f:
                 for line in f:
-                    key, value = line.strip().split(': ')
-                    metadata[key] = value
+                    if ': ' in line:  # Add safety check
+                        key, value = line.strip().split(': ', 1)  # Split only on first occurrence
+                        metadata[key] = value
         
         return event_windows_matrix, time_axis, valid_event_indices, stimuli_outcome_df, metadata
     except Exception as e:
         print(f"Could not load event windows data: {e}")
         return None
+
+def load_event_windows_data(folder):
+    """
+    Loads the event windows data and associated metadata.
+    
+    Args:
+        folder (str): Directory containing the saved data
+        
+    Returns:
+        tuple: (event_windows_matrix, time_axis, valid_event_indices, stimuli_outcome_df, metadata) or None if not found
+    """
+    if not folder or not os.path.exists(folder):
+        return None
+    
+    # Get folder modification time for cache invalidation
+    try:
+        folder_mtime = os.path.getmtime(folder)
+    except:
+        folder_mtime = 0
+    
+    return load_event_windows_data_cached(folder, folder_mtime)
 
 def plot_unit_heatmap(event_windows_data, display_window, unit_idx):
     """
@@ -1178,16 +1273,16 @@ def single_unit_analysis_panel(
         # P-value Analysis Section
         st.subheader("Statistical Analysis")
         
-        # Load event windows data for accurate p-value calculation
+        # Load event windows data for accurate p-value calculation (cached)
         event_windows_data = None
         if selected_folder is not None:
             event_windows_data = load_event_windows_data(selected_folder)
         
-        # Recompute p-values with current window
+        # Recompute p-values with current window (cached)
         if event_windows_data is not None:
             # Use event windows data for more accurate p-value calculation
             event_windows_matrix, time_axis, valid_event_indices, event_stimuli_outcome_df, metadata = event_windows_data
-            # Calculate p-values using the full event windows data
+            # Calculate p-values using the full event windows data (cached)
             pvals = compute_psth_pvalues_from_event_windows(event_windows_matrix, event_times, bin_size=bin_size_display, window=display_window)
 
         
@@ -1206,26 +1301,24 @@ def single_unit_analysis_panel(
             st.metric("Significance Rate", f"{significance_rate:.1f}%")
 
 
-        # Save p-values and metrics automatically once
+        # Save p-values and metrics with caching awareness
         if selected_folder is not None:
-            # try:
-            #     save_pvalues_to_folder(pvals, selected_folder, window=display_window, bin_size=bin_size_display)
-            # except Exception as e:
-            #     st.error(f"Error saving p-values: {e}")
-
-            # try:
-            #     save_all_psth_metrics(event_windows_data, selected_folder, display_window, pvals)
-            #     st.toast("PSTH metrics saved (auto)")
-            # except Exception as e:
-            #     st.error(f"Error saving PSTH metrics: {e}")
-
-            # Add button for manual save
-            if st.button("Save PSTH Metrics Again"):
+            # Add button for manual save (cached data will be used)
+            if st.button("Save PSTH Metrics"):
                 try:
                     save_all_psth_metrics(event_windows_data, selected_folder, display_window, pvals)
-                    st.toast("PSTH metrics saved (manual)")
+                    st.toast("PSTH metrics saved successfully")
                 except Exception as e:
                     st.error(f"Error saving PSTH metrics: {e}")
+            
+            # Add cache management
+            cache_col1, cache_col2 = st.columns(2)
+            with cache_col1:
+                if st.button("🗑️ Clear Analysis Cache"):
+                    st.cache_data.clear()
+                    st.toast("Analysis cache cleared - next computation will be fresh")
+            with cache_col2:
+                st.caption("💡 Metrics are cached for faster performance")
 
 
         # Unit Selection Section
@@ -1326,6 +1419,11 @@ def single_unit_analysis_panel(
     with tab2:
         st.header("Advanced Single Unit Analysis")
         
+        # Performance info
+        with st.expander("ℹ️ Performance Info"):
+            st.info("🚀 Metrics are cached for faster performance. Change parameters to trigger recomputation.")
+            st.caption(f"📊 Dataset: {event_windows_matrix.shape[0]} units × {event_windows_matrix.shape[2]} trials")
+        
         # Filter for significant units
         show_only_significant = st.checkbox("Show only significant units (p < 0.05)", value=False)
         
@@ -1342,7 +1440,7 @@ def single_unit_analysis_panel(
             available_units = range(event_windows_matrix.shape[0])
         
         # Analysis window (define before sorting so metrics reflect current window)
-        analysis_window = st.slider("Analysis window", 0.1, 2.0, 1.0, step=0.1)
+        analysis_window = st.slider("Analysis window", 0.1, 2.0, 1.0, step=0.1, help="⚡ Cached - only recomputes when changed")
         window = (-0.1, analysis_window)
 
         # Unit sorting/selection
@@ -1351,7 +1449,7 @@ def single_unit_analysis_panel(
             "Sort units by",
             ["Unit Index", "Choice Probability (CP)", "Outcome Modulation p-value", "Go/NoGo d'"] ,
             index=0,
-            help="Order the unit list by the selected metric"
+            help="⚡ Cached metrics - fast sorting after first computation"
         )
 
         def _safe_cp(uidx):
@@ -1377,21 +1475,24 @@ def single_unit_analysis_panel(
 
         if len(available_units) > 0:
             available_units = np.array(list(available_units), dtype=int)
-            cp_values = None
-            outcome_p_values = None
-            dprime_values = None
+            
+            # Use cached metrics computation
+            cached_metrics = compute_all_unit_metrics_cached(
+                event_windows_data, stimuli_outcome_df, tuple(available_units), window
+            )
+            
+            cp_values = np.array([cached_metrics['cp_values'].get(u, np.nan) for u in available_units])
+            outcome_p_values = np.array([cached_metrics['outcome_p_values'].get(u, np.nan) for u in available_units])
+            dprime_values = np.array([cached_metrics['dprime_values'].get(u, np.nan) for u in available_units])
 
             if sort_by == "Choice Probability (CP)":
-                cp_values = np.array([_safe_cp(u) for u in available_units])
                 # Descending CP (higher first), NaNs go to the end
                 order = np.argsort(np.where(np.isnan(cp_values), -np.inf, cp_values))
                 order = order[::-1]
             elif sort_by == "Outcome Modulation p-value":
-                outcome_p_values = np.array([_safe_outcome_p(u) for u in available_units])
                 # Ascending p-value (smaller first), NaNs go to the end
                 order = np.argsort(np.where(np.isnan(outcome_p_values), np.inf, outcome_p_values))
             elif sort_by == "Go/NoGo d'":
-                dprime_values = np.array([_safe_dprime(u) for u in available_units])
                 # Descending d' (higher first), NaNs go to the end
                 order = np.argsort(np.where(np.isnan(dprime_values), -np.inf, dprime_values))
                 order = order[::-1]
@@ -1400,19 +1501,16 @@ def single_unit_analysis_panel(
                 order = np.argsort(available_units)
 
             sorted_units = available_units[order]
+            sorted_cp_values = cp_values[order]
+            sorted_outcome_p_values = outcome_p_values[order]
+            sorted_dprime_values = dprime_values[order]
 
             # Build labels with metrics for convenience
             labels = []
             for rank, u in enumerate(sorted_units):
-                if cp_values is None:
-                    cp_values = np.array([_safe_cp(x) for x in available_units])[order]
-                if outcome_p_values is None:
-                    outcome_p_values = np.array([_safe_outcome_p(x) for x in available_units])[order]
-                if dprime_values is None:
-                    dprime_values = np.array([_safe_dprime(x) for x in available_units])[order]
-                cp_txt = f"{cp_values[rank]:.3f}" if np.isfinite(cp_values[rank]) else "NA"
-                p_txt = f"{outcome_p_values[rank]:.3g}" if np.isfinite(outcome_p_values[rank]) else "NA"
-                d_txt = f"{dprime_values[rank]:.3f}" if np.isfinite(dprime_values[rank]) else "NA"
+                cp_txt = f"{sorted_cp_values[rank]:.3f}" if np.isfinite(sorted_cp_values[rank]) else "NA"
+                p_txt = f"{sorted_outcome_p_values[rank]:.3g}" if np.isfinite(sorted_outcome_p_values[rank]) else "NA"
+                d_txt = f"{sorted_dprime_values[rank]:.3f}" if np.isfinite(sorted_dprime_values[rank]) else "NA"
                 labels.append(f"#{rank+1} • Unit {u} • d'={d_txt} • CP={cp_txt} • p={p_txt}")
 
             default_index = 0
@@ -1596,6 +1694,9 @@ def single_unit_analysis_panel(
     with tab3:
         st.header("Generalized Linear Model Analysis")
         
+        # Performance info for GLM
+        st.info("🔬 GLM analysis uses cached p-values for unit filtering")
+        
         # Filter for significant units (same as tab2)
         show_only_significant_glm = st.checkbox("Show only significant units (p < 0.05)", value=False, key="glm_significant")
         
@@ -1621,7 +1722,7 @@ def single_unit_analysis_panel(
         )
         
         # GLM window
-        glm_window = st.slider("GLM analysis window", 0.1, 1.0, 0.5, step=0.1, key="glm_window")
+        glm_window = st.slider("GLM analysis window", 0.1, 1.0, 0.5, step=0.1, key="glm_window", help="⚡ GLM computation is fast")
         window_glm = (-glm_window/2, glm_window/2)
         
         # Fit GLM
