@@ -39,7 +39,14 @@ def plot_psychometric_curves_with_boundaries(project_data, N_Boundaries, n_indic
         except Exception:
             return np.array([])
 
-    filtered_df_reset["Parsed_Stimuli"] = filtered_df_reset["Unique_Stimuli_Values"].apply(parse_stimuli)
+    # Handle both possible column names for stimuli data
+    if "Unique_Stimuli_Values" in filtered_df_reset.columns:
+        filtered_df_reset["Parsed_Stimuli"] = filtered_df_reset["Unique_Stimuli_Values"].apply(parse_stimuli)
+    elif "Stimuli" in filtered_df_reset.columns:
+        filtered_df_reset["Parsed_Stimuli"] = filtered_df_reset["Stimuli"].apply(parse_stimuli)
+    else:
+        st.error("Neither 'Unique_Stimuli_Values' nor 'Stimuli' column found in data")
+        return
 
     # Further filter if N_Boundaries == 1 (exclude rows with any stimulus > 1.5)
     if N_Boundaries == 1:
@@ -69,6 +76,8 @@ def plot_psychometric_curves_with_boundaries(project_data, N_Boundaries, n_indic
     # Store data for computing the average line
     all_lick_rates = []
     all_stimuli = []
+    # Initialize common_stimuli with default values to avoid UnboundLocalError
+    common_stimuli = [1.0, 1.5]  # Default stimulus values
 
     #
     # Loop over the filtered dataframe
@@ -148,7 +157,7 @@ def plot_psychometric_curves_with_boundaries(project_data, N_Boundaries, n_indic
             title = "Psychometric Curve, Two Boundaries",
             xaxis = dict(
                 title = "Stimulus Value [kHz] <br> (log scale)", type = "log",
-                tickmode = "array", tickvals = [1, 1.5] + sorted(np.round(common_stimuli, 2).tolist()),
+                tickmode = "array", tickvals = [1, 1.5] + sorted(np.round(common_stimuli, 2).tolist()) if common_stimuli else [1, 1.5],
                 showgrid = True
             ),
             yaxis = dict(title = "Lick Rate (%)", range = [-5, 110]),
@@ -171,7 +180,7 @@ def plot_psychometric_curves_with_boundaries(project_data, N_Boundaries, n_indic
             title = "Psychometric Curve, One Boundary",
             xaxis = dict(
                 title = "Stimulus Value [kHz] <br> (log scale)", type = "log",
-                tickmode = "array", tickvals = [1.5] + sorted(np.round(common_stimuli, 2).tolist()),
+                tickmode = "array", tickvals = [1.5] + sorted(np.round(common_stimuli, 2).tolist()) if common_stimuli else [1.5],
                 showgrid = True
             ),
             yaxis = dict(title = "Lick Rate (%)", range = [-5, 110]),
@@ -186,7 +195,13 @@ def plot_psychometric_curves_with_boundaries(project_data, N_Boundaries, n_indic
         common_stimuli_dict = {}
         for n_bd, color, label in zip([1, 2], [colors.COLOR_LOW_BD, colors.COLOR_HIGH_BD], ["One Boundary", "Two Boundaries"]):
             filtered_df = project_data[project_data["N_Boundaries"] == n_bd].reset_index(drop=True)
-            filtered_df["Parsed_Stimuli"] = filtered_df["Unique_Stimuli_Values"].apply(parse_stimuli)
+            # Handle both possible column names for stimuli data
+            if "Unique_Stimuli_Values" in filtered_df.columns:
+                filtered_df["Parsed_Stimuli"] = filtered_df["Unique_Stimuli_Values"].apply(parse_stimuli)
+            elif "Stimuli" in filtered_df.columns:
+                filtered_df["Parsed_Stimuli"] = filtered_df["Stimuli"].apply(parse_stimuli)
+            else:
+                continue  # Skip this boundary if no stimuli data found
             if n_bd == 1:
                 filtered_df = filtered_df[filtered_df["Parsed_Stimuli"].apply(lambda x: np.all(x <= 1.5))].reset_index(drop=True)
             # Get sessions for each mouse

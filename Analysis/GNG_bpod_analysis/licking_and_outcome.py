@@ -1011,15 +1011,13 @@ def daily_activity_multi_animal(project_data):
                     bin_counts[j] += 1
                     break
         
-        # Add trace for this mouse
-        fig.add_trace(go.Scatter(
+        # Add trace for this mouse as stacked bar
+        fig.add_trace(go.Bar(
             x=x_values,
             y=bin_counts,
-            mode='lines+markers',
             name=str(mouse),
-            line=dict(color=colors[i % len(colors)], width=2),
-            marker=dict(size=4, color=colors[i % len(colors)]),
-            opacity=0.3
+            marker=dict(color=colors[i % len(colors)]),
+            opacity=0.7
         ))
     
     if len(fig.data) == 0:
@@ -1088,6 +1086,7 @@ def daily_activity_multi_animal(project_data):
         title=f"Daily Activity Pattern by Animal — {selected_date} ({bin_size_minutes}-min bins)",
         xaxis_title="Time of Day",
         yaxis_title="Number of Trials",
+        barmode='stack',  # Stack the bars
         xaxis=dict(
             tickformat="%H:%M",
             tickmode='array',

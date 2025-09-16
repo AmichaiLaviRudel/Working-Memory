@@ -31,7 +31,8 @@ def single_sigmoid_fit(x, y, *, x_boundary: float = 1.0):
     p0 = [y.max(), np.median(x), slope_guess]
     try:
         popt, _ = curve_fit(sig, x, y, p0=p0, maxfev=20000)
-    except RuntimeError:
+    except (RuntimeError, ValueError) as e:
+        # Handle both RuntimeError and ValueError (including insufficient data points)
         return np.nan, np.nan, np.nan, np.nan, np.nan
     L, x0, k = popt
     slope_mid = (L * k) / 4.0
@@ -65,8 +66,8 @@ def _psychometric_fitting_core(unique_stims, data_points, *, N_Boundaries=1, log
     y = np.asarray(data_points,  float)
     mask = np.isfinite(x) & np.isfinite(y)
     x, y = x[mask], y[mask]
-    if len(x) < 2:
-        raise ValueError("Insufficient data for fitting.")
+    if len(x) < 3:
+        raise ValueError(f"Insufficient data for fitting: need at least 3 data points, got {len(x)}")
     y_min, y_max = np.min(data_points), np.max(data_points)
     # Map y to 0…1
     if y.max() > y.min():
@@ -146,6 +147,10 @@ def psychometric_curve(selected_data, index, plot=True):
         if "TA" in session_type or "Discrimination" in session_type:
             st.info(f"this is {session_type} session")
             return None, None, None, None, None
+        # Check if we have enough data points for fitting
+        if len(unique_stimuli) < 3:
+            return None, None, None, None, None
+            
         # return boundaries, slopes_mid, slopes_at_bnds, x_fit, y_fit
         model_boundaries, slopes_mid, slopes_at_model_boundaries, x_fit, y_fit = psychometric_fitting(unique_stimuli, lick_rates,
                                                    N_Boundaries = n_b,
@@ -185,6 +190,12 @@ def psychometric_curve(selected_data, index, plot=True):
                     fig.update_layout(title="Psychometric Curve", xaxis_title="Stimulus Intensity (log2)", yaxis_title="Lick Rate", yaxis_range=[0, 100])
                 st.plotly_chart(fig)
         return model_boundaries, slopes_mid, slopes_at_model_boundaries, x_fit, y_fit
+    except ValueError as e:
+        if "Insufficient data" in str(e):
+            st.warning(f"Cannot fit psychometric curve: {e}")
+        else:
+            st.error(f"Data validation error in psychometric_curve: {e}")
+        return None, None, None, None, None
     except NotImplementedError as e:
         st.error(str(e))
         return None, None, None, None, None
@@ -321,7 +332,15 @@ def multi_animal_psychometric_slope_progression(selected_data, N_Boundaries=1):
             return np.fromstring(s.strip("[]"), sep=" ")
         except:
             return np.array([])
-    df["Parsed_Stimuli"] = df["Unique_Stimuli_Values"].apply(parse_stimuli)
+    
+    # Handle both possible column names for stimuli data
+    if "Unique_Stimuli_Values" in df.columns:
+        df["Parsed_Stimuli"] = df["Unique_Stimuli_Values"].apply(parse_stimuli)
+    elif "Stimuli" in df.columns:
+        df["Parsed_Stimuli"] = df["Stimuli"].apply(parse_stimuli)
+    else:
+        st.error("Neither 'Unique_Stimuli_Values' nor 'Stimuli' column found in data")
+        return
 
 
     # ─── compute slopes for each subject & session ─────────────────────

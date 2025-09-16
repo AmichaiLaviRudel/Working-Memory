@@ -6,7 +6,6 @@ import os
 import plotly.graph_objects as go
 from Analysis.GNG_bpod_analysis.colors import COLOR_HIT, COLOR_MISS, COLOR_FA, COLOR_CR
 from Analysis.NPXL_analysis.npxl_single_unit_analysis import single_unit_analysis_panel
-from Analysis.NPXL_analysis.cross_session_analysis import render_across_sessions_panel
 from Analysis.NPXL_analysis.population_analysis import plot_population_heatmap, advanced_population_analysis_panel, plot_best_stimulus_panel
 
 # Load the experimental data
@@ -169,11 +168,6 @@ if 'Checkbox' in st_project_data.columns and st_project_data['Checkbox'].any():
                     st.subheader("Best Stimulus Across Units")
                     plot_best_stimulus_panel(event_windows_matrix, stimuli_outcome_df, metadata)
                     
-                    # ──────────────────────────────────────────────────────────────────────────────
-                    # Across Sessions (Same Animal) Comparison
-                    # ──────────────────────────────────────────────────────────────────────────────
-                    render_across_sessions_panel(st_project_data)
-
                 else:
                     st.warning("Event windows data not available for population analysis")
             
