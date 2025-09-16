@@ -129,17 +129,3 @@ DB/
 - `cross_session_analysis.py`: Longitudinal neural tracking
 - `NPXL_Preprocessing.py`: Data cleaning and spike sorting
 
-## 🎯 Use Cases
-
-### Research Applications
-- **Learning & Memory**: Track behavioral acquisition and retention
-- **Sensory Processing**: Analyze stimulus-response relationships
-- **Neural Encoding**: Understand how behavior relates to neural activity
-- **Longitudinal Studies**: Monitor changes across experimental sessions
-
-### Data Types Supported
-- **Bpod Behavioral Data**: Go/No-Go discrimination tasks
-- **Neuropixels Recordings**: High-density neural recordings
-- **Educage Data**: Automated home-cage monitoring
-- **Custom Protocols**: Flexible analysis framework
-
