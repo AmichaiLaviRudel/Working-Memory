@@ -703,6 +703,15 @@ def daily_multi_animal_dprime(project_data, t=10):
         st.info("No animals found for selected date.")
         return
 
+    # Use per-mouse color map
+    try:
+        color_map = st.session_state.get('mouse_color_map', {})
+        if not color_map:
+            from Analysis.GNG_bpod_analysis.colors import get_subject_color_map
+            color_map = get_subject_color_map(date_data['MouseName'])
+    except Exception:
+        color_map = {}
+
     fig = go.Figure()
     for mouse in mice:
         rows = date_data.index[date_data["MouseName"] == mouse].tolist()
@@ -721,7 +730,7 @@ def daily_multi_animal_dprime(project_data, t=10):
             y=np.asarray(d_vals, dtype=float),
             mode='lines',
             name=str(mouse),
-            line=dict(width=2)
+            line=dict(width=2, color=color_map.get(str(mouse), colors.COLOR_SUBTLE))
         ))
 
     if len(fig.data) == 0:

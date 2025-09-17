@@ -476,15 +476,316 @@ def plot_best_stimulus_panel(event_windows_matrix, stimuli_outcome_df, metadata,
     st.plotly_chart(fig_bar, use_container_width=True)
 
 
-def advanced_population_analysis_panel(event_windows_matrix, stimuli_outcome_df, metadata):
+def advanced_population_analysis_panel(event_windows_matrix, stimuli_outcome_df, metadata, time_axis):
     """
-    Advanced population analysis panel - placeholder for future implementation.
+    Advanced population analysis panel: outcome and action decoding with efficient, balanced CV.
+    """
+    from sklearn.svm import SVC
+    from sklearn.model_selection import StratifiedKFold, cross_val_score
+    from sklearn.pipeline import make_pipeline
+    from sklearn.preprocessing import StandardScaler
+    import plotly.graph_objects as go
+    n_units, n_time_bins, n_trials = event_windows_matrix.shape
+    key_prefix = f"adv_{abs(hash((int(n_units), int(n_time_bins), int(n_trials))))}"
+
+    # Stimulus color map (rounded to 2 decimals strings)
+    _STIM_COLOR_MAP = {
+        '0.71': '#006837', '2.12': '#006837',  # Dark green
+        '0.77': '#1A9850', '1.95': '#1A9850',  # Medium green
+        '0.84': '#1A9850', '1.79': '#1A9850',  # Medium green (same as 0.77)
+        '0.91': '#66BD63', '1.65': '#66BD63',  # Light green
+        '1.08': '#FDAE61',                     # Medium orange
+        '1.17': '#F46D43',                     # Coral orange
+        '1.28': '#D73027',                     # Medium red
+        '1.39': '#A50026',                     # Dark red
+    }
+
+    def _stim_hex_color(value):
+        try:
+            key = f"{float(value):.2f}"
+        except Exception:
+            return COLOR_ACCENT
+        return _STIM_COLOR_MAP.get(key, COLOR_ACCENT)
+
+    def _balanced_indices(labels, class_pos, class_neg):
+        pos_idx = np.where(labels == class_pos)[0]
+        neg_idx = np.where(labels == class_neg)[0]
+        min_n = int(min(len(pos_idx), len(neg_idx)))
+        if min_n < 2:
+            return None, None
+        rng = np.random.default_rng(seed=st.session_state.get('adv_dec_seed', 42))
+        pos_sel = rng.choice(pos_idx, size=min_n, replace=False)
+        neg_sel = rng.choice(neg_idx, size=min_n, replace=False)
+        sel = np.concatenate([pos_sel, neg_sel])
+        y = np.r_[np.ones(min_n, dtype=int), np.zeros(min_n, dtype=int)]
+        return sel, y
+
+    def _time_resolved_decode(data_u_t_trials, sel_idx, y, t_start=None, t_end=None, avg_win_sec=0.0):
+        if sel_idx is None:
+            return None, None
+        dt = float(time_axis[1] - time_axis[0]) if len(time_axis) > 1 else 1.0
+        s = 0 if t_start is None else int(np.searchsorted(time_axis, t_start, side='left'))
+        e = data_u_t_trials.shape[1] if t_end is None else int(np.searchsorted(time_axis, t_end, side='right'))
+        e = max(e, s + 1)
+        half_w = int(max(0, round((avg_win_sec / dt) / 2.0)))
+
+        times, acc = [], []
+        n_splits = int(max(2, min(5, np.min(np.bincount(y)))))
+        cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
+        clf = make_pipeline(StandardScaler(), SVC(kernel='rbf', C=1, gamma='scale', class_weight='balanced'))
+
+        # Slice trials once
+        data_sel = data_u_t_trials[:, :, sel_idx]
+        for t in range(s, e):
+            t0 = max(s, t - half_w)
+            t1 = min(e, t + half_w + 1)
+            X = data_sel[:, t0:t1, :].mean(axis=1).T
+            scores = cross_val_score(clf, X, y, cv=cv)
+            acc.append(float(np.mean(scores)))
+            times.append(float(time_axis[t]))
+        return np.array(times), np.array(acc)
+
+    # TABS
+    stimulus_tab, outcome_tab, action_tab = st.tabs(["Stimulus Decoder", "Outcome Decoder", "Action Decoder"])
+
+    with stimulus_tab:
+        if 'stimulus' not in stimuli_outcome_df.columns:
+            st.warning("'stimulus' column not found in data.")
+            return
+        stimulus_labels = np.round(stimuli_outcome_df['stimulus'].values, 2)
+        unique_stimuli = np.unique(stimulus_labels)
+        if len(unique_stimuli) < 2:
+            st.warning("Need at least two unique stimuli for decoding.")
+            return
+        t_range = st.slider(
+            "Time range (s)", float(time_axis[0]), float(time_axis[-1]), (-2.0, 4.0), step=0.05, key=f"{key_prefix}_stim_range"
+        )
+        avg_win = st.number_input("Averaging window (s)", 0.0, 2.0, 0.0, 0.05, key=f"{key_prefix}_stim_avg")
+        # Pair first vs last, second vs second-last, etc.
+        num_pairs = len(unique_stimuli) // 2
+        fig = go.Figure()
+        plotted = 0
+        for i in range(num_pairs):
+            stim_pos, stim_neg = unique_stimuli[i], unique_stimuli[-(i+1)]
+            sel_idx, y = _balanced_indices(stimulus_labels, stim_pos, stim_neg)
+            if sel_idx is None:
+                continue
+            times, acc = _time_resolved_decode(
+                event_windows_matrix, sel_idx, y,
+                t_start=t_range[0], t_end=t_range[1], avg_win_sec=avg_win
+            )
+            if times is None:
+                continue
+            fig.add_trace(go.Scatter(
+                x=times, y=acc, mode='lines',
+                name=f"{stim_pos} vs {stim_neg}",
+                line=dict(color=_stim_hex_color(stim_pos))
+            ))
+            plotted += 1
+        if plotted == 0:
+            st.warning("No valid stimulus pairs after balancing.")
+            return
+        fig.add_hline(y=0.5, line_dash="dash", line_color="gray")
+        fig.add_shape(
+            type="line",
+            x0=0, x1=2,
+            y0=0, y1=0,
+            line=dict(color="black", width=5, dash="solid"),
+            xref="x", yref="y"
+        )
+        fig.update_layout(
+            title="Time-resolved decoding: paired stimuli (first-vs-last, ...)",
+            xaxis=dict(title="Time (s)", range=[t_range[0], t_range[1]]),
+            yaxis_title="Accuracy",
+            yaxis=dict(range=[0,1])
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+        # New figure: compare adjacent stimulus pairs (near each other)
+        if len(unique_stimuli) >= 2:
+            fig_adj = go.Figure()
+            plotted_adj = 0
+            for i in range(len(unique_stimuli) - 1):
+                stim_a, stim_b = unique_stimuli[i], unique_stimuli[i+1]
+                sel_idx_adj, y_adj = _balanced_indices(stimulus_labels, stim_a, stim_b)
+                if sel_idx_adj is None:
+                    continue
+                times_adj, acc_adj = _time_resolved_decode(
+                    event_windows_matrix, sel_idx_adj, y_adj,
+                    t_start=t_range[0], t_end=t_range[1], avg_win_sec=avg_win
+                )
+                if times_adj is None:
+                    continue
+                fig_adj.add_trace(go.Scatter(
+                    x=times_adj, y=acc_adj, mode='lines',
+                    name=f"{stim_a} vs {stim_b}",
+                    line=dict(color=_stim_hex_color(stim_a))
+                ))
+                plotted_adj += 1
+            if plotted_adj > 0:
+                fig_adj.add_hline(y=0.5, line_dash="dash", line_color="gray")
+                fig_adj.add_shape(
+                    type="line",
+                    x0=0, x1=2,
+                    y0=0, y1=0,
+                    line=dict(color="black", width=5, dash="solid"),
+                    xref="x", yref="y"
+                )
+                fig_adj.update_layout(
+                    title="Time-resolved decoding: adjacent stimulus pairs",
+                    xaxis=dict(title="Time (s)", range=[t_range[0], t_range[1]]),
+                    yaxis_title="Accuracy",
+                    yaxis=dict(range=[0,1])
+                )
+                st.plotly_chart(fig_adj, use_container_width=True)
+
+        # Optional: overall (time-averaged) accuracy boxplots
+        show_box = st.checkbox("Show overall accuracy (boxplots)", value=False, key=f"{key_prefix}_stim_box")
+        if show_box:
+            from sklearn.pipeline import make_pipeline
+            from sklearn.preprocessing import StandardScaler
+            from sklearn.model_selection import StratifiedKFold, cross_val_score
+            # Build time mask once
+            s = int(np.searchsorted(time_axis, t_range[0], side='left'))
+            e = int(np.searchsorted(time_axis, t_range[1], side='right'))
+            e = max(e, s + 1)
+
+            def overall_scores_for_pairs(pairs):
+                boxes = []
+                for a, b in pairs:
+                    sel_idx, y = _balanced_indices(stimulus_labels, a, b)
+                    if sel_idx is None:
+                        continue
+                    X = event_windows_matrix[:, s:e, sel_idx].mean(axis=1).T
+                    n_splits = int(max(2, min(5, np.min(np.bincount(y)))))
+                    cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
+                    clf = make_pipeline(StandardScaler(), SVC(kernel='rbf', C=1, gamma='scale', class_weight='balanced'))
+                    scores = cross_val_score(clf, X, y, cv=cv)
+                    boxes.append((f"{a} vs {b}", scores, _stim_hex_color(a)))
+                return boxes
+
+            # Extremes pairs
+            extreme_pairs = [(unique_stimuli[i], unique_stimuli[-(i+1)]) for i in range(len(unique_stimuli)//2)]
+            boxes_ext = overall_scores_for_pairs(extreme_pairs)
+            if boxes_ext:
+                fig_box_ext = go.Figure()
+                for name, scores, col in boxes_ext:
+                    fig_box_ext.add_trace(go.Box(y=scores, name=name, boxpoints='all', jitter=0.3, pointpos=0,
+                                                  marker_color=col, line=dict(color=col)))
+                fig_box_ext.add_hline(y=0.5, line_dash="dash", line_color="gray")
+                fig_box_ext.update_layout(title="Overall decoding (time-averaged): extreme stimulus pairs", yaxis_title="Accuracy", yaxis=dict(range=[0,1]))
+                st.plotly_chart(fig_box_ext, use_container_width=True)
+
+            # Adjacent pairs
+            adj_pairs = [(unique_stimuli[i], unique_stimuli[i+1]) for i in range(len(unique_stimuli)-1)]
+            boxes_adj = overall_scores_for_pairs(adj_pairs)
+            if boxes_adj:
+                fig_box_adj = go.Figure()
+                for name, scores, col in boxes_adj:
+                    fig_box_adj.add_trace(go.Box(y=scores, name=name, boxpoints='all', jitter=0.3, pointpos=0,
+                                                 marker_color=col, line=dict(color=col)))
+                fig_box_adj.add_hline(y=0.5, line_dash="dash", line_color="gray")
+                fig_box_adj.update_layout(title="Overall decoding (time-averaged): adjacent stimulus pairs", yaxis_title="Accuracy", yaxis=dict(range=[0,1]))
+                st.plotly_chart(fig_box_adj, use_container_width=True)
     
-    Args:
-        event_windows_matrix: 3D array [units × time_bins × trials]
-        stimuli_outcome_df: DataFrame with trial information
-        metadata: Dictionary with recording parameters
-    """
-    st.header("Advanced Population Analysis 🧠")
-    st.info("Advanced population analysis will be implemented step by step. Coming soon!")
+    with outcome_tab:
+        if 'outcome' not in stimuli_outcome_df.columns:
+            st.warning("'outcome' column not found in data.")
+            return
+        # default to two most frequent outcomes for stability
+        counts = stimuli_outcome_df['outcome'].value_counts()
+        outcomes_order = list(counts.index)
+        if len(outcomes_order) < 2:
+            st.warning("Not enough unique outcomes to decode.")
+            return
+        selected = st.multiselect(
+            "Select two outcomes:", options=outcomes_order, default=outcomes_order[:2], max_selections=2
+        )
+        if len(selected) != 2:
+            st.info("Select exactly two outcomes.")
+            return
+        out_pos, out_neg = selected[0], selected[1]
+
+        trial_labels = stimuli_outcome_df['outcome'].values
+        sel_idx, y = _balanced_indices(trial_labels, out_pos, out_neg)
+        if sel_idx is None:
+            st.warning("Insufficient trials after balancing.")
+            return
+
+        t_range = st.slider(
+            "Time range (s)", float(time_axis[0]), float(time_axis[-1]), (-2.0, 4.0), step=0.05, key=f"{key_prefix}_out_range"
+        )
+        avg_win = st.number_input("Averaging window (s)", 0.0, 2.0, 0.0, 0.05, key=f"{key_prefix}_out_avg")
+        times, acc = _time_resolved_decode(event_windows_matrix, sel_idx, y, t_start=t_range[0], t_end=t_range[1], avg_win_sec=avg_win)
+        if times is None:
+            st.warning("Decoding failed.")
+            return
+        # Smooth for display
+        def _smooth(a, k=5):
+            if a is None or len(a) < 3 or k <= 1:
+                return a
+            k = min(k, max(1, len(a)//5))
+            w = np.ones(k)/k
+            return np.convolve(a, w, mode='same')
+        acc_sm = _smooth(acc, 5)
+
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=times, y=acc, mode='lines', name='Accuracy', line=dict(color='rgba(31,119,180,0.4)')))
+        fig.add_trace(go.Scatter(x=times, y=acc_sm, mode='lines', name='Smoothed', line=dict(color='rgb(31,119,180)', width=3)))
+        fig.add_hline(y=0.5, line_dash="dash", line_color="gray")
+        fig.add_shape(
+            type="line",
+            x0=0, x1=2,
+            y0=0, y1=0,
+            line=dict(color="black", width=5, dash="solid"),
+            xref="x", yref="y"
+        )
+        fig.update_layout(
+            title=f"Time-resolved decoding: {out_pos} vs {out_neg}",
+            xaxis=dict(title="Time (s)", range=[t_range[0], t_range[1]]),
+            yaxis_title="Accuracy",
+            yaxis=dict(range=[0,1])
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    with action_tab:
+        if 'outcome' not in stimuli_outcome_df.columns:
+            st.warning("'outcome' column not found in data.")
+            return
+        lick_outcomes = ['Hit', 'False Alarm']
+        no_lick_outcomes = ['Miss', 'CR']
+        trial_outcomes = stimuli_outcome_df['outcome'].values
+        action_labels = np.array([1 if o in lick_outcomes else 0 for o in trial_outcomes])
+        sel_idx, y = _balanced_indices(action_labels, 1, 0)
+        if sel_idx is None:
+            st.warning("Insufficient trials for action decoding.")
+            return
+
+        t_range = st.slider(
+            "Time range (s)", float(time_axis[0]), float(time_axis[-1]), (-2.0, 4.0), step=0.05, key=f"{key_prefix}_act_range"
+        )
+        avg_win = st.number_input("Averaging window (s)", 0.0, 2.0, 0.0, 0.05, key=f"{key_prefix}_act_avg")
+        times, acc = _time_resolved_decode(event_windows_matrix, sel_idx, y, t_start=t_range[0], t_end=t_range[1], avg_win_sec=avg_win)
+        if times is None:
+            st.warning("Decoding failed.")
+            return
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=times, y=acc, mode='lines', name='Accuracy'))
+        fig.add_hline(y=0.5, line_dash="dash", line_color="gray")
+        fig.add_shape(
+            type="line",
+            x0=0, x1=2,
+            y0=0, y1=0,
+            line=dict(color="black", width=5, dash="solid"),
+            xref="x", yref="y"
+        )
+        fig.update_layout(
+            title="Time-resolved decoding: Lick vs No-lick",
+            xaxis=dict(title="Time (s)", range=[t_range[0], t_range[1]]),
+            yaxis_title="Accuracy",
+            yaxis=dict(range=[0,1])
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+
 

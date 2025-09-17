@@ -371,7 +371,16 @@ def multi_animal_psychometric_slope_progression(selected_data, N_Boundaries=1):
 
     import plotly.graph_objects as go
     fig = go.Figure()
-    # Plot all animals (gray lines, log y)
+    # Build color map
+    try:
+        color_map = st.session_state.get('mouse_color_map', {})
+        if not color_map:
+            from Analysis.GNG_bpod_analysis.colors import get_subject_color_map
+            color_map = get_subject_color_map(df["MouseName"])  # type: ignore
+    except Exception:
+        color_map = {}
+
+    # Plot all animals (colored per mouse)
     for subj in df["MouseName"].unique():
         for boundary, color in zip(["Low", "High"], [colors.COLOR_LOW_BD, colors.COLOR_HIGH_BD]):
             subj_data = long_df[(long_df["Mouse"] == subj) & (long_df["Boundary"] == boundary)]
@@ -380,10 +389,10 @@ def multi_animal_psychometric_slope_progression(selected_data, N_Boundaries=1):
                     x=subj_data["Session"],
                     y=subj_data["Slope"],
                     mode='lines',
-                    line=dict(color=colors.COLOR_GRAY, width=2, dash='solid'),
+                    line=dict(color=color_map.get(str(subj), colors.COLOR_SUBTLE), width=2, dash='solid'),
                     name=f'{subj} {boundary}',
                     showlegend=False,
-                    opacity=0.3
+                    opacity=0.8
                 ))
     # Plot average lines (bold)
     for boundary, color in zip(["Low", "High"], [colors.COLOR_LOW_BD, colors.COLOR_HIGH_BD]):

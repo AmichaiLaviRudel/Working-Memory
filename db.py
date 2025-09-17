@@ -40,38 +40,7 @@ with st.sidebar.container():
         except Exception as e:
             st.error(f"Error opening folder: {e}")
     
-    if st.button("Concatenate sessions and reload data"):
-        # 1) Run MATLAB concatenation script
-        matlab_cmd_candidates = [
-            'matlab -batch "addpath(\'Z:\\Shared\\Amichai\\Code\\DB\\load_data\'); concatSessions;"',
-            'matlab.exe -batch "addpath(\'Z:\\Shared\\Amichai\\Code\\DB\\load_data\'); concatSessions;"'
-        ]
-        with st.spinner("Running MATLAB concatenation (concatSessions.m)..."):
-            matlab_ok = False
-            matlab_error = None
-            for cmd in matlab_cmd_candidates:
-                try:
-                    # Use shell=True on Windows for PATH resolution
-                    completed = subprocess.run(cmd, shell=True, check=True, capture_output=True, text=True)
-                    matlab_ok = True
-                    break
-                except Exception as e:
-                    matlab_error = e
-            if not matlab_ok:
-                st.error(f"Failed to run MATLAB concatenation. Ensure MATLAB is installed and on PATH.\n{matlab_error}")
-                st.stop()
-
-        # 2) Run Python loader to rebuild CSVs
-        with st.spinner("Loading Bpod data (load_bpod_data.py)..."):
-            try:
-                loader_script = os.path.join(os.getcwd(), 'load_data', 'load_bpod_data.py')
-                subprocess.run(f'"{sys.executable}" "{loader_script}"', shell=True, check=True)
-            except Exception as e:
-                st.error(f"Failed to load Bpod data: {e}")
-                st.stop()
-
-        st.success("Concatenation and data reload completed. Reloading app...")
-        st.rerun()
+    
 pg.run()
 
 

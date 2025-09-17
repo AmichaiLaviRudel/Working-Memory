@@ -139,10 +139,7 @@ if 'Checkbox' in st_project_data.columns and st_project_data['Checkbox'].any():
             else:
                 st.badge("Behavior Analysis")
                 # Create 4 Streamlit tabs for analysis
-                single_unit_tab, population_tab, advanced_tab, multi_tab = st.tabs(["Single Unit", "Population", "Advanced", "Multi"])
-
-
-
+                single_unit_tab, population_tab, advanced_tab, multi_tab = st.tabs(["Single Unit", "Population", "Population Adv.", "Multi"])
 
 
             with single_unit_tab:
@@ -174,7 +171,7 @@ if 'Checkbox' in st_project_data.columns and st_project_data['Checkbox'].any():
             with advanced_tab:
                 st.write("### Advanced Population Analysis")
                 if selected_folder and event_windows_matrix is not None and stimuli_outcome_df is not None and metadata is not None:
-                    advanced_population_analysis_panel(event_windows_matrix, stimuli_outcome_df, metadata)
+                    advanced_population_analysis_panel(event_windows_matrix, stimuli_outcome_df, metadata, time_axis_from_load)
                 else:
                     st.warning("Event windows data not available for advanced analysis")
             

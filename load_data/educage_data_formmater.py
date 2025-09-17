@@ -4,11 +4,14 @@ from pathlib import Path
 import numpy as np
 
 # Source file path
-path = r"Z:\Shared\Noam\results\pilot_amichai_08_09_2025\pilot_amichai_08_09_2025.txt"
-
+path1 = r"Z:\Shared\Noam\results\pilot_amichai_08_09_2025\pilot_amichai_08_09_2025.txt"
+path2 = r"Z:\Shared\Noam\results\experiments\experiments.txt"
 # Read file
-df = pd.read_csv(path)
-print(df.columns)
+df1 = pd.read_csv(path1)
+df2 = pd.read_csv(path2)
+
+df = pd.concat([df1, df2])
+
 # Normalize column names robustly (spaces, slashes, dashes -> underscores; lowercase)
 def _normalize(col):
     c = str(col).strip().lower()
@@ -46,13 +49,15 @@ if "licks_time" in df.columns:
             return (lst[0] - row["start_dt"]).total_seconds() * 1000.0
         df["rt_first_ms"] = df.apply(_first_rt_ms, axis=1)
 
-        # Licks relative to start in seconds as None or numpy array([...])
+        # Licks relative to start in seconds as None or numpy array([...]), only values < 4
         def _licks_rel(row):
+            time_limit = 4
             lst = row["licks_dt_list"]
             if not lst:
                 return None
             vals = [(t - row["start_dt"]).total_seconds() for t in lst]
-            return np.array(vals, dtype=float)
+            filtered = [v for v in vals if v < time_limit]
+            return np.array(filtered, dtype=float) if filtered else None
         df["licks_rel"] = df.apply(_licks_rel, axis=1)
 
 # Prepare cleaned stimulus names: drop .npz and replace '-' with '.'
@@ -88,7 +93,7 @@ grouped = (
 )
 
 # Save grouped to parent of the source path
-base_dir = Path(path).resolve().parent
+base_dir = Path(path2).resolve().parent
 
 # Normalize/capitalize trial types and outcomes
 def _cap_trial_types(lst):
@@ -154,7 +159,7 @@ grouped_out = (
           "licks": "Licks",
           "start_time": "StartTime",
       })
-      .assign(FilePath=path)[
+      .assign(FilePath=path2)[
           ["MouseName", "SessionDate", "TrialTypes", "Outcomes", "Stimuli", "Licks", "StartTime", "Notes", "FilePath", "Tones_per_class", "N_Boundaries"]
       ]
 )

@@ -59,6 +59,73 @@ NOGO_COLORS = [
     "#FF0000",  # Red
 ]
 
+# ─── Subject Color Palette (Qualitative, Many Distinct Hues) ────────
+# Use to map subjects deterministically by index: color = SUBJECT_COLORS[idx % len(SUBJECT_COLORS)]
+SUBJECT_COLORS = [
+    "#1f77b4",  # Blue
+    "#ff7f0e",  # Orange
+    "#2ca02c",  # Green
+    "#d62728",  # Red
+    "#9467bd",  # Purple
+    "#8c564b",  # Brown
+    "#e377c2",  # Pink
+    "#7f7f7f",  # Gray
+    "#bcbd22",  # Yellow-Green
+    "#17becf",  # Teal
+    "#393b79",  # Dark Indigo
+    "#637939",  # Olive
+    "#8c6d31",  # Ochre
+    "#843c39",  # Maroon
+    "#7b4173",  # Plum
+    "#3182bd",  # Steel Blue
+    "#e6550d",  # Burnt Orange
+    "#31a354",  # Emerald
+    "#756bb1",  # Lavender Purple
+    "#636363",  # Mid Gray
+    "#bdbdbd",  # Light Gray
+    "#9ecae1",  # Light Blue
+    "#fd8d3c",  # Soft Orange
+    "#74c476",  # Soft Green
+    "#c994c7",  # Soft Purple
+    "#a1d99b",  # Pale Green
+    "#6baed6",  # Sky Blue
+    "#d6616b",  # Rose
+    "#ce6dbd",  # Magenta
+    "#e7ba52",  # Mustard
+    "#ad494a",  # Brick
+    "#a55194",  # Violet
+]
+
+# Map unique subject identifiers to distinct colors from SUBJECT_COLORS
+def get_subject_color_map(subject_names):
+    """
+    Deterministically map each unique subject name to a distinct color.
+
+    Args:
+        subject_names (Iterable[str]): A sequence of subject identifiers (e.g., MouseName).
+
+    Returns:
+        dict[str, str]: Mapping of subject name -> color hex.
+    """
+    try:
+        # Preserve first-seen order while ensuring uniqueness
+        seen = set()
+        unique_subjects = []
+        for name in subject_names:
+            key = str(name)
+            if key not in seen:
+                seen.add(key)
+                unique_subjects.append(key)
+
+        color_map = {
+            subject: SUBJECT_COLORS[idx % len(SUBJECT_COLORS)]
+            for idx, subject in enumerate(unique_subjects)
+        }
+        return color_map
+    except Exception:
+        # Fallback: return empty mapping on any unexpected error
+        return {}
+
 # ─── Line Width ─────────────────────────────────────────────────
 LINE_WIDTH_THIN     = 0.5
 LINE_WIDTH_MEDIUM  = 1.0

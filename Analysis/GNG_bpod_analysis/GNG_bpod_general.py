@@ -4,6 +4,8 @@ from Analysis.GNG_bpod_analysis.metric import *
 
 
 import numpy as np
+import pandas as pd
+import ast
 
 
 def getNameAndSession(project_data, index):

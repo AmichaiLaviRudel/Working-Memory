@@ -225,7 +225,7 @@ def lick_rate_multipule_sessions(selected_data, t=10, plot=True,  animal_name = 
     st.altair_chart(combined_chart, use_container_width=True)
 
 ### Function: Clean and Convert Data ###
-def preprocess_stimuli_outcomes(selected_data, index):
+def preprocess_stimuli_outcomes(selected_data, index=0):
     """
     Extracts and processes stimuli and outcomes from the selected session.
     Converts them from string representations to NumPy arrays.
@@ -962,8 +962,14 @@ def daily_activity_multi_animal(project_data):
     # Convert bin labels to datetime for proper x-axis
     x_values = [pd.Timestamp(f"2024-01-01 {label}:00") for label in bin_labels]
     
-    # Use colors from the colors file
-    colors = [COLOR_ACCENT, COLOR_ORANGE, COLOR_GO, COLOR_NOGO, COLOR_BLUE, COLOR_D_PRIME, COLOR_HIT, COLOR_CR]
+    # Determine per-mouse colors
+    try:
+        color_map = st.session_state.get('mouse_color_map', {})
+        if not color_map:
+            from Analysis.GNG_bpod_analysis.colors import get_subject_color_map
+            color_map = get_subject_color_map(project_data['MouseName'])
+    except Exception:
+        color_map = {}
     
     for i, mouse in enumerate(mice):
         mouse_data = date_data[date_data["MouseName"] == mouse]
@@ -1016,7 +1022,7 @@ def daily_activity_multi_animal(project_data):
             x=x_values,
             y=bin_counts,
             name=str(mouse),
-            marker=dict(color=colors[i % len(colors)]),
+            marker=dict(color=color_map.get(str(mouse), colors.COLOR_SUBTLE)),
             opacity=0.7
         ))
     
@@ -1137,6 +1143,15 @@ def daily_multi_animal_lick_rate(project_data, t=15):
     
     fig = go.Figure()
 
+    # Determine per-mouse colors
+    try:
+        color_map = st.session_state.get('mouse_color_map', {})
+        if not color_map:
+            from Analysis.GNG_bpod_analysis.colors import get_subject_color_map
+            color_map = get_subject_color_map(date_data['MouseName'])
+    except Exception:
+        color_map = {}
+
     for mouse in mice:
         mouse_data = date_data[date_data["MouseName"] == mouse]
         if len(mouse_data) == 0:
@@ -1152,7 +1167,7 @@ def daily_multi_animal_lick_rate(project_data, t=15):
             y=go_series.values,
             mode='lines',
             name=str(mouse),
-            line=dict(width=2)
+            line=dict(width=2, color=color_map.get(str(mouse), colors.COLOR_SUBTLE))
         ))
 
     if len(fig.data) == 0:

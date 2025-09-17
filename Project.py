@@ -4,6 +4,7 @@ import streamlit as st
 import traceback
 import os
 import runpy
+from Analysis.GNG_bpod_analysis.colors import get_subject_color_map
 from Analysis.session_states import initialize_session_state
 initialize_session_state()
 
@@ -54,13 +55,19 @@ def current_project_overview(existing_projects, selected_project, path, types):
         project_csv = os.path.join(path, f"{selected_project}_experimental_data.csv")
         project_data = pd.read_csv(project_csv, delimiter = ',', low_memory = False)
 
+        # Assign deterministic colors per unique MouseName
+        if 'MouseName' in project_data.columns:
+            color_map = get_subject_color_map(project_data['MouseName'].fillna('Unknown'))
+            st.session_state['mouse_color_map'] = color_map
+            project_data['Color'] = project_data['MouseName'].fillna('Unknown').map(color_map)
+
 
 
         # Ensure that a 'Checkbox' column exists for selecting rows
         if 'Checkbox' not in project_data.columns:
             project_data.insert(0, 'Checkbox', False)
 
-        columns_to_present = ["Checkbox", "MouseName", "SessionDate", "SessionTime", "WaterConsumption","Notes", "FilePath"]
+        columns_to_present = ["Checkbox", "MouseName", "Color", "SessionDate", "SessionTime", "WaterConsumption","Notes", "FilePath"]
         # Display the project data editor with column configurations
         st_project_data = st.data_editor(
             data = project_data,
@@ -71,6 +78,9 @@ def current_project_overview(existing_projects, selected_project, path, types):
             column_config = {
                 "Checkbox":         st.column_config.CheckboxColumn(
                     "Analyse?", help = "Select rows for analysis", default = False,
+                ),
+                "Color":            st.column_config.Column(
+                    width = "small", help = "Auto-assigned per MouseName", disabled = True
                 ),
                 "SessionDate":      st.column_config.Column(
                     width = "small", help = "Date of the session", disabled = True
