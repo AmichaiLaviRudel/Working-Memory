@@ -2,6 +2,7 @@ import pandas as pd
 import ast
 from pathlib import Path
 import numpy as np
+import re
 
 # Source file path
 path1 = r"Z:\Shared\Noam\results\pilot_amichai_08_09_2025\pilot_amichai_08_09_2025.txt"
@@ -35,30 +36,37 @@ def _parse_licks_list(x):
 
 if "licks_time" in df.columns:
     df["licks_time_list"] = df["licks_time"].apply(_parse_licks_list)
-    # Convert to absolute datetimes on the same date as the trial
+    # Vectorized lick processing via explode/groupby
     if "start_dt" in df.columns:
-        df["licks_dt_list"] = [
-            [pd.to_datetime(f"{d} {t}") for t in lst]
-            for d, lst in zip(df["date"], df["licks_time_list"]) 
-        ]
-        # First lick RT in milliseconds
-        def _first_rt_ms(row):
-            lst = row["licks_dt_list"]
-            if not lst:
-                return pd.NA
-            return (lst[0] - row["start_dt"]).total_seconds() * 1000.0
-        df["rt_first_ms"] = df.apply(_first_rt_ms, axis=1)
+        trial_id = df.index
+        licks_exploded = (
+            df[["date", "start_dt", "licks_time_list"]]
+            .assign(trial_id=trial_id)
+            .explode("licks_time_list")
+        )
+        # Drop rows with no licks
+        licks_exploded = licks_exploded.dropna(subset=["licks_time_list"]) if not licks_exploded.empty else licks_exploded
+        if not licks_exploded.empty:
+            licks_exploded["lick_dt"] = pd.to_datetime(licks_exploded["date"] + " " + licks_exploded["licks_time_list"].astype(str), errors="coerce")
+            # Compute relative seconds and keep only < 4s
+            rel_sec = (licks_exploded["lick_dt"] - licks_exploded["start_dt"]).dt.total_seconds()
+            licks_exploded["rel_sec"] = rel_sec
+            licks_exploded = licks_exploded[np.isfinite(licks_exploded["rel_sec"])]
+            licks_exploded = licks_exploded[licks_exploded["rel_sec"] < 4]
 
-        # Licks relative to start in seconds as None or numpy array([...]), only values < 4
-        def _licks_rel(row):
-            time_limit = 4
-            lst = row["licks_dt_list"]
-            if not lst:
-                return None
-            vals = [(t - row["start_dt"]).total_seconds() for t in lst]
-            filtered = [v for v in vals if v < time_limit]
-            return np.array(filtered, dtype=float) if filtered else None
-        df["licks_rel"] = df.apply(_licks_rel, axis=1)
+            # First lick RT in ms per trial
+            first_rt = (
+                licks_exploded.groupby("trial_id")["rel_sec"].min().mul(1000.0)
+            )
+            # All licks list per trial
+            licks_list = (
+                licks_exploded.groupby("trial_id")["rel_sec"].apply(list)
+            )
+            df["rt_first_ms"] = first_rt.reindex(trial_id).astype(float)
+            df["licks_rel"] = licks_list.reindex(trial_id)
+        else:
+            df["rt_first_ms"] = pd.NA
+            df["licks_rel"] = None
 
 # Prepare cleaned stimulus names: drop .npz and replace '-' with '.'
 if "stim_name" in df.columns:
@@ -71,45 +79,16 @@ if "stim_name" in df.columns:
 # Exclude specific mouse_id before processing
 df = df[df["mouse_id"] != "000799EB9B"]
 
-# Group by mouse ID, date, and level; include trial lists per group
-# Sort within groups by start_time to preserve chronological order
-sort_cols = ["mouse_id", "date", "level", "start_time"]
-use_cols = [c for c in sort_cols if c in df.columns]
-df_sorted = df.sort_values(use_cols)
-
-grouped = (
-    df_sorted
-      .groupby(["mouse_id", "date", "level"], as_index=False)
-      .agg(
-          n_trials=("stim_name", "size"),
-          go_no_go=("go_no_go", list),
-          stim_name=("stim_name_clean", list) if "stim_name_clean" in df_sorted.columns else ("stim_name", list),
-          score=("score", list) if "score" in df_sorted.columns else ("go_no_go", list),
-          rt_first_ms=("rt_first_ms", list) if "rt_first_ms" in df_sorted.columns else ("stim_name", lambda s: [pd.NA] * len(s)),
-          licks=("licks_rel", list) if "licks_rel" in df_sorted.columns else ("stim_name", lambda s: [None] * len(s)),
-          start_time=("start_time", list) if "start_time" in df_sorted.columns else ("stim_name", lambda s: [pd.NA] * len(s)),
-      )
-      .sort_values(["date", "mouse_id", "level"]) 
-)
-
-# Save grouped to parent of the source path
-base_dir = Path(path2).resolve().parent
-
-# Normalize/capitalize trial types and outcomes
-def _cap_trial_types(lst):
-    out = []
-    for v in lst:
-        s = str(v).replace("_", " ").replace("-", " ").strip().lower()
-        if s in {"no go", "nogo", "no  go"}:
-            out.append("NoGo")
-        elif s == "go":
-            out.append("Go")
-        else:
-            out.append(s.title())
-    return out
-
-def _map_outcomes(lst):
-    mapping = {
+# Vectorized normalization for trial types and outcomes BEFORE grouping
+if "go_no_go" in df.columns:
+    _tt = (
+        df["go_no_go"].astype(str).str.replace("_", " ").str.replace("-", " ").str.strip().str.lower()
+    )
+    df["go_no_go_norm"] = np.where(_tt.isin(["no go", "nogo", "no  go"]), "NoGo",
+                             np.where(_tt.eq("go"), "Go", _tt.str.title()))
+if "score" in df.columns:
+    _sc = df["score"].astype(str).str.replace("_", " ").str.strip().str.lower()
+    _map = {
         "hit": "Hit",
         "miss": "Miss",
         "fa": "False Alarm",
@@ -119,36 +98,61 @@ def _map_outcomes(lst):
         "correct rejection": "CR",
         "correct_rejection": "CR",
     }
-    out = []
-    for v in lst:
-        s = str(v).replace("_", " ").strip().lower()
-        out.append(mapping.get(s, s.title()))
-    return out
+    df["score_norm"] = _sc.map(_map).fillna(_sc.str.title())
 
-if "go_no_go" in grouped.columns:
-    grouped["go_no_go"] = grouped["go_no_go"].apply(_cap_trial_types)
-if "score" in grouped.columns:
-    grouped["score"] = grouped["score"].apply(_map_outcomes)
+# Group by mouse ID, date, and level; include trial lists per group
+# Sort within groups by start_time to preserve chronological order
+sort_cols = ["mouse_id", "date", "level", "start_time"]
+use_cols = [c for c in sort_cols if c in df.columns]
+df_sorted = df.sort_values(use_cols)
 
-# Convert grouped stimuli names to float values scaled by 0.1 (e.g., '7.07' -> 0.707)
-def _scale_stimuli_list(lst):
-    out = []
-    for v in lst:
-        try:
-            out.append(round(float(str(v)) * 0.1,3))
-        except Exception:
-            out.append(np.nan)
-    return out
+# Prepare numeric stimulus value column once
+if "stim_name_clean" in df_sorted.columns:
+    df_sorted["stim_value"] = pd.to_numeric(df_sorted["stim_name_clean"], errors="coerce").astype(float) * 0.1
+elif "stim_name" in df_sorted.columns:
+    df_sorted["stim_value"] = pd.to_numeric(df_sorted["stim_name"], errors="coerce").astype(float) * 0.1
 
-if "stim_name" in grouped.columns:
-    grouped["stim_name"] = grouped["stim_name"].apply(_scale_stimuli_list)
-tones_per_class = grouped.apply(
-    lambda r: len({s for t, s in zip(r["go_no_go"], r["stim_name"]) if str(t).lower() == "go"}),
-    axis=1,
+grouped = (
+    df_sorted
+      .groupby(["mouse_id", "date", "level"], as_index=False)
+      .agg(
+          n_trials=("stim_value", "size"),
+          go_no_go=("go_no_go_norm", list) if "go_no_go_norm" in df_sorted.columns else ("go_no_go", list),
+          stim_name=("stim_value", list),
+          score=("score_norm", list) if "score_norm" in df_sorted.columns else ("score", list) if "score" in df_sorted.columns else ("go_no_go", list),
+          rt_first_ms=("rt_first_ms", list) if "rt_first_ms" in df_sorted.columns else ("stim_value", lambda s: [pd.NA] * len(s)),
+          licks=("licks_rel", list) if "licks_rel" in df_sorted.columns else ("stim_value", lambda s: [None] * len(s)),
+          start_time=("start_time", list) if "start_time" in df_sorted.columns else ("stim_value", lambda s: [pd.NA] * len(s)),
+      )
+      .sort_values(["date", "mouse_id", "level"]) 
 )
 
+# Save grouped to parent of the source path
+base_dir = Path(path2).resolve().parent
+
+# Per-row normalization removed: done pre-grouping
+
+# Extract tones_per_class and N_Boundaries directly from level formatted as xT_yB
+def _parse_level_tones(level):
+    try:
+        m = re.search(r"(\d+)\s*[tT]", str(level))
+        return int(m.group(1)) if m else 1
+    except Exception:
+        return 1
+
+def _parse_level_boundaries(level):
+    try:
+        m = re.search(r"(\d+)\s*[bB]", str(level))
+        return int(m.group(1)) if m else 1
+    except Exception:
+        return 1
+tones_per_class = grouped["level"].apply(_parse_level_tones)
+
+n_boundaries = grouped["level"].apply(_parse_level_boundaries)
+
+
 grouped_out = (
-    grouped.assign(Tones_per_class=tones_per_class, N_Boundaries=1)
+    grouped.assign(Tones_per_class=tones_per_class, N_Boundaries=n_boundaries)
       .rename(columns={
           "mouse_id": "MouseName",
           "date": "SessionDate",

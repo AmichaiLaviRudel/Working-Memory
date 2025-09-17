@@ -291,7 +291,7 @@ def process_and_plot_lick_data(project_data, index, plot=True):
     # Convert licks from string to array safely
     if isinstance(licks_str, str):
         licks_str = re.sub(r'array\(', 'np.array(', licks_str)
-        licks = eval(licks_str, {"np": np, "None": None})
+        licks = eval(licks_str, {"np": np, "None": None, "nan": None})
     else:
         licks = licks_str
 
@@ -299,19 +299,27 @@ def process_and_plot_lick_data(project_data, index, plot=True):
 
     # Convert licks to NumPy array
     licks = np.array(licks, dtype=object)
+    # Ensure all elements in licks are numpy ndarrays
+    licks = np.array([
+        np.array(l, dtype=float) if not isinstance(l, np.ndarray) and l is not None and l != [] else
+        (l if isinstance(l, np.ndarray) else np.array([]))
+        for l in licks
+    ], dtype=object)
 
+    
     # Identify 'Go' and 'No-Go' trials
     no_go_trial = np.where(trials == 'NoGo')[0]
     go_trial = np.where(trials == 'Go')[0]
+
 
     # Extract licks
     go_licks = licks[go_trial]
     no_go_licks = licks[no_go_trial]
 
+
     # Filter valid Go and No-Go licks
     filtered_go_licks = filter_valid_arrays(go_licks)
     filtered_no_go_licks = filter_valid_arrays(no_go_licks)
-
     # Concatenate valid licks
     concatenated_go = np.concatenate(filtered_go_licks) if filtered_go_licks else np.array([])
     concatenated_no_go = np.concatenate(filtered_no_go_licks) if filtered_no_go_licks else np.array([])
@@ -1185,3 +1193,95 @@ def daily_multi_animal_lick_rate(project_data, t=15):
     )
     st.plotly_chart(fig, use_container_width=True)
 
+def cumulative_number_of_trials_vs_daily_dprime(project_data, t=15):
+    """
+    Plot cumulative number of trials vs daily d' progression for all mice.
+    
+    Args:
+        project_data (pd.DataFrame): DataFrame containing experiment data
+        t (int): Bin size for d' calculation
+    """
+    from Analysis.GNG_bpod_analysis.metric import d_prime_multiple_sessions
+    # Prepare data: for each mouse, sum up number of trials over days, and plot daily d' vs cumulative trials
+    mice = sorted(project_data["MouseName"].unique())
+    fig = go.Figure()
+    for mouse in mice:
+        mouse_data = project_data[project_data["MouseName"] == mouse].sort_values("SessionDate")
+        session_dates = mouse_data["SessionDate"].values
+        n_trials_per_day = []
+        d_prime_per_day = []
+        colors = []
+        for i in range(len(mouse_data)):
+            color = mouse_data.iloc[i]["Color"] if "Color" in mouse_data.columns else "gray"
+            colors.append(color)
+            stimuli, outcomes = preprocess_stimuli_outcomes(mouse_data, i)
+            n_trials_per_day.append(len(stimuli))
+        # Cumulative number of trials
+        cumulative_trials = np.cumsum(n_trials_per_day)
+        data = d_prime_multiple_sessions(project_data, t=t, animal_name = mouse, plot = False)
+        d_prime_per_day = data["d_prime"]
+        n_t = data["tones_per_class"]
+        n_b = data["Boundaries"]
+
+        # Determine marker symbols: 'circle' if n_b == 1, 'square' if n_b == 2
+        marker_symbols = ['circle' if nb == 1 else 'square' for nb in n_b]
+        # Marker line width is n_t value for each point
+        marker_line_widths = n_t
+        fig.add_trace(go.Scatter(
+            x=cumulative_trials,
+            y=d_prime_per_day,
+            mode='lines+markers',
+            marker=dict(
+                color=colors[0],
+                size=marker_line_widths*5,
+                symbol=marker_symbols,
+                line=dict(
+                    width=2,
+                    color=colors[0]
+                )
+            ),
+            name=str(mouse),
+            text=[f"{n_t[i]}T_ {n_b[i]}B" for i, date in enumerate(session_dates)],
+            textposition="top center",
+            showlegend=True
+        ))
+
+        # Add legend entries for marker shape (number of boundaries)
+        if mouse == mice[0]:
+            # Only add these once to avoid duplicate legend entries
+            fig.add_trace(go.Scatter(
+                x=[None], y=[None],
+                mode='markers',
+                marker=dict(symbol='circle', color='gray', size=8),
+                name="1 Boundary",
+                showlegend=True,
+                hoverinfo='skip'
+            ))
+            fig.add_trace(go.Scatter(
+                x=[None], y=[None],
+                mode='markers',
+                marker=dict(symbol='square', color='gray', size=8),
+                name="2 Boundaries",
+                showlegend=True,
+                hoverinfo='skip'
+            ))
+            # Add legend entries for marker size (number of tones per class)
+            # We'll show a few representative sizes
+            for sizes in sorted(set(n_t)):
+                fig.add_trace(go.Scatter(
+                    x=[None], y=[None],
+                    mode='markers',
+                    marker=dict(symbol='circle', color='white', size=sizes*5, line=dict(width=3, color='gray')),
+                    name=f"{sizes} Tones",
+                    showlegend=True,
+                    hoverinfo='skip'
+                ))
+        fig.update_layout(
+            xaxis_title="Cumulative Number of Trials",
+            yaxis_title="Daily d'",
+            title="Daily d' vs Cumulative Number of Trials per Mouse",
+            plot_bgcolor="white",
+            legend_title_text="Legend"
+        )
+
+    st.plotly_chart(fig, use_container_width=True)

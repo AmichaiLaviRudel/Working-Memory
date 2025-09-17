@@ -85,11 +85,6 @@ def gng_bpod_analysis(project_data, index):
         except Exception as e:
             st.warning(f"something went wrong with bias analysis :|\n\n{e}")
             st.text(traceback.format_exc())
-            
-        # Add cache management
-        if st.button("🗑️ Clear GNG Analysis Cache"):
-            st.cache_data.clear()
-            st.toast("GNG analysis cache cleared - next computation will be fresh")
 
 
 
@@ -100,6 +95,11 @@ def gng_bpod_analysis_multipule(project_data, index):
     with st.expander("ℹ️ Performance Info"):
         st.info("🚀 Multi-session analysis uses caching for faster performance.")
         st.caption(f"📊 Dataset: {len(project_data)} sessions across {len(project_data['MouseName'].unique())} animals")
+         # Add cache management
+        if st.button("🗑️ Clear GNG Analysis Cache"):
+            st.cache_data.clear()
+            st.toast("GNG analysis cache cleared - next computation will be fresh")
+
     
     bin = st.slider("Choose bin size", 5, 50, 30, 5, help="⚡ Cached computation")
     animal_name = st.selectbox("Choose an Animal",
@@ -131,93 +131,7 @@ def gng_bpod_analysis_multipule(project_data, index):
             st.text(traceback.format_exc())
         try:
             st.subheader("Cumulative Number of Trials vs Daily d' Progression")
-
-            # Prepare data: for each mouse, sum up number of trials over days, and plot daily d' vs cumulative trials
-            mice = sorted(project_data["MouseName"].unique())
-            fig = go.Figure()
-
-            for mouse in mice:
-                mouse_data = project_data[project_data["MouseName"] == mouse].sort_values("SessionDate")
-                session_dates = mouse_data["SessionDate"].values
-                n_trials_per_day = []
-                d_prime_per_day = []
-                colors = []
-                for i in range(len(mouse_data)):
-                    color = mouse_data.iloc[i]["Color"] if "Color" in mouse_data.columns else "gray"
-                    colors.append(color)
-                    stimuli, outcomes = preprocess_stimuli_outcomes(mouse_data, i)
-                    n_trials_per_day.append(len(stimuli))
-                # Cumulative number of trials
-                cumulative_trials = np.cumsum(n_trials_per_day)
-                data = d_prime_multiple_sessions(project_data, t=bin, animal_name = mouse, plot = False)
-                d_prime_per_day = data["d_prime"]
-                n_t = data["tones_per_class"]
-                n_b = data["Boundaries"]
-
-                # Determine marker symbols: 'circle' if n_b == 1, 'square' if n_b == 2
-                marker_symbols = ['circle' if nb == 1 else 'square' for nb in n_b]
-                # Marker line width is n_t value for each point
-                marker_line_widths = n_t
-
-                fig.add_trace(go.Scatter(
-                    x=cumulative_trials,
-                    y=d_prime_per_day,
-                    mode='lines+markers',
-                    marker=dict(
-                        color=colors[0],
-                        size=marker_line_widths*5,
-                        symbol=marker_symbols,
-                        line=dict(
-                            width=2,
-                            color=colors[0]
-                        )
-                    ),
-                    name=str(mouse),
-                    text=[f"{n_t[i]}T_ {n_b[i]}B" for i, date in enumerate(session_dates)],
-                    textposition="top center",
-                    showlegend=True
-                ))
-
-                # Add legend entries for marker shape (number of boundaries)
-                if mouse == mice[0]:
-                    # Only add these once to avoid duplicate legend entries
-                    fig.add_trace(go.Scatter(
-                        x=[None], y=[None],
-                        mode='markers',
-                        marker=dict(symbol='circle', color='gray', size=8),
-                        name="1 Boundary",
-                        showlegend=True,
-                        hoverinfo='skip'
-                    ))
-                    fig.add_trace(go.Scatter(
-                        x=[None], y=[None],
-                        mode='markers',
-                        marker=dict(symbol='square', color='gray', size=8),
-                        name="2 Boundaries",
-                        showlegend=True,
-                        hoverinfo='skip'
-                    ))
-                    # Add legend entries for marker size (number of tones per class)
-                    # We'll show a few representative sizes
-                    for sizes in sorted(set(n_t)):
-                        fig.add_trace(go.Scatter(
-                            x=[None], y=[None],
-                            mode='markers',
-                            marker=dict(symbol='circle', color='white', size=sizes*5, line=dict(width=3, color='gray')),
-                            name=f"{sizes} Tones",
-                            showlegend=True,
-                            hoverinfo='skip'
-                        ))
-
-                fig.update_layout(
-                    xaxis_title="Cumulative Number of Trials",
-                    yaxis_title="Daily d'",
-                    title="Daily d' vs Cumulative Number of Trials per Mouse",
-                    plot_bgcolor="white",
-                    legend_title_text="Legend"
-                )
-
-            st.plotly_chart(fig, use_container_width=True)
+            cumulative_number_of_trials_vs_daily_dprime(project_data, t=bin)
         except Exception as e:
             st.warning(f"Something went wrong with cumulative number of trials vs daily d' progression :|\n\n{e}")
             st.text(traceback.format_exc())
