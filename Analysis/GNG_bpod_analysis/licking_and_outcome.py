@@ -1,7 +1,7 @@
 from Analysis.GNG_bpod_analysis.psychometric_curves import *
 from Analysis.GNG_bpod_analysis.metric import *
-from Analysis.GNG_bpod_analysis.GNG_bpod_general import *
-from Analysis.GNG_bpod_analysis.colors import COLOR_FA, OUTCOME_COLOR_MAP, COLOR_ACCENT, COLOR_ORANGE, COLOR_GO, COLOR_NOGO, COLOR_BLUE, COLOR_D_PRIME, COLOR_HIT, COLOR_CR
+from Analysis.GNG_bpod_analysis.GNG_bpod_general import filter_valid_arrays
+from Analysis.GNG_bpod_analysis.colors import COLOR_FA, OUTCOME_COLOR_MAP, COLOR_ACCENT, COLOR_GRAY, COLOR_GO, COLOR_NOGO, COLOR_BLUE, COLOR_D_PRIME, COLOR_HIT, COLOR_CR
 
 import re
 import ast
@@ -11,121 +11,83 @@ import plotly.graph_objects as go
 import altair as alt
 from plotly.subplots import make_subplots
 import streamlit as st
-import hashlib
 
-@st.cache_data(show_spinner="Computing responses...")
-def responses_cached(outcomes_str, data_hash):
-    """Cached version of responses computation."""
-    import numpy as np
-    import ast
-
-    try:
-        # If outcomes is a string representing a list, use ast.literal_eval to convert it
-        outcomes_list = ast.literal_eval(outcomes_str)
-        
-        # Check if we have valid data
-        if not outcomes_list or len(outcomes_list) == 0:
-            # Return empty DataFrame with proper structure
-            return pd.DataFrame({"Hit": [], "CR": [], "FA": [], "Miss": []})
-
-        # Define all unique outcomes in the list
-        unique_outcomes = {'Hit', 'CR', 'False Alarm', 'Miss'}
-
-        # Dictionary to store cumulative counts for each outcome
-        cumulative_counts = {}
-
-        # Calculate cumulative counts for each unique outcome
-        for outcome_type in unique_outcomes:
-            # Create a binary array for the current outcome type
-            binary_outcome = np.array([1 if outcome == outcome_type else 0 for outcome in outcomes_list])
-
-            # Calculate the cumulative sum for this outcome type
-            cumulative_sum = np.cumsum(binary_outcome)
-
-            # Store the cumulative sum in the dictionary
-            cumulative_counts[outcome_type] = cumulative_sum
-
-        # Create a DataFrame for responses
-        responses = pd.DataFrame({
-            "Hit":  cumulative_counts["Hit"],
-            "CR":   cumulative_counts["CR"],
-            "FA":   cumulative_counts["False Alarm"],  # Corrected the label to match 'False Alarm'
-            "Miss": cumulative_counts["Miss"]
-        })
-
-        return responses
-        
-    except Exception as e:
-        # Return empty DataFrame if computation fails
-        return pd.DataFrame({"Hit": [], "CR": [], "FA": [], "Miss": []})
 
 def responses(selected_data, index=0):
-    """Compute responses with caching."""
+    """Compute responses"""
     # Extract the outcomes list (make sure it's in list format, not a string)
     outcomes = selected_data["Outcomes"].values[index]
+
+    # If outcomes is a string representing a list, use ast.literal_eval to convert it
+    outcomes_list = ast.literal_eval(outcomes)
     
-    # Create hash for caching
-    data_hash = hashlib.md5(f"{outcomes}_{index}".encode()).hexdigest()
+    # Check if we have valid data
+    if not outcomes_list or len(outcomes_list) == 0:
+        # Return empty DataFrame with proper structure
+        return pd.DataFrame({"Hit": [], "CR": [], "FA": [], "Miss": []})
+
+    # Define all unique outcomes in the list
+    unique_outcomes = {'Hit', 'CR', 'False Alarm', 'Miss'}
+    # Dictionary to store cumulative counts for each outcome
+    cumulative_counts = {}
+    # Calculate cumulative counts for each unique outcome
+    for outcome_type in unique_outcomes:
+        # Create a binary array for the current outcome type
+        binary_outcome = np.array([1 if outcome == outcome_type else 0 for outcome in outcomes_list])
+
+        # Calculate the cumulative sum for this outcome type
+        cumulative_sum = np.cumsum(binary_outcome)
+
+        # Store the cumulative sum in the dictionary
+        cumulative_counts[outcome_type] = cumulative_sum
+
+    # Create a DataFrame for responses
+    responses = pd.DataFrame({
+        "Hit":  cumulative_counts["Hit"],
+        "CR":   cumulative_counts["CR"],
+        "FA":   cumulative_counts["False Alarm"],  # Corrected the label to match 'False Alarm'
+        "Miss": cumulative_counts["Miss"]
+    })
+    return responses
     
-    return responses_cached(outcomes, data_hash)
+# Function to calculate the licking rate
+def licking_rate(selected_data, index=0, t=10, plot=True):
+    # Extract the outcomes
+    
+    responses_data = responses(selected_data, index)
 
-@st.cache_data(show_spinner="Computing licking rates...")
-def licking_rate_cached(outcomes_str, data_hash, t):
-    """Cached version of licking rate computation."""
-    try:
-        # Get responses data (will use cached version)
-        responses_data = responses_cached(outcomes_str, data_hash)
-        
-        # Check if we have valid data
-        if responses_data.empty:
-            # Return empty DataFrames with proper structure
-            rates = pd.DataFrame({"Hit": [], "Miss": [], "CR": [], "FA": []})
-            frac = pd.DataFrame({"Go": [], "NoGo": []})
-            return rates, frac
-
-        # Fix column names for consistency
-        hit_bin = responses_data["Hit"].diff().rolling(t).sum()
-        miss_bin = responses_data["Miss"].diff().rolling(t).sum()
-        cr_bin = responses_data["CR"].diff().rolling(t).sum()
-        fa_bin = responses_data["FA"].diff().rolling(t).sum()
-
-        rates = pd.DataFrame({
-            "Hit":  hit_bin,
-            "Miss": miss_bin,
-            "CR":   cr_bin,
-            "FA":   fa_bin
-        }).dropna()
-
-        # Check if we still have data after dropna
-        if rates.empty:
-            frac = pd.DataFrame({"Go": [], "NoGo": []})
-            return rates, frac
-
-        # Avoid division by zero
-        hit_rate = 100 * hit_bin / (hit_bin + miss_bin).replace(0, np.nan)
-        fa_rate = 100 * fa_bin / (cr_bin + fa_bin).replace(0, np.nan)
-
-        frac = pd.DataFrame({"Go": hit_rate, "NoGo": fa_rate})
-
-        return rates, frac
-        
-    except Exception as e:
-        # Return empty DataFrames if computation fails
+    # Check if we have valid data
+    if responses_data.empty:
+        # Return empty DataFrames with proper structure
         rates = pd.DataFrame({"Hit": [], "Miss": [], "CR": [], "FA": []})
         frac = pd.DataFrame({"Go": [], "NoGo": []})
         return rates, frac
 
-# Function to calculate the licking rate
-def licking_rate(selected_data, index=0, t=10, plot=True):
-    # Extract the outcomes for caching
-    outcomes = selected_data["Outcomes"].values[index]
-    
-    # Create hash for caching
-    data_hash = hashlib.md5(f"{outcomes}_{index}_{t}".encode()).hexdigest()
-    
-    # Get cached results
-    rates, frac = licking_rate_cached(outcomes, data_hash, t)
+    # Fix column names for consistency
+    hit_bin = responses_data["Hit"].diff().rolling(t).sum()
+    miss_bin = responses_data["Miss"].diff().rolling(t).sum()
+    cr_bin = responses_data["CR"].diff().rolling(t).sum()
+    fa_bin = responses_data["FA"].diff().rolling(t).sum()
 
+
+    rates = pd.DataFrame({
+        "Hit":  hit_bin,
+        "Miss": miss_bin,
+        "CR":   cr_bin,
+        "FA":   fa_bin
+    }).dropna()
+    # Check if we still have data after dropna
+    if rates.empty:
+        frac = pd.DataFrame({"Go": [], "NoGo": []})
+        return rates, frac
+
+    # Avoid division by zero
+    hit_rate = 100 * hit_bin / (hit_bin + miss_bin).replace(0, np.nan)
+    fa_rate = 100 * fa_bin / (cr_bin + fa_bin).replace(0, np.nan)
+
+    frac = pd.DataFrame({"Go": hit_rate, "NoGo": fa_rate})
+
+   
     c_go = "#006837"  # Dark Green
     c_nogo = "#A50026"  # Dark Red
 
@@ -260,6 +222,12 @@ def process_and_plot_lick_data(project_data, index, plot=True):
     trials = ast.literal_eval(trials_str) if isinstance(trials_str, str) else trials_str
     trials = np.array(trials)
 
+    stimuli_str = project_data.iloc[index]["Stimuli"]
+    if isinstance(stimuli_str, str):
+        stimuli = np.array([float(x) for x in stimuli_str.strip("[]").split()])
+    else:
+        stimuli = np.array(stimuli_str)
+
     try:
         states_str = (project_data.iloc[index]["States"])
         # Replace 'array(' with 'np.array(' so Python can evaluate it correctly
@@ -315,7 +283,8 @@ def process_and_plot_lick_data(project_data, index, plot=True):
     # Extract licks
     go_licks = licks[go_trial]
     no_go_licks = licks[no_go_trial]
-
+    go_stimuli = stimuli[go_trial]
+    no_go_stimuli = stimuli[no_go_trial]
 
     # Filter valid Go and No-Go licks
     filtered_go_licks = filter_valid_arrays(go_licks)
@@ -325,8 +294,17 @@ def process_and_plot_lick_data(project_data, index, plot=True):
     concatenated_no_go = np.concatenate(filtered_no_go_licks) if filtered_no_go_licks else np.array([])
 
     # Generate new trial indices for Go and No-Go
-    df_go_raster = prepare_raster_data(filtered_go_licks, "Go", start_index=1)
-    df_nogo_raster = prepare_raster_data(filtered_no_go_licks, "No-Go", start_index=len(filtered_go_licks) + 1)
+    df_go_raster = prepare_raster_data(filtered_go_licks, "Go", go_stimuli, start_index=1)
+    df_nogo_raster = prepare_raster_data(filtered_no_go_licks, "No-Go", no_go_stimuli, start_index=len(filtered_go_licks) + 1)
+    # Parse stimulus data for stimulus IDs
+    try:
+        stimuli_str = project_data.iloc[index]["Stimuli"]
+        if isinstance(stimuli_str, str):
+            stimuli = np.array([float(x) for x in stimuli_str.strip("[]").split()])
+        else:
+            stimuli = np.array(stimuli_str)
+    except Exception:
+        stimuli = np.array([])
 
     # Calculate first lick times for each trial
     go_first_lick_times = []
@@ -336,12 +314,16 @@ def process_and_plot_lick_data(project_data, index, plot=True):
     if not df_go_raster.empty:
         for trial_idx in df_go_raster["Trial Index"].unique():
             trial_licks = df_go_raster[df_go_raster["Trial Index"] == trial_idx]["Time"].values
+            
             if len(trial_licks) > 0:
                 first_lick_time = trial_licks[0]  # First lick in this trial
+                # Get stimulus ID for this trial
+                stim_id = df_go_raster[df_go_raster["Trial Index"] == trial_idx]["Trial Stim"].values[0]
                 go_first_lick_times.append({
                     "Trial Index": trial_idx,
                     "Trial Type": "Go",
-                    "First Lick Time (s)": first_lick_time
+                    "First Lick Time (s)": first_lick_time,
+                    "Stimulus ID": stim_id
                 })
     
     # Process NoGo trials
@@ -350,10 +332,13 @@ def process_and_plot_lick_data(project_data, index, plot=True):
             trial_licks = df_nogo_raster[df_nogo_raster["Trial Index"] == trial_idx]["Time"].values
             if len(trial_licks) > 0:
                 first_lick_time = trial_licks[0]  # First lick in this trial
+                # Get stimulus ID for this trial
+                stim_id = df_nogo_raster[df_nogo_raster["Trial Index"] == trial_idx]["Trial Stim"].values[0]
                 no_go_first_lick_times.append({
                     "Trial Index": trial_idx,
                     "Trial Type": "NoGo",
-                    "First Lick Time (s)": first_lick_time
+                    "First Lick Time (s)": first_lick_time,
+                    "Stimulus ID": stim_id
                 })
     
     # Create DataFrames for first lick times
@@ -363,7 +348,6 @@ def process_and_plot_lick_data(project_data, index, plot=True):
     # Combine both trial types
     df_all_first_licks = pd.concat([df_go_first_licks, df_no_go_first_licks], ignore_index=True)
     df_all_first_licks = df_all_first_licks.sort_values("Trial Index")
-
 
     # Create the Plotly subplot figure
     fig = make_subplots(
@@ -398,9 +382,9 @@ def process_and_plot_lick_data(project_data, index, plot=True):
                 row=1, col=1
             )
         # Add vertical reference line at Time = 0
-        fig.add_vline(x = 0.0, line = dict(color = "gray", width=2), opacity=0.4 , row=1, col=1)
-        fig.add_vline(x = reinforsment_delay_end, line = dict(color = "gray", width = 2), opacity=0.2, row = 1, col = 1)
-        fig.add_vline(x = response_window_end, line = dict(color = "gray", width = 2), opacity=0.4, row = 1, col = 1)
+        fig.add_vline(x = 0.0, line = dict(color = COLOR_GRAY, width=2), opacity=0.4 , row=1, col=1)
+        fig.add_vline(x = reinforsment_delay_end, line = dict(color = COLOR_GRAY, width = 2), opacity=0.2, row = 1, col = 1)
+        fig.add_vline(x = response_window_end, line = dict(color = COLOR_GRAY, width = 2), opacity=0.4, row = 1, col = 1)
 
 
     else:
@@ -412,30 +396,42 @@ def process_and_plot_lick_data(project_data, index, plot=True):
     df_hist = pd.concat([df_go_hist, df_nogo_hist])
 
     if not df_hist.empty:
+        # Compute histogram bins and plot as lines
+        # Define bin edges for consistent comparison
+        all_times = np.concatenate([concatenated_go, concatenated_no_go])
+        bin_edges = np.linspace(min(all_times), max(all_times), 30)
+        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+        
+        # Compute histogram for Go trials
+        go_density, _ = np.histogram(concatenated_go, bins=bin_edges, density=True)
         fig.add_trace(
-            go.Histogram(
-                x=df_go_hist["Time"],
+            go.Scatter(
+                x=bin_centers,
+                y=go_density,
+                mode='lines',
                 name="Go",
-                marker_color=c_go,
-                opacity=0.7,
-                showlegend = False
+                line=dict(color=c_go, width=2),
+                showlegend=False
             ),
             row=2, col=1
         )
+        
+        # Compute histogram for No-Go trials (density)
+        nogo_density, _ = np.histogram(concatenated_no_go, bins=bin_edges, density=True)
         fig.add_trace(
-            go.Histogram(
-                x=df_nogo_hist["Time"],
+            go.Scatter(
+                x=bin_centers,
+                y=nogo_density,
+                mode='lines',
                 name="No-Go",
-                marker_color=c_nogo,
-                opacity=0.7,
-                showlegend = False
+                line=dict(color=c_nogo, width=2),
+                showlegend=False
             ),
             row=2, col=1
         )
         fig.add_vline(x = 0.0, line = dict(color = "gray", width=2), opacity=0.4 , row=2, col=1)
         fig.add_vline(x = reinforsment_delay_end, line = dict(color = "gray", width = 2), opacity=0.2, row = 2, col = 1)
         fig.add_vline(x = response_window_end, line = dict(color = "gray", width = 2), opacity=0.4, row = 2, col = 1)
-
     else:
         st.warning("No valid lick data to plot.")
 
@@ -447,7 +443,7 @@ def process_and_plot_lick_data(project_data, index, plot=True):
         xaxis_title="",
         yaxis_title="Trial Index",
         xaxis2_title="Time from Tone (s)",
-        yaxis2_title="Lick Count",
+        yaxis2_title="Density",
         plot_bgcolor="white",
         title_text=f"Hits: {len(filtered_go_licks)}, FAs: {len(filtered_no_go_licks)} / {len(trials)}",
 
@@ -459,8 +455,108 @@ def process_and_plot_lick_data(project_data, index, plot=True):
 
     return df_go_first_licks, df_no_go_first_licks
 
+
+def plot_first_lick_by_stimulus(project_data, index, plot=True):
+    """Plot first lick times by stimulus ID."""
+    from Analysis.GNG_bpod_analysis.colors import COLOR_GO, COLOR_NOGO
+    # Get first lick data
+    df_go, df_nogo = process_and_plot_lick_data(project_data, index, plot=False)
+    ftl_df = pd.concat([df_go, df_nogo])
+    
+    # Filter out values larger than 2 seconds
+    ftl_df = ftl_df[ftl_df["First Lick Time (s)"] <= 4]
+    
+    stimuli_unique = ftl_df["Stimulus ID"].unique()
+    
+    # Create figure for distribution plots
+    fig = go.Figure()
+    
+    # Plot distribution for each stimulus
+    for i, stim in enumerate(stimuli_unique):
+        stim_data = ftl_df[ftl_df["Stimulus ID"] == stim]["First Lick Time (s)"]
+        
+        # Determine color based on stimulus type
+        if 1 <= stim <= 1.5:
+            color = COLOR_NOGO
+            name_prefix = "NoGo"
+        else:
+            color = COLOR_GO
+            name_prefix = "Go"
+        
+        # Add box plot for distribution
+        fig.add_trace(go.Box(
+            x=[stim] * len(stim_data),
+            y=stim_data,
+            name=f'{name_prefix} Stim {stim}',
+            fillcolor=None,
+            opacity=0.7,
+            line_color=color,
+            showlegend=True,
+            boxpoints='outliers',
+            jitter=0.1,
+            pointpos=0,
+        ))
+        # Add annotation under each tick with the count of stim_data
+        fig.add_annotation(
+            x=np.log10(stim),
+            y=ftl_df["First Lick Time (s)"].min() - 0.1,  # slightly below the min y
+            text=f"n={len(stim_data)}",
+            showarrow=False,
+            font=dict(size=12, color="black"),
+            xanchor="center",
+            yanchor="top"
+        )
+    
+
+    fig.add_vline(
+        x=1,
+        line_width=2,
+        line_dash="dash",
+        line_color=COLOR_GRAY,
+    )
+    fig.add_vline(
+        x=1.5,
+        line_width=2,
+        line_dash="dash",
+        line_color=COLOR_GRAY,
+    )
+    fig.add_hline(
+        y=0.2,
+        line_width=2,
+        line_dash="dash",
+        line_color=COLOR_GRAY,
+        annotation_text="Reinforcement Delay"
+    )
+    fig.add_hline(
+        y=2,
+        line_width=2,
+        line_dash="dash",
+        line_color=COLOR_GRAY,
+        annotation_text="Response Window"
+    )
+
+    fig.update_layout(
+        title="First Lick Time Distribution by Stimulus ID",
+        xaxis_title="Stimulus ID",
+        yaxis_title="First Lick Time (s)",
+        template="simple_white",
+        xaxis_type="log",
+        xaxis=dict(
+            tickmode='array',
+            tickvals=np.round(stimuli_unique, 2),
+            ticktext=[f"{x:.2f}" for x in stimuli_unique],
+        ),
+        showlegend=False,
+        xaxis_range=np.log10([0.65, 2.4]),
+    )
+
+    if plot:
+        st.plotly_chart(fig, use_container_width=True)
+
+
+        
 # Prepare raster plot data
-def prepare_raster_data(licks_list, trial_type, start_index=1):
+def prepare_raster_data(licks_list, trial_type, trial_stim, start_index=1):
 
     """Formats raster data for Plotly scatter plot."""
     data = []
@@ -468,14 +564,13 @@ def prepare_raster_data(licks_list, trial_type, start_index=1):
         if isinstance(licks_in_trial, np.ndarray) and licks_in_trial.size > 0:
             trial_idx = start_index + i  # Assigns sequential index
             for lick in licks_in_trial:
-                data.append({"Time": lick, "Trial Index": trial_idx, "Trial Type": trial_type})
+                data.append({"Time": lick, "Trial Index": trial_idx, "Trial Type": trial_type, "Trial Stim": trial_stim[i]})
     return pd.DataFrame(data)
 
 # Function to create learning curve with interactivity
 def learning_curve(selected_data, index=0):
     # Get the data from the responses function
     data = responses(selected_data, index)
-
     # Melt the data to long format for Altair
     data_melted = pd.melt(data.reset_index(), id_vars = "index", var_name = "Response Type", value_name = "Value")
 
@@ -791,34 +886,13 @@ def plot_first_lick_latency_multiple_sessions(selected_data, animal_name="None",
     
     return results_df
 
-
-import pandas as pd
-import plotly.graph_objects as go
-import streamlit as st
-import ast
-
-
-def daily_activity_single_animal(project_data, index):
+def _parse_start_times(start_times):
     """
-    Plot daily activity for a single animal showing trial counts over time of day (15-min bins).
+    Parse start times from various formats and return list of time objects.
     """
-    if project_data is None or project_data.empty:
-        st.info("No data loaded.")
-        return
-    
-    if "StartTime" not in project_data.columns:
-        st.info("No StartTime data available for activity analysis.")
-        return
-    
-    # Get the specific session data
-    session_data = project_data.iloc[index]
-    start_times = session_data["StartTime"]
-    
     if pd.isna(start_times) or not start_times:
-        st.info("No start time data available for this session.")
-        return
+        return []
     
-    # Parse start times from string format
     try:
         if isinstance(start_times, str):
             start_times_list = ast.literal_eval(start_times)
@@ -840,16 +914,14 @@ def daily_activity_single_animal(project_data, index):
                 except:
                     continue
         
-        if not times:
-            st.info("Could not parse start times.")
-            return
-            
-    except Exception as e:
-        st.error(f"Error parsing start times: {e}")
-        return
-    
-    # Create 15-minute bins throughout the day
-    bin_size_minutes = 30
+        return times
+    except Exception:
+        return []
+
+def _create_time_bins(bin_size_minutes=30):
+    """
+    Create time bins for the day and return bins and labels.
+    """
     bins = []
     bin_labels = []
     
@@ -861,7 +933,12 @@ def daily_activity_single_animal(project_data, index):
             bins.append((start_time.time(), end_time.time()))
             bin_labels.append(f"{hour:02d}:{minute:02d}")
     
-    # Count trials in each bin
+    return bins, bin_labels
+
+def _count_trials_in_bins(times, bins):
+    """
+    Count trials in each time bin.
+    """
     bin_counts = [0] * len(bins)
     
     for time_obj in times:
@@ -870,52 +947,93 @@ def daily_activity_single_animal(project_data, index):
                 bin_counts[i] += 1
                 break
     
-    # Create the plot
-    fig = go.Figure()
-    
-    # Convert bin labels to datetime for proper x-axis
-    x_values = [pd.Timestamp(f"2024-01-01 {label}:00") for label in bin_labels]
-    
-    fig.add_trace(go.Scatter(
-        x=x_values,
-        y=bin_counts,
-        mode='lines+markers',
-        name="Trial Count",
-        line=dict(color=COLOR_ACCENT, width=2),
-        marker=dict(size=4, color=COLOR_ACCENT),
-        opacity=0.3
-    ))
-    
-    # Add average line
-    avg_count = np.mean(bin_counts)
-    fig.add_hline(
-        y=avg_count,
-        line_dash="solid",
-        line_color=COLOR_ACCENT,
-        line_width=4,
-        opacity=0.8,
-        annotation_text=f"Average: {avg_count:.1f}",
-        annotation_position="top right"
-    )
-    
-    # Update layout
-    fig.update_layout(
-        title=f"Daily Activity Pattern - {session_data['MouseName']} ({session_data['SessionDate']})",
-        xaxis_title="Time of Day",
-        yaxis_title=f"Number of Trials ({bin_size_minutes}-min bins)",
-        xaxis=dict(
-            tickformat="%H:%M",
-            tickmode='array',
-            tickvals=x_values[::4],  # Show every 4th tick (hourly)
-            ticktext=[label for i, label in enumerate(bin_labels) if i % 4 == 0]
-        ),
-        height=500,
-        width=900,
-        showlegend=False
-    )
-    
-    st.plotly_chart(fig, use_container_width=True)
+    return bin_counts
 
+def _create_x_values(bin_labels):
+    """
+    Convert bin labels to datetime for proper x-axis.
+    """
+    return [pd.Timestamp(f"2024-01-01 {label}:00") for label in bin_labels]
+
+def daily_activity_single_animal(project_data, index, plot=False):
+    """
+    Plot daily activity for a single animal showing trial counts over time of day (15-min bins).
+    """
+    if project_data is None or project_data.empty:
+        st.info("No data loaded.")
+        return
+    
+    if "StartTime" not in project_data.columns:
+        st.info("No StartTime data available for activity analysis.")
+        return
+    
+    # Get the specific session data
+    session_data = project_data.iloc[index]
+    start_times = session_data["StartTime"]
+    
+    if pd.isna(start_times) or not start_times:
+        st.info("No start time data available for this session.")
+        return
+    
+    # Parse start times using helper function
+    times = _parse_start_times(start_times)
+    if not times:
+        st.info("Could not parse start times.")
+        return
+    
+    # Create time bins using helper function
+    bin_size_minutes = 30
+    bins, bin_labels = _create_time_bins(bin_size_minutes)
+    
+    # Count trials in each bin using helper function
+    bin_counts = _count_trials_in_bins(times, bins)
+    
+    if plot:
+        # Create the plot
+        fig = go.Figure()
+        
+        # Convert bin labels to datetime for proper x-axis
+        x_values = _create_x_values(bin_labels)
+        
+        fig.add_trace(go.Scatter(
+            x=x_values,
+            y=bin_counts,
+            mode='lines+markers',
+            name="Trial Count",
+            line=dict(color=COLOR_ACCENT, width=2),
+            marker=dict(size=4, color=COLOR_ACCENT),
+            opacity=0.3
+        ))
+        
+        # Add average line
+        avg_count = np.mean(bin_counts)
+        fig.add_hline(
+            y=avg_count,
+            line_dash="solid",
+            line_color=COLOR_ACCENT,
+            line_width=4,
+            opacity=0.8,
+            annotation_text=f"Average: {avg_count:.1f}",
+            annotation_position="top right"
+        )
+        
+        # Update layout
+        fig.update_layout(
+            title=f"Daily Activity Pattern - {session_data['MouseName']} ({session_data['SessionDate']})",
+            xaxis_title="Time of Day",
+            yaxis_title=f"Number of Trials ({bin_size_minutes}-min bins)",
+            xaxis=dict(
+                tickformat="%H:%M",
+                tickmode='array',
+                tickvals=x_values[::4],  # Show every 4th tick (hourly)
+                ticktext=[label for i, label in enumerate(bin_labels) if i % 4 == 0]
+            ),
+            height=500,
+            width=900,
+            showlegend=False
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
 
 def daily_activity_multi_animal(project_data):
     """
@@ -929,15 +1047,16 @@ def daily_activity_multi_animal(project_data):
         st.info("No StartTime data available for activity analysis.")
         return
     
-    # Get unique dates
+    # Get unique dates - force refresh by creating a new list
     dates = sorted(project_data["SessionDate"].astype(str).unique())
     if len(dates) == 0:
         st.info("No dates found in data.")
         return
     
+    # Use a unique key to force refresh
     selected_date = st.selectbox("Select a date", options=dates, 
                                 index=max(0, len(dates) - 1), 
-                                key="daily_activity_date")
+                                key=f"daily_activity_date_{len(project_data)}")
     
     # Filter data for selected date
     date_data = project_data[project_data["SessionDate"].astype(str) == str(selected_date)]
@@ -952,23 +1071,14 @@ def daily_activity_multi_animal(project_data):
         st.info("No animals found for selected date.")
         return
     
-    # Create 15-minute bins throughout the day
+    # Create time bins using helper function
     bin_size_minutes = 30
-    bins = []
-    bin_labels = []
-    
-    for hour in range(24):
-        for minute in range(0, 60, bin_size_minutes):
-            start_time = pd.Timestamp.combine(pd.Timestamp.today().date(), 
-                                            pd.Timestamp(f"{hour:02d}:{minute:02d}:00").time())
-            end_time = start_time + pd.Timedelta(minutes=bin_size_minutes)
-            bins.append((start_time.time(), end_time.time()))
-            bin_labels.append(f"{hour:02d}:{minute:02d}")
+    bins, bin_labels = _create_time_bins(bin_size_minutes)
     
     fig = go.Figure()
     
     # Convert bin labels to datetime for proper x-axis
-    x_values = [pd.Timestamp(f"2024-01-01 {label}:00") for label in bin_labels]
+    x_values = _create_x_values(bin_labels)
     
     # Determine per-mouse colors
     try:
@@ -979,6 +1089,9 @@ def daily_activity_multi_animal(project_data):
     except Exception:
         color_map = {}
     
+    # Store all bin counts for average calculation
+    all_bin_counts = []
+    
     for i, mouse in enumerate(mice):
         mouse_data = date_data[date_data["MouseName"] == mouse]
         if len(mouse_data) == 0:
@@ -987,43 +1100,14 @@ def daily_activity_multi_animal(project_data):
         # Get start times for this mouse
         start_times = mouse_data.iloc[0]["StartTime"]
         
-        if pd.isna(start_times) or not start_times:
+        # Parse start times using helper function
+        times = _parse_start_times(start_times)
+        if not times:
             continue
         
-        # Parse start times
-        try:
-            if isinstance(start_times, str):
-                start_times_list = ast.literal_eval(start_times)
-            else:
-                start_times_list = start_times
-            
-            # Convert to datetime objects
-            times = []
-            for time_str in start_times_list:
-                try:
-                    time_obj = pd.to_datetime(time_str, format='%H:%M:%S.%f').time()
-                    times.append(time_obj)
-                except:
-                    try:
-                        time_obj = pd.to_datetime(time_str).time()
-                        times.append(time_obj)
-                    except:
-                        continue
-            
-            if not times:
-                continue
-                
-        except Exception:
-            continue
-        
-        # Count trials in each bin
-        bin_counts = [0] * len(bins)
-        
-        for time_obj in times:
-            for j, (bin_start, bin_end) in enumerate(bins):
-                if bin_start <= time_obj < bin_end:
-                    bin_counts[j] += 1
-                    break
+        # Count trials in each bin using helper function
+        bin_counts = _count_trials_in_bins(times, bins)
+        all_bin_counts.append(bin_counts)
         
         # Add trace for this mouse as stacked bar
         fig.add_trace(go.Bar(
@@ -1039,51 +1123,6 @@ def daily_activity_multi_animal(project_data):
         return
     
     # Calculate and add average line across all animals
-    all_bin_counts = []
-    for i, mouse in enumerate(mice):
-        mouse_data = date_data[date_data["MouseName"] == mouse]
-        if len(mouse_data) == 0:
-            continue
-            
-        start_times = mouse_data.iloc[0]["StartTime"]
-        if pd.isna(start_times) or not start_times:
-            continue
-        
-        try:
-            if isinstance(start_times, str):
-                start_times_list = ast.literal_eval(start_times)
-            else:
-                start_times_list = start_times
-            
-            times = []
-            for time_str in start_times_list:
-                try:
-                    time_obj = pd.to_datetime(time_str, format='%H:%M:%S.%f').time()
-                    times.append(time_obj)
-                except:
-                    try:
-                        time_obj = pd.to_datetime(time_str).time()
-                        times.append(time_obj)
-                    except:
-                        continue
-            
-            if not times:
-                continue
-                
-        except Exception:
-            continue
-        
-        # Count trials in each bin for this mouse
-        mouse_bin_counts = [0] * len(bins)
-        for time_obj in times:
-            for j, (bin_start, bin_end) in enumerate(bins):
-                if bin_start <= time_obj < bin_end:
-                    mouse_bin_counts[j] += 1
-                    break
-        
-        all_bin_counts.append(mouse_bin_counts)
-    
-    # Calculate average across all animals
     if all_bin_counts:
         avg_bin_counts = np.mean(all_bin_counts, axis=0)
         fig.add_trace(go.Scatter(
@@ -1114,10 +1153,6 @@ def daily_activity_multi_animal(project_data):
     
     st.plotly_chart(fig, use_container_width=True)
 
-
-
-
-
 def daily_multi_animal_lick_rate(project_data, t=15):
     """
     Plot lick rate data for all unique mice on a selected date, overlaid on the same plot.
@@ -1127,15 +1162,16 @@ def daily_multi_animal_lick_rate(project_data, t=15):
         st.info("No data loaded.")
         return
 
-    # Get unique dates
+    # Get unique dates - force refresh by creating a new list
     dates = sorted(project_data["SessionDate"].astype(str).unique())
     if len(dates) == 0:
         st.info("No dates found in data.")
         return
 
+    # Use a unique key to force refresh
     selected_date = st.selectbox("Select a date", options=dates, 
                                 index=max(0, len(dates) - 1), 
-                                key="daily_multi_lick_date")
+                                key=f"daily_multi_lick_date_{len(project_data)}")
 
     # Filter data for selected date
     date_data = project_data[project_data["SessionDate"].astype(str) == str(selected_date)]
@@ -1218,7 +1254,8 @@ def cumulative_number_of_trials_vs_daily_dprime(project_data, t=15):
             n_trials_per_day.append(len(stimuli))
         # Cumulative number of trials
         cumulative_trials = np.cumsum(n_trials_per_day)
-        data = d_prime_multiple_sessions(project_data, t=t, animal_name = mouse, plot = False)
+        # Force recalculation by passing a fresh copy of the data
+        data = d_prime_multiple_sessions(project_data.copy(), t=t, animal_name=mouse, plot=False)
         d_prime_per_day = data["d_prime"]
         n_t = data["tones_per_class"]
         n_b = data["Boundaries"]

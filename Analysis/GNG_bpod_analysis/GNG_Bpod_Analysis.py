@@ -10,8 +10,7 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 import numpy as np
-import hashlib
-from functools import lru_cache
+
 
 
 def gng_bpod_analysis(project_data, index):
@@ -32,7 +31,6 @@ def gng_bpod_analysis(project_data, index):
         try:
             classifier_metric(project_data, index)
             d_prime(project_data, index, t=bin, plot=True)
-            d_prime_low_high_boundary_sessions(project_data, index, t=bin, plot=True)
         except Exception as e:
             st.warning(f"something went wrong with this graph :|\n\n{e}")
             st.text(traceback.format_exc())
@@ -47,6 +45,7 @@ def gng_bpod_analysis(project_data, index):
 
         try:
             df_go_first_licks, df_no_go_first_licks = process_and_plot_lick_data(project_data, index)
+            df_result = plot_first_lick_by_stimulus(project_data, index, plot=True)
         except  Exception as e:
             st.warning(f"something went wrong with this graph :|\n\n{e}")
             st.text(traceback.format_exc())
@@ -85,9 +84,6 @@ def gng_bpod_analysis(project_data, index):
         except Exception as e:
             st.warning(f"something went wrong with bias analysis :|\n\n{e}")
             st.text(traceback.format_exc())
-
-
-
 
 
 def gng_bpod_analysis_multipule(project_data, index):
@@ -167,7 +163,7 @@ def gng_bpod_analysis_multipule(project_data, index):
         try:
             plot_psychometric_curves_with_boundaries(project_data, N_Boundaries = 1, n_indices = 2)
             plot_psychometric_curves_with_boundaries(project_data,  N_Boundaries = 2, n_indices = 2)
-            plot_psychometric_curves_with_boundaries(project_data,  N_Boundaries = 0, n_indices = 2)
+
         except Exception as e:
             st.warning(f"Something went wrong with psychometric curves plotting :|\n\n{e}")
             st.text(traceback.format_exc())
@@ -181,20 +177,4 @@ def gng_bpod_analysis_multipule(project_data, index):
             st.warning(f"Something went wrong with bias analysis :|\n\n{e}")
             st.text(traceback.format_exc())
 
-
-
-def object_to_array(obj_array, pad_value=np.nan):
-    """
-    Convert a 1D object array of 1D arrays/lists into
-    a 2D numeric array with NaN padding.
-    """
-    # lengths of each sub-array
-    lengths = [len(x) for x in obj_array]
-    max_len = max(lengths)
-
-    out = np.full((len(obj_array), max_len), pad_value, dtype=float)
-    for i, arr in enumerate(obj_array):
-        arr = np.asarray(arr, dtype=float)
-        out[i, :len(arr)] = arr
-    return out
 

@@ -9,6 +9,7 @@ import os
 import streamlit as st
 import hashlib
 from functools import lru_cache
+            
 
 # Add color imports
 from Analysis.GNG_bpod_analysis.colors import COLOR_GO, COLOR_GRAY, COLOR_NOGO, COLOR_HIT, COLOR_FA, COLOR_CR, COLOR_MISS, COLOR_BLUE, COLOR_BLUE_TRANSPARENT, COLOR_ACCENT, COLOR_ACCENT_TRANSPARENT
@@ -1245,7 +1246,7 @@ def single_unit_analysis_panel(
     
     
     # Create tabs for different analysis types
-    tab1, tab2, tab3 = st.tabs(["Basic PSTH", "Advanced Analysis", "GLM Analysis"])
+    tab1, tab2, tab3, qa_tab = st.tabs(["Basic PSTH", "Advanced Analysis", "GLM Analysis", "QA"])
     
     with tab1:
         st.header("Basic Analysis")
@@ -1779,3 +1780,114 @@ def single_unit_analysis_panel(
         else:
             st.write("Could not fit GLM - insufficient data or convergence issues")
     
+    with qa_tab:
+        import PIL.Image
+        import base64
+        from io import BytesIO
+
+        if selected_folder is not None:
+            parent_dir = os.path.dirname(selected_folder)
+            qa_folder = os.path.join(parent_dir, "bombcell")
+            st.write("QA folder:", qa_folder)
+
+            distribution_img_path = os.path.join(qa_folder, "quality_metrics_distribution.png")
+            classification_img_path = os.path.join(qa_folder, "waveform_classification.png")
+
+            def pil_image_to_data_uri(image):
+                """Convert a PIL Image to a data URI for plotly."""
+                buffered = BytesIO()
+                image.save(buffered, format="PNG")
+                img_bytes = buffered.getvalue()
+                img_b64 = base64.b64encode(img_bytes).decode()
+                return f"data:image/png;base64,{img_b64}"
+
+            def plot_image(img_path, title="Image"):
+                if os.path.exists(img_path):
+                    image = PIL.Image.open(img_path)
+                    data_uri = pil_image_to_data_uri(image)
+                    width, height = image.size
+                    fig_img = go.Figure()
+                    fig_img.add_layout_image(
+                        dict(
+                            source=data_uri,
+                            xref="x",
+                            yref="y",
+                            x=0,
+                            y=0,
+                            sizex=width,
+                            sizey=height,
+                            layer="below"
+                        )
+                    )
+                    fig_img.update_xaxes(visible=False, range=[0, width])
+                    fig_img.update_yaxes(visible=False, range=[height, 0])
+                    fig_img.update_layout(
+                        title=title,
+                        margin=dict(l=0, r=0, t=40, b=0),
+                        width=width,
+                        height=height
+                    )
+                    st.plotly_chart(fig_img, use_container_width=True)
+                else:
+                    st.warning(f"Image not found: {img_path}")
+            col1, col2 = st.columns(2)
+            with col1:      
+                plot_image(distribution_img_path, title="Quality Metrics Distribution")
+            with col2:
+                plot_image(classification_img_path, title="Waveform Classification")
+
+            
+            # Load TSV file as a numpy array of unit labels
+            units_labels_file =os.path.join(qa_folder, "unit_labels.tsv")
+            good_units = pd.read_csv(units_labels_file, sep="\t")
+
+            good_units = good_units[good_units["UnitType"] == 1]
+            st.write("Indices of units with UnitType == 1:", good_units.index.tolist())
+            good_idxs = good_units.index.tolist()
+
+            waveforms = np.load(os.path.join(qa_folder, "templates._bc_rawWaveforms.npy"))
+
+
+            def plot_waveforms(waveforms, idxs):
+                # Plot the waveforms[:,0,:] as a line plot using plotly.graph_objects
+                if waveforms.ndim == 3:
+                    # waveforms shape: (n_units, n_channels, n_samples)
+                    # waveforms[:,0,:] shape: (n_units, n_samples)
+                    n_units, n_samples = waveforms[idxs,:,:].shape
+                    fig_wave = go.Figure()
+                    # Plot each unit's waveform in transparent gray
+                    for i in range(n_units):
+                        fig_wave.add_trace(
+                            go.Scatter(
+                                y=waveforms[idxs, i, :],
+                                mode='lines',
+                                line=dict(color='rgba(100,100,100,0.2)', width=1),
+                                name=f'Unit {i}',
+                                showlegend=False
+                            )
+                        )
+                    # Add black average line
+                    avg_waveform = np.mean(waveforms[idxs, :, :], axis=0)
+                    fig_wave.add_trace(
+                        go.Scatter(
+                            y=avg_waveform,
+                            mode='lines',
+                            line=dict(color='black', width=2),
+                            name='Average',
+                            showlegend=True
+                        )
+                    )
+                    fig_wave.update_layout(
+                        title=f"Raw Waveforms (Channel {idxs})",
+                        xaxis_title="Sample",
+                        yaxis_title="Amplitude",
+                        showlegend=True,
+                        margin=dict(l=40, r=20, t=40, b=40)
+                    )
+                    st.plotly_chart(fig_wave, use_container_width=True)
+                else:
+                    st.warning("Waveforms array does not have expected 3D shape.")
+       
+       
+        for idx in good_idxs[:10]:
+            plot_waveforms(waveforms, idx)

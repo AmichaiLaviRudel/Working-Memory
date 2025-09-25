@@ -4,8 +4,6 @@ from Analysis.GNG_bpod_analysis.metric import *
 
 
 import numpy as np
-import pandas as pd
-import ast
 
 
 def getNameAndSession(project_data, index):
@@ -40,3 +38,28 @@ def parse_stimuli(stim_str):
     except Exception:
         return np.array([])
 
+def object_to_array(obj_array, pad_value=np.nan):
+    """
+    Convert a 1D object array of 1D arrays/lists into
+    a 2D numeric array with NaN padding.
+    """
+    # lengths of each sub-array
+    lengths = [len(x) for x in obj_array]
+    max_len = max(lengths)
+
+    out = np.full((len(obj_array), max_len), pad_value, dtype=float)
+    for i, arr in enumerate(obj_array):
+        arr = np.asarray(arr, dtype=float)
+        out[i, :len(arr)] = arr
+    return out
+
+def to_array(val):
+    if isinstance(val, str):
+        try:
+            return np.array(ast.literal_eval(val))
+        except Exception:
+            return np.array([])
+    elif isinstance(val, (list, np.ndarray)):
+        return np.array(val)
+    else:
+        return np.array([])

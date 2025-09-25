@@ -76,7 +76,7 @@ if "stim_name" in df.columns:
           .str.replace("-", ".", regex=False)
     )
 
-# Exclude specific mouse_id before processing
+# Exclude dummy probe mouse_id before processing
 df = df[df["mouse_id"] != "000799EB9B"]
 
 # Vectorized normalization for trial types and outcomes BEFORE grouping
@@ -167,6 +167,22 @@ grouped_out = (
           ["MouseName", "SessionDate", "TrialTypes", "Outcomes", "Stimuli", "Licks", "StartTime", "Notes", "FilePath", "Tones_per_class", "N_Boundaries"]
       ]
 )
+# Sort final dataframe by combined datetime (SessionDate + first StartTime if available)
+def _first_start_time(lst):
+    try:
+        return lst[0] if isinstance(lst, list) and len(lst) > 0 else None
+    except Exception:
+        return None
+
+_first_times = grouped_out["StartTime"].apply(_first_start_time) if "StartTime" in grouped_out.columns else None
+if _first_times is not None:
+    _sort_dt = pd.to_datetime(
+        grouped_out["SessionDate"].astype(str) + " " + _first_times.astype(str), errors="coerce"
+    )
+else:
+    _sort_dt = pd.to_datetime(grouped_out["SessionDate"], errors="coerce")
+
+grouped_out = grouped_out.assign(_sort_dt=_sort_dt).sort_values(["_sort_dt", "MouseName", "Notes"]).drop(columns=["_sort_dt"])  
 out_csv = Path(r"Z:\\Shared\\Amichai\\Code\\DB\\users_data\\Amichai\\Educage_experimental_data.csv")
 # Format Stimuli lists without commas, space-separated within brackets
 def _format_space_list(lst):

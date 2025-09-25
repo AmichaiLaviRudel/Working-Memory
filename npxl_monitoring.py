@@ -49,7 +49,7 @@ if 'Session Type' in st_project_data.columns:
     ))
     
     # Add horizontal line at y=12
-    fig.add_hline(y=12, line_dash="dash", line_color="red", 
+    fig.add_hline(y=12, line_dash="dash", line_color="black", 
                   annotation_text="Target: 12", annotation_position="bottom right")
     
     # Update layout

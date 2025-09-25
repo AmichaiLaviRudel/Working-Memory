@@ -12,29 +12,28 @@ from sklearn.metrics import roc_auc_score, roc_curve, confusion_matrix
 import streamlit as st
 import plotly.graph_objects as go
 import ast
-import hashlib
 
 # Function to calculate the d prime
 def d_prime(selected_data, index=0, t=10, plot=False):
     from Analysis.GNG_bpod_analysis.licking_and_outcome import licking_rate
     rates, frac = licking_rate(selected_data, index, t=t, plot=False)
+    
     # Calculate hits, misses, false alarms, and correct rejections
     hit = rates["Hit"]
     miss = rates["Miss"]
     fa = rates["FA"]
     cr = rates["CR"]
-
     # Ensure the DataFrame has valid numeric data
     frac = frac.dropna(how = "all").astype(float)
 
     # Convert percentages to proportions (0-1 scale)
     hit_rate = frac["Go"] / 100
     fa_rate = frac["NoGo"] / 100
+    # Filter out bins where hit_rate + fa_rate <= 0.3
+    valid_bins = (hit_rate + fa_rate) > 0.3
+    hit_rate = hit_rate[valid_bins]
+    fa_rate = fa_rate[valid_bins]
 
-    # Filter out bins where hit_rate + fa_rate <= 0.4
-    valid_bins = (hit_rate + fa_rate) > 0.4
-    # hit_rate = hit_rate[valid_bins]
-    # fa_rate = fa_rate[valid_bins]
 
     # Prevent hit_rate and fa_rate from being exactly 0 or 1
     hit_rate = hit_rate.clip(1e-3, 1 - 1e-3)
@@ -42,8 +41,8 @@ def d_prime(selected_data, index=0, t=10, plot=False):
 
     # Compute d'
     d = norm.ppf(hit_rate) - norm.ppf(fa_rate)
+   
     # valid_bins = (fa_rate+hit_rate) >= 0.5
-
     # Create a DataFrame with a safer column name
     df = pd.DataFrame({"index": range(len(d)), "d_prime": d})
 
@@ -358,9 +357,6 @@ def multi_animal_d_prime_progression(selected_data, N_Boundaries = None):
     )
     st.plotly_chart(fig, use_container_width=True)
 
-
-
-
 def classifier_metric(project_data, index):
     from Analysis.GNG_bpod_analysis.licking_and_outcome import responses, licking_rate
 
@@ -519,8 +515,6 @@ def classifier_metric(project_data, index):
 
     return class_metric_df
 
-
-
 def d_prime_multiple_sessions_divde_oneNtwo(selected_data, t=10, animal_name='None', plot = True):
     if animal_name == "None":
         # Step 1: Let the user choose an animal from the data, assign a unique key
@@ -553,6 +547,16 @@ def d_prime_multiple_sessions_divde_oneNtwo(selected_data, t=10, animal_name='No
 
     return data
 
+def to_array(val):
+    if isinstance(val, str):
+        try:
+            return np.array(ast.literal_eval(val))
+        except Exception:
+            return np.array([])
+    elif isinstance(val, (list, np.ndarray)):
+        return np.array(val)
+    else:
+        return np.array([])
 
 def d_prime_low_high_boundary_sessions(selected_data, idx, t=10, plot=True):
     """
@@ -561,17 +565,16 @@ def d_prime_low_high_boundary_sessions(selected_data, idx, t=10, plot=True):
     Plots both d' curves on the same Plotly figure and returns the d' arrays/DataFrames for both boundaries.
     """
 
-    # Get the stimuli for this session
-    stimuli = parse_stimuli(selected_data.loc[idx, 'Stimuli'])
+    # Get the stimuli for this session - use index 0 since selected_data has only one row
+    stimuli = parse_stimuli(selected_data.iloc[0, selected_data.columns.get_loc('Stimuli')])
     # Low boundary
     low_mask = stimuli < st.session_state.high_boundary
     # High boundary
     high_mask = stimuli > st.session_state.low_boundary
 
-
-    # Get the raw values
-    trialtypes = selected_data.loc[idx, 'TrialTypes']
-    outcomes = selected_data.loc[idx, 'Outcomes']
+    # Get the raw values - use index 0 since selected_data has only one row
+    trialtypes = selected_data.iloc[0, selected_data.columns.get_loc('TrialTypes')]
+    outcomes = selected_data.iloc[0, selected_data.columns.get_loc('Outcomes')]
 
     # Convert to array if needed
     if isinstance(trialtypes, str):
@@ -588,18 +591,20 @@ def d_prime_low_high_boundary_sessions(selected_data, idx, t=10, plot=True):
     filtered_trials_high = trialtypes[high_mask]
     filtered_outcomes_high = outcomes[high_mask]
 
+
     selected_data_low = selected_data.copy()
-    selected_data_low.at[idx, 'TrialTypes'] = str(filtered_trials_low.tolist())
-    selected_data_low.at[idx, 'Outcomes'] = str(filtered_outcomes_low.tolist())
+    selected_data_low.iloc[0, selected_data_low.columns.get_loc('TrialTypes')] = str(filtered_trials_low.tolist())
+    selected_data_low.iloc[0, selected_data_low.columns.get_loc('Outcomes')] = str(filtered_outcomes_low.tolist())
 
     selected_data_high = selected_data.copy()
-    selected_data_high.at[idx, 'TrialTypes'] = str(filtered_trials_high.tolist())
-    selected_data_high.at[idx, 'Outcomes'] = str(filtered_outcomes_high.tolist())
+    selected_data_high.iloc[0, selected_data_high.columns.get_loc('TrialTypes')] = str(filtered_trials_high.tolist())
+    selected_data_high.iloc[0, selected_data_high.columns.get_loc('Outcomes')] = str(filtered_outcomes_high.tolist())
+
+    # Calculate d' for low and high boundary - use index 0 since we have only one row
+    d_low = d_prime(selected_data_low, index=0, t=t)
+    d_high = d_prime(selected_data_high, index=0, t=t)
 
 
-    # Calculate d' for low and high boundary
-    d_low = d_prime(selected_data_low, index=0, t=t, plot=False)
-    d_high = d_prime(selected_data_high, index=0, t=t, plot=False)
 
     # Prepare DataFrames for plotting/return
     df_low = pd.DataFrame({
@@ -667,19 +672,6 @@ def d_prime_low_high_boundary_sessions(selected_data, idx, t=10, plot=True):
 
 
     return df_low, df_high
-
-def to_array(val):
-    if isinstance(val, str):
-        try:
-            return np.array(ast.literal_eval(val))
-        except Exception:
-            return np.array([])
-    elif isinstance(val, (list, np.ndarray)):
-        return np.array(val)
-    else:
-        return np.array([])
-
-
 
 def daily_multi_animal_dprime(project_data, t=10):
     """

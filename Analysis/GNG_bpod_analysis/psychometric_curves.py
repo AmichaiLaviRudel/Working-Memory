@@ -158,22 +158,46 @@ def psychometric_curve(selected_data, index, plot=True):
         # Plot the psychometric curve
         if plot:
             if n_b == 2:
-                st.text(f"Double sigmoid fit:\n"
-                         f"x0_low: {model_boundaries[0]:.4g}, Slope at Boundary_low: {slopes_mid[0]:.4g}\n"
-                         f"x0_high: {model_boundaries[1]:.4g}, Slope at Boundary_high: {slopes_mid[1]:.4g}")
-                fig = go.Figure()
-                # Data points
-                fig.add_trace(go.Scatter(x=unique_stimuli, y=lick_rates, mode='markers', name='Data Points', marker=dict(color='black')))
-                # Overlay both fitted sigmoids
-                x_fit_A, x_fit_B = x_fit
-                y_fit_A, y_fit_B = y_fit
-                fig.add_trace(go.Scatter(x=x_fit_A, y=y_fit_A, mode='lines', name='Sigmoid Low', line=dict(color=colors.COLOR_LOW_BD)))
-                fig.add_trace(go.Scatter(x=x_fit_B, y=y_fit_B, mode='lines', name='Sigmoid High', line=dict(color=colors.COLOR_HIGH_BD)))
-                # Boundaries
-                fig.add_trace(go.Scatter(x=[st.session_state.low_boundary, st.session_state.low_boundary], y=[0, 100], mode='lines', name='Low Boundary', line=dict(dash='dash', color=colors.COLOR_GRAY)))
-                fig.add_trace(go.Scatter(x=[st.session_state.high_boundary, st.session_state.high_boundary], y=[0, 100], mode='lines', name='High Boundary', line=dict(dash='dash', color=colors.COLOR_GRAY)))
-                fig.update_layout(title='Psychometric Curve (Double Sigmoid)', xaxis_title='Stimulus Intensity (log2)', xaxis_type='log', yaxis_title='Lick Rate (normalized)', yaxis_range=[0, 100])
-                st.plotly_chart(fig)
+                # Check if we have enough elements for double sigmoid
+                if len(model_boundaries) >= 2 and len(slopes_mid) >= 2:
+                    st.text(f"Double sigmoid fit:\n"
+                             f"x0_low: {model_boundaries[0]:.4g}, Slope at Boundary_low: {slopes_mid[0]:.4g}\n"
+                             f"x0_high: {model_boundaries[1]:.4g}, Slope at Boundary_high: {slopes_mid[1]:.4g}")
+                    fig = go.Figure()
+                    # Data points
+                    fig.add_trace(go.Scatter(x=unique_stimuli, y=lick_rates, mode='markers', name='Data Points', marker=dict(color='black')))
+                    # Overlay both fitted sigmoids
+                    if isinstance(x_fit, (list, tuple)) and len(x_fit) >= 2:
+                        x_fit_A, x_fit_B = x_fit[0], x_fit[1]
+                        y_fit_A, y_fit_B = y_fit[0], y_fit[1]
+                    else:
+                        # Fallback: use single sigmoid for both
+                        x_fit_A, x_fit_B = x_fit, x_fit
+                        y_fit_A, y_fit_B = y_fit, y_fit
+                    fig.add_trace(go.Scatter(x=x_fit_A, y=y_fit_A, mode='lines', name='Sigmoid Low', line=dict(color=colors.COLOR_LOW_BD)))
+                    fig.add_trace(go.Scatter(x=x_fit_B, y=y_fit_B, mode='lines', name='Sigmoid High', line=dict(color=colors.COLOR_HIGH_BD)))
+                    # Boundaries
+                    fig.add_trace(go.Scatter(x=[st.session_state.low_boundary, st.session_state.low_boundary], y=[0, 100], mode='lines', name='Low Boundary', line=dict(dash='dash', color=colors.COLOR_GRAY)))
+                    fig.add_trace(go.Scatter(x=[st.session_state.high_boundary, st.session_state.high_boundary], y=[0, 100], mode='lines', name='High Boundary', line=dict(dash='dash', color=colors.COLOR_GRAY)))
+                    fig.update_layout(title='Psychometric Curve (Double Sigmoid)', xaxis_title='Stimulus Intensity (log2)', xaxis_type='log', yaxis_title='Lick Rate (normalized)', yaxis_range=[0, 100])
+                    st.plotly_chart(fig)
+                else:
+                    # Fallback to single sigmoid display for double boundary case
+                    st.warning("Double sigmoid fitting not fully implemented. Showing single sigmoid fit.")
+                    st.text(f"Single sigmoid fit:\nx0: {model_boundaries[0] if len(model_boundaries) > 0 else 'N/A'}, Slope at Boundary: {slopes_mid[0] if len(slopes_mid) > 0 else 'N/A'}")
+                    fig = go.Figure()
+                    fig.add_trace(go.Scatter(x=unique_stimuli, y=lick_rates, mode='markers', name='Data Points'))
+                    fig.add_trace(go.Scatter(x=x_fit, y=y_fit, mode='lines', name='Fitted Curve'))
+                    # Only plot the relevant boundary line
+                    boundary = st.session_state.low_boundary
+                    fig.add_trace(go.Scatter(x=[boundary, boundary], y=[0, 100], mode='lines', name='Boundary', line=dict(dash='dash', color=colors.COLOR_GRAY)))
+                    # Only use log axis if all x > 0
+                    x_fit_arr = np.array(x_fit) if isinstance(x_fit, (list, tuple)) else x_fit
+                    if np.all(unique_stimuli > 0) and np.all(x_fit_arr > 0):
+                        fig.update_layout(title="Psychometric Curve", xaxis_title="Stimulus Intensity (log2)", yaxis_title="Lick Rate", xaxis_type='log', yaxis_range=[0, 100])
+                    else:
+                        fig.update_layout(title="Psychometric Curve", xaxis_title="Stimulus Intensity (log2)", yaxis_title="Lick Rate", yaxis_range=[0, 100])
+                    st.plotly_chart(fig)
             else:
                 st.text(f"Single sigmoid fit:\nx0: {model_boundaries}, Slope at Boundary: {slopes_mid}")
                 fig = go.Figure()
@@ -239,7 +263,10 @@ def psychometric_curve_multiple_sessions(selected_data, animal_name = "None", pl
                 slopes_mid = np.concatenate([slopes_mid[:2], np.full(slopes_mid.size-2, np.nan)])[:2]
         else:
             slopes_mid = np.array([np.nan, np.nan])
-        low, high = slopes_mid[0], slopes_mid[1]
+        
+        # Safe indexing with bounds checking
+        low = slopes_mid[0] if len(slopes_mid) > 0 else np.nan
+        high = slopes_mid[1] if len(slopes_mid) > 1 else np.nan
 
         low_slopes.append(low)
         high_slopes.append(high)
