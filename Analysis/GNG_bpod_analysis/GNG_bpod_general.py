@@ -38,6 +38,14 @@ def parse_stimuli(stim_str):
     except Exception:
         return np.array([])
 
+def parse_licks(licks_str):
+    import re
+    try:
+        licks_str = re.sub(r'array\(', 'np.array(', licks_str)
+        licks = eval(licks_str, {"np": np, "None": None, "nan": None})
+    except Exception:
+        licks = np.array([])
+    return licks
 def object_to_array(obj_array, pad_value=np.nan):
     """
     Convert a 1D object array of 1D arrays/lists into

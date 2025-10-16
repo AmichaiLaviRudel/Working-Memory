@@ -17,6 +17,10 @@ def initialize_session_state():
     if 'Project_type_options' not in st.session_state:
         st.session_state.Project_type_options = ["", "Behavior-Bpod GUI", "Behavior-GNG GUI", "Npxls"]
 
+    # Selected analysis type
+    if 'analysis_type' not in st.session_state:
+        st.session_state.analysis_type = ""
+
     # Project list
     try:
         existing_projects = pd.read_csv(os.path.join(st.session_state.user_path, "projects_list.csv"))

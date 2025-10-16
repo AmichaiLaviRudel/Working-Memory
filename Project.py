@@ -67,7 +67,7 @@ def current_project_overview(existing_projects, selected_project, path, types):
         if 'Checkbox' not in project_data.columns:
             project_data.insert(0, 'Checkbox', False)
 
-        columns_to_present = ["Checkbox", "MouseName", "Color", "SessionDate", "SessionTime", "WaterConsumption","Notes", "FilePath"]
+        columns_to_present = ["Checkbox", "MouseName", "SessionDate", "SessionTime", "WaterConsumption","Notes", "FilePath"]
         # Display the project data editor with column configurations
         st_project_data = st.data_editor(
             data = project_data,
@@ -78,9 +78,6 @@ def current_project_overview(existing_projects, selected_project, path, types):
             column_config = {
                 "Checkbox":         st.column_config.CheckboxColumn(
                     "Analyse?", help = "Select rows for analysis", default = False,
-                ),
-                "Color":            st.column_config.Column(
-                    width = "small", help = "Auto-assigned per MouseName", disabled = True
                 ),
                 "SessionDate":      st.column_config.Column(
                     width = "small", help = "Date of the session", disabled = True
@@ -211,6 +208,13 @@ else:
 project_types_str = str(project_types_str)[1:-1]  # Remove brackets if present
 project_types = [x.strip().strip("'") for x in project_types_str.split(",")]
 
+# Set default analysis type in session state if available and not already set
+try:
+    if (not st.session_state.get('analysis_type')) and len(project_types) > 0:
+        st.session_state.analysis_type = project_types[0]
+except Exception:
+    pass
+
 # If this project includes 'Educage', run the data formatter to ensure CSV is generated
 # Only run if it hasn't been executed for 15 minutes
 try:
@@ -256,4 +260,9 @@ st.title("Analysis")
 
 # Run analysis for each project type
 for project_type in project_types:
+    # Update session state's analysis type for downstream components
+    try:
+        st.session_state.analysis_type = project_type
+    except Exception:
+        pass
     analysis(project_data, project_type)

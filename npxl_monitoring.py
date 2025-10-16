@@ -105,7 +105,7 @@ if 'Checkbox' in st_project_data.columns and st_project_data['Checkbox'].any():
                 label = f"{folder_parent_label} ({folder_parent})"
                 folder_options.append(folder)
                 folder_labels.append(label)
-            
+
             if folder_options:
                 default_index = 0
                 if f"selected_analysis_output_{idx}" in st.session_state:

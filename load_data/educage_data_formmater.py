@@ -10,8 +10,22 @@ path2 = r"Z:\Shared\Noam\results\experiments\experiments.txt"
 # Read file
 df1 = pd.read_csv(path1)
 df2 = pd.read_csv(path2)
-
 df = pd.concat([df1, df2])
+
+# Sort by datetime if possible and reindex
+datetime_cols = [col for col in ["datetime", "date", "start_time", "start_dt"] if col in df.columns]
+if "start_dt" in df.columns:
+    df = df.sort_values("start_dt")
+elif "datetime" in df.columns:
+    df = df.sort_values("datetime")
+elif "date" in df.columns and "start_time" in df.columns:
+    # Try to create a datetime column for sorting
+    try:
+        df["_tmp_dt"] = pd.to_datetime(df["date"] + " " + df["start_time"])
+        df = df.sort_values("_tmp_dt").drop(columns=["_tmp_dt"])
+    except Exception:
+        pass
+df = df.reset_index(drop=True)
 
 # Normalize column names robustly (spaces, slashes, dashes -> underscores; lowercase)
 def _normalize(col):
@@ -36,6 +50,7 @@ def _parse_licks_list(x):
 
 if "licks_time" in df.columns:
     df["licks_time_list"] = df["licks_time"].apply(_parse_licks_list)
+    licks_test = df["licks_time_list"].copy()
     # Vectorized lick processing via explode/groupby
     if "start_dt" in df.columns:
         trial_id = df.index
@@ -67,6 +82,8 @@ if "licks_time" in df.columns:
         else:
             df["rt_first_ms"] = pd.NA
             df["licks_rel"] = None
+
+            
 
 # Prepare cleaned stimulus names: drop .npz and replace '-' with '.'
 if "stim_name" in df.columns:
@@ -163,7 +180,9 @@ grouped_out = (
           "licks": "Licks",
           "start_time": "StartTime",
       })
-      .assign(FilePath=path2)[
+      .assign(FilePath=path2)
+      .query("n_trials >= 50")  # Filter rows with at least 50 trials
+      [
           ["MouseName", "SessionDate", "TrialTypes", "Outcomes", "Stimuli", "Licks", "StartTime", "Notes", "FilePath", "Tones_per_class", "N_Boundaries"]
       ]
 )

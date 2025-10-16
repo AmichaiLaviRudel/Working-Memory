@@ -16,13 +16,11 @@ import numpy as np
 def gng_bpod_analysis(project_data, index):
     name, session = getNameAndSession(project_data, index)
     st.header(f"{name}  ___#{session}___")
-    
     # Performance info
     with st.expander("ℹ️ Performance Info"):
         st.info("🚀 Analysis results are cached for faster performance. Change parameters to trigger recomputation.")
         st.caption(f"📊 Session: {name} #{session}")
-    
-    bin = st.slider("Choose bin size", 5, 50, 15, 5, help="⚡ Cached - only recomputes when changed")
+    bin = st.slider("Choose bin size", 5, 50, 30, 5, help="⚡ Cached - only recomputes when changed")
 
 
     tab1, tab2, tab3, tab4, tab5 = st.tabs([ "👨‍🎓Matrices", "👅 Lick Rate", "📈 Learning Curve", "👂 Psychometric Curve", "🎯 Bias Analysis"])
@@ -31,6 +29,7 @@ def gng_bpod_analysis(project_data, index):
         try:
             classifier_metric(project_data, index)
             d_prime(project_data, index, t=bin, plot=True)
+            d_prime_for_stim_pairs(project_data, index, stim_pairs=None, t=bin, plot=True)
         except Exception as e:
             st.warning(f"something went wrong with this graph :|\n\n{e}")
             st.text(traceback.format_exc())
@@ -42,21 +41,28 @@ def gng_bpod_analysis(project_data, index):
         except  Exception as e:
             st.warning(f"something went wrong with this graph :|\n\n{e}")
             st.text(traceback.format_exc())
+        st.write(st.session_state.analysis_type)
 
         try:
-            df_go_first_licks, df_no_go_first_licks = process_and_plot_lick_data(project_data, index)
-            df_result = plot_first_lick_by_stimulus(project_data, index, plot=True)
-        except  Exception as e:
-            st.warning(f"something went wrong with this graph :|\n\n{e}")
-            st.text(traceback.format_exc())
-            df_first_licks = None
-            
-        try:
-            st.subheader("First Lick Latency Analysis")
-            plot_first_lick_latency(project_data, index, df_go_first_licks, df_no_go_first_licks)
+            df_go_first_licks, df_no_go_first_licks, lick_by_stimulus = process_and_plot_lick_data(project_data, index, plot=True)
+            if st.session_state.analysis_type == 'GNG-Bpod GUI':
+                plot_first_lick_by_stimulus(project_data, index, plot=True)
+                try:
+                    st.subheader("First Lick Latency Analysis")
+                    plot_first_lick_latency(project_data, index, df_go_first_licks, df_no_go_first_licks)
+                except Exception as e:
+                    st.warning(f"something went wrong with latency analysis :|\n\n{e}")
+                    st.text(traceback.format_exc())
+            elif st.session_state.analysis_type == 'Educage':
+                plot_n_lick_by_stimulus(project_data, index, plot=True)
+
         except Exception as e:
             st.warning(f"something went wrong with latency analysis :|\n\n{e}")
             st.text(traceback.format_exc())
+
+
+
+
         try:
             daily_activity_single_animal(project_data, index)
         except Exception as e:

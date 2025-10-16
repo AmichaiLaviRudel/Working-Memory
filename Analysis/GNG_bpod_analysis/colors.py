@@ -132,3 +132,65 @@ LINE_WIDTH_MEDIUM  = 1.0
 LINE_WIDTH_THICK    = 5
 LINE_WIDTH_VERY_THICK = 7
 
+
+def marker_symbols_from_boundaries(boundaries):
+    """
+    Return a per-point marker symbol list based on number of boundaries.
+    circle for 1 boundary, square for 2; defaults to circle on error.
+    """
+    try:
+        return ["circle" if int(nb) == 1 else "square" for nb in list(boundaries)]
+    except Exception:
+        try:
+            # Single scalar
+            nb = int(boundaries)
+            return ["circle" if nb == 1 else "square"]
+        except Exception:
+            return ["circle"]
+
+
+def marker_sizes_from_tones(tones_per_class, scale=5.0, default_size=6.0):
+    """
+    Return a per-point marker size list scaled by tones_per_class.
+    """
+    import numpy as np
+    try:
+        tones = np.asarray(list(tones_per_class), dtype=float)
+        sizes = tones * float(scale)
+        sizes[~np.isfinite(sizes)] = float(default_size)
+        return sizes.tolist()
+    except Exception:
+        return [float(default_size)]
+
+
+def add_marker_legends(fig, boundaries, tones_per_class, scale=5.0):
+    """
+    Add legend entries to a Plotly figure for marker shapes (boundaries)
+    and representative sizes (tones per class).
+    """
+    import plotly.graph_objects as go
+    import pandas as pd
+    # Shapes by boundaries
+    try:
+        unique_bounds = sorted(set(int(nb) for nb in boundaries if pd.notna(nb)))
+    except Exception:
+        unique_bounds = [1, 2]
+    for nb in unique_bounds:
+        fig.add_trace(go.Scatter(
+            x=[None], y=[None], mode='markers',
+            marker=dict(symbol=('circle' if nb == 1 else 'square'), color='gray', size=10),
+            name=("1 Boundary" if nb == 1 else "2 Boundaries"),
+            showlegend=True, hoverinfo='skip'
+        ))
+    # Sizes by tones
+    try:
+        size_levels = sorted(set(int(t) for t in tones_per_class if pd.notna(t)))
+    except Exception:
+        size_levels = []
+    for size in size_levels:
+        fig.add_trace(go.Scatter(
+            x=[None], y=[None], mode='markers',
+            marker=dict(symbol='circle', color='white', size=float(size)*float(scale), line=dict(width=3, color='gray')),
+            name=f"{size} Tones",
+            showlegend=True, hoverinfo='skip'
+        ))

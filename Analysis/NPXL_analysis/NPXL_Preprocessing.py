@@ -48,16 +48,36 @@ def load_cluster_info(working_dir, data_dirs):
     Returns:
         pd.DataFrame or None: DataFrame with cluster info, or None if not found.
     """
-    
+    # working_dir, data_dirs = current_ks_folder, spikeglx_data_dir 
     label_dir = os.path.join(working_dir, "bombcell", "unit_labels.tsv")
     if os.path.isfile(label_dir):
         return pd.read_csv(label_dir, sep='\t')
-    else:
+    elif "cluster_bc_unitType.tsv" in os.listdir(data_dirs):
+        data = pd.read_csv(os.path.join(data_dirs, "cluster_bc_unitType.tsv").replace("\\", "/"), sep='\t')
+        # save the data to the working_dir
+        data_to_bc = data.copy()
+        data_to_bc.columns = ["unitID", "UnitType"]
+        data_to_bc.index = data_to_bc["unitID"]
+        data_to_bc.index.name = "cluster_index"
+        
+        # Map unit types to numeric values
+        unit_type_mapping = {
+            'NOISE': 0,
+            'GOOD': 1,
+            'MUA': 2,
+            'NON-SOMA': 3
+        }
+        data_to_bc['UnitType'] = data_to_bc['UnitType'].map(unit_type_mapping)
+        
+        data_to_bc.to_csv(label_dir, sep='\t', index=False)
+        return data
+    elif "cluster_info.tsv" in os.listdir(data_dirs):
         label_dir = os.path.join(data_dirs, "cluster_info.tsv")
         if os.path.isfile(label_dir):
             return pd.read_csv(label_dir, sep='\t')
-        else:
-            return None
+    else:
+        print(f"No cluster info found in {working_dir} or {data_dirs}")
+        return None
 
 def extract_spike_matrices(spikes_times, spikes_clusters, cluster_info):
     """
@@ -71,11 +91,23 @@ def extract_spike_matrices(spikes_times, spikes_clusters, cluster_info):
         np.ndarray: [n_clusters x max_spikes] array, padded with 0.
         list of dict: cluster metadata (including index) for each row of the spike_matrix.
     """
-    # Get cluster indices for each type
-    good_clusters_index = cluster_info[cluster_info['UnitType'] == 1].index
-    mua_clusters_index = cluster_info[cluster_info['UnitType'] == 2].index
-    non_somatic_index = cluster_info[cluster_info['UnitType'] == 3].index
-    ordered_indices = list(good_clusters_index) + list(mua_clusters_index) + list(non_somatic_index)
+
+    # spikes_times,spikes_clusters,cluster_info = spike_timestamps_seconds, spike_cluster_assignments, cluster_metadata
+    try:
+        unit_type_column = cluster_info.columns[1]
+        # Get cluster indices for each type
+        good_clusters_index = cluster_info[cluster_info[unit_type_column] == 'GOOD'].index
+        mua_clusters_index = cluster_info[cluster_info[unit_type_column] == "MUA"].index
+        non_somatic_index = cluster_info[cluster_info[unit_type_column] == 'NON-SOMA'].index
+        ordered_indices = list(good_clusters_index) + list(mua_clusters_index) + list(non_somatic_index)
+    except Exception:
+        unit_type_column = cluster_info.columns[0]
+        good_clusters_index = cluster_info[cluster_info[unit_type_column] == 1].index
+        mua_clusters_index = cluster_info[cluster_info[unit_type_column] == 2].index
+        non_somatic_index = cluster_info[cluster_info[unit_type_column] == 3].index
+        ordered_indices = list(good_clusters_index) + list(mua_clusters_index) + list(non_somatic_index)
+
+
     # Collect spike times for each cluster
     spike_lists = []
     all_cluster_indices = []
@@ -119,12 +151,17 @@ def save_analysis_data(folder, spike_matrix, stimuli_outcome, all_cluster_indice
     """
     if not os.path.exists(folder):
         os.makedirs(folder)
-
+    # folder, spike_matrix, stimuli_outcome, all_cluster_indices, licking_times = analysis_output_dir, firing_rate_matrix, stimuli_outcome_df, cluster_metadata_list, licking_timestamps_in_bins
     # Convert all_cluster_indices to DataFrame for easy filtering
     meta_df = pd.DataFrame(all_cluster_indices)
-    good_mask = meta_df['UnitType'] == 1
-    mua_mask = meta_df['UnitType'] == 2
-    non_somatic_mask = meta_df['UnitType'] == 3
+    try:
+        good_mask = meta_df['UnitType'] == 1
+        mua_mask = meta_df['UnitType'] == 2
+        non_somatic_mask = meta_df['UnitType'] == 3
+    except Exception:
+        good_mask = meta_df['bc_unitType'] == 'GOOD'
+        mua_mask = meta_df['bc_unitType'] == 'MUA'
+        non_somatic_mask = meta_df['bc_unitType'] == 'NON-SOMA'
 
     good_matrix = spike_matrix[good_mask.values, :] if good_mask.any() else np.empty((0, spike_matrix.shape[1]))
     mua_matrix = spike_matrix[mua_mask.values, :] if mua_mask.any() else np.empty((0, spike_matrix.shape[1]))
@@ -606,7 +643,7 @@ def main():
     # recordings_root_directory = r"/ems/elsc-labs/mizrahi-a/Shared/Amichai/NPXL/Recs/group5"
     # experiment_metadata_csv_path = r"/ems/elsc-labs/mizrahi-a/Code\DB\users_data\Amichai\NPXL recordings _experimental_data.csv".replace("\\", "/")
     
-    recordings_root_directory = r"Z:/Shared/Amichai/NPXL/Recs/group5"
+    recordings_root_directory = r"Z:/Shared/Amichai/NPXL/Recs/group6"
     experiment_metadata_csv_path = r"Z:\Shared\Amichai/Code\DB\users_data\Amichai\NPXL recordings _experimental_data.csv".replace("\\", "/")
     
 
@@ -615,7 +652,7 @@ def main():
     for idx, current_ks_folder in enumerate(ks_analysis_folders):
         print(f"\n\nProcessing {idx+1} of {len(ks_analysis_folders)}: {current_ks_folder}")
         try:
-            # current_ks_folder = ks_analysis_folders[23].replace("\\", "/")
+            # current_ks_folder = ks_analysis_folders[-1].replace("\\", "/")
             os.chdir(current_ks_folder)
             recording_session_dir = os.path.dirname(current_ks_folder)
             probe_identifier = current_ks_folder[-1]

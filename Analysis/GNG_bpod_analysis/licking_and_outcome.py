@@ -1,6 +1,6 @@
 from Analysis.GNG_bpod_analysis.psychometric_curves import *
 from Analysis.GNG_bpod_analysis.metric import *
-from Analysis.GNG_bpod_analysis.GNG_bpod_general import filter_valid_arrays
+from Analysis.GNG_bpod_analysis.GNG_bpod_general import filter_valid_arrays, parse_stimuli
 from Analysis.GNG_bpod_analysis.colors import COLOR_FA, OUTCOME_COLOR_MAP, COLOR_ACCENT, COLOR_GRAY, COLOR_GO, COLOR_NOGO, COLOR_BLUE, COLOR_D_PRIME, COLOR_HIT, COLOR_CR
 
 import re
@@ -88,8 +88,8 @@ def licking_rate(selected_data, index=0, t=10, plot=True):
     frac = pd.DataFrame({"Go": hit_rate, "NoGo": fa_rate})
 
    
-    c_go = "#006837"  # Dark Green
-    c_nogo = "#A50026"  # Dark Red
+    c_go = colors.COLOR_GO 
+    c_nogo = colors.COLOR_NOGO  
 
     if plot:
         st.subheader("Licking rate")
@@ -199,7 +199,7 @@ def preprocess_stimuli_outcomes(selected_data, index=0):
 
     return stimuli, outcomes
 
-def process_and_plot_lick_data(project_data, index, plot=True):
+def process_and_plot_lick_data(project_data, index, plot=False):
     """
     Processes lick data from a DataFrame and generates raster and histogram plots using Plotly subplots.
 
@@ -212,13 +212,15 @@ def process_and_plot_lick_data(project_data, index, plot=True):
     # Define colors
     c_go = COLOR_GO
     c_nogo = COLOR_NOGO
+    outcomes = ast.literal_eval(project_data["Outcomes"].values[index])
+    outcomes = np.array(outcomes)
+
+
 
     # Extract data from DataFrame
     licks_str = project_data.iloc[index]["Licks"]
     trials_str = project_data.iloc[index]["TrialTypes"]
 
-
-    # Convert trial types from string to list safely
     trials = ast.literal_eval(trials_str) if isinstance(trials_str, str) else trials_str
     trials = np.array(trials)
 
@@ -263,8 +265,7 @@ def process_and_plot_lick_data(project_data, index, plot=True):
     else:
         licks = licks_str
 
-
-
+    
     # Convert licks to NumPy array
     licks = np.array(licks, dtype=object)
     # Ensure all elements in licks are numpy ndarrays
@@ -274,21 +275,71 @@ def process_and_plot_lick_data(project_data, index, plot=True):
         for l in licks
     ], dtype=object)
 
-    
+    licks = np.array([_trim_on_decrease(trial) for trial in licks], dtype=object)
+
     # Identify 'Go' and 'No-Go' trials
     no_go_trial = np.where(trials == 'NoGo')[0]
     go_trial = np.where(trials == 'Go')[0]
 
+    hits = np.where(outcomes == "Hit")[0]
+    misses = np.where(outcomes == "Miss")[0]
+    fas = np.where(outcomes == "False Alarm")[0]
+    crs = np.where(outcomes == "Correct Rejection")[0]
 
     # Extract licks
-    go_licks = licks[go_trial]
-    no_go_licks = licks[no_go_trial]
-    go_stimuli = stimuli[go_trial]
-    no_go_stimuli = stimuli[no_go_trial]
+    go_licks = licks[hits]
+    no_go_licks = licks[fas]
+
+    go_stimuli = stimuli[hits]
+    no_go_stimuli = stimuli[fas]
+
 
     # Filter valid Go and No-Go licks
     filtered_go_licks = filter_valid_arrays(go_licks)
     filtered_no_go_licks = filter_valid_arrays(no_go_licks)
+
+
+    # plot_diff = 0
+    
+    # if plot_diff:
+    #     # Compute diffs for each trial's licks individually to avoid ValueError
+    #     go_licks_diff = [np.diff(trial_licks) for trial_licks in filtered_go_licks if len(trial_licks) > 1]
+    #     no_go_licks_diff = [np.diff(trial_licks) for trial_licks in filtered_no_go_licks if len(trial_licks) > 1]
+
+    #     # Add all diffs together into single arrays
+    #     all_go_diffs = np.concatenate(go_licks_diff) if go_licks_diff else np.array([])
+    #     all_nogo_diffs = np.concatenate(no_go_licks_diff) if no_go_licks_diff else np.array([])
+
+    #     # Plot the distribution using plotly.graph_objects
+    #     fig_diff = go.Figure()
+    #     if all_go_diffs.size > 0:
+    #         fig_diff.add_trace(go.Histogram(
+    #             x=all_go_diffs,
+    #             name="Go Trials",
+    #             opacity=0.7,
+    #             marker_color=colors.COLOR_GO,
+    #             nbinsx=150
+    #         ))
+    #     if all_nogo_diffs.size > 0:
+    #         fig_diff.add_trace(go.Histogram(
+    #             x=all_nogo_diffs,
+    #             name="No-Go Trials",
+    #             opacity=0.7,
+    #             marker_color=colors.COLOR_NOGO,
+    #             nbinsx=150
+    #         ))
+
+    #     fig_diff.update_layout(
+    #         barmode='overlay',
+    #         title="Distribution of Inter-Lick Intervals (Diffs)",
+    #         xaxis_title="Inter-Lick Interval (s)",
+    #         yaxis_title="Count",
+    #         legend_title="Trial Type",
+    #         template="simple_white"
+    #     )
+
+    #     st.plotly_chart(fig_diff, use_container_width=True, key=f"lick_diff_distribution_plot_{index}")
+    
     # Concatenate valid licks
     concatenated_go = np.concatenate(filtered_go_licks) if filtered_go_licks else np.array([])
     concatenated_no_go = np.concatenate(filtered_no_go_licks) if filtered_no_go_licks else np.array([])
@@ -300,7 +351,7 @@ def process_and_plot_lick_data(project_data, index, plot=True):
     try:
         stimuli_str = project_data.iloc[index]["Stimuli"]
         if isinstance(stimuli_str, str):
-            stimuli = np.array([float(x) for x in stimuli_str.strip("[]").split()])
+            stimuli = parse_stimuli(stimuli_str)
         else:
             stimuli = np.array(stimuli_str)
     except Exception:
@@ -451,10 +502,40 @@ def process_and_plot_lick_data(project_data, index, plot=True):
 
     # Display the subplot figure in Streamlit
     if plot:
-        st.plotly_chart(fig, use_container_width=False)
+        st.plotly_chart(fig, use_container_width=False, key="raster_histogram_plot")
 
-    return df_go_first_licks, df_no_go_first_licks
 
+   # Create a DataFrame to contain lick and stimulus info for each outcome type
+    outcome_data = {
+        "Outcome": [],
+        "Licks": [],
+        "Stimuli": []
+    }
+
+    # Hits
+    outcome_data["Outcome"].append("Hit")
+    outcome_data["Licks"].append(go_licks)
+    outcome_data["Stimuli"].append(go_stimuli)
+
+    # Misses
+    outcome_data["Outcome"].append("Miss")
+    outcome_data["Licks"].append(licks[misses])
+    outcome_data["Stimuli"].append(stimuli[misses])
+
+    # False Alarms
+    outcome_data["Outcome"].append("False Alarm")
+    outcome_data["Licks"].append(no_go_licks)
+    outcome_data["Stimuli"].append(no_go_stimuli)
+
+    # Correct Rejections
+    outcome_data["Outcome"].append("Correct Rejection")
+    outcome_data["Licks"].append(licks[crs])
+    outcome_data["Stimuli"].append(stimuli[crs])
+
+
+    outcome_df = pd.DataFrame(outcome_data)
+
+    return df_go_first_licks, df_no_go_first_licks, outcome_df
 
 def plot_first_lick_by_stimulus(project_data, index, plot=True):
     """Plot first lick times by stimulus ID."""
@@ -552,8 +633,6 @@ def plot_first_lick_by_stimulus(project_data, index, plot=True):
 
     if plot:
         st.plotly_chart(fig, use_container_width=True)
-
-
         
 # Prepare raster plot data
 def prepare_raster_data(licks_list, trial_type, trial_stim, start_index=1):
@@ -879,10 +958,6 @@ def plot_first_lick_latency_multiple_sessions(selected_data, animal_name="None",
         )
         st.plotly_chart(fig, use_container_width=True)
         
-        # Display summary statistics
-        st.write("**Summary Statistics:**")
-        summary_df = results_df[['Session Index', 'Session Date', 'Go Mean', 'Go Std', 'Go Count', 'NoGo Mean', 'NoGo Std', 'NoGo Count']].copy()
-        st.dataframe(summary_df, use_container_width=True)
     
     return results_df
 
@@ -1264,13 +1339,15 @@ def cumulative_number_of_trials_vs_daily_dprime(project_data, t=15):
         marker_symbols = ['circle' if nb == 1 else 'square' for nb in n_b]
         # Marker line width is n_t value for each point
         marker_line_widths = n_t
+        # Use shared helpers for marker sizes and legends
+        marker_sizes = colors.marker_sizes_from_tones(n_t, scale=5.0, default_size=6.0)
         fig.add_trace(go.Scatter(
             x=cumulative_trials,
             y=d_prime_per_day,
             mode='lines+markers',
             marker=dict(
                 color=colors[0],
-                size=marker_line_widths*5,
+                size=marker_sizes,
                 symbol=marker_symbols,
                 line=dict(
                     width=2,
@@ -1302,17 +1379,8 @@ def cumulative_number_of_trials_vs_daily_dprime(project_data, t=15):
                 showlegend=True,
                 hoverinfo='skip'
             ))
-            # Add legend entries for marker size (number of tones per class)
-            # We'll show a few representative sizes
-            for sizes in sorted(set(n_t)):
-                fig.add_trace(go.Scatter(
-                    x=[None], y=[None],
-                    mode='markers',
-                    marker=dict(symbol='circle', color='white', size=sizes*5, line=dict(width=3, color='gray')),
-                    name=f"{sizes} Tones",
-                    showlegend=True,
-                    hoverinfo='skip'
-                ))
+            # Add legend entries for marker sizes via shared helper
+            colors.add_marker_legends(fig, n_b, n_t, scale=5.0)
         fig.update_layout(
             xaxis_title="Cumulative Number of Trials",
             yaxis_title="Daily d'",
@@ -1322,3 +1390,136 @@ def cumulative_number_of_trials_vs_daily_dprime(project_data, t=15):
         )
 
     st.plotly_chart(fig, use_container_width=True)
+
+def plot_n_lick_by_stimulus(project_data, index, plot=True):
+
+    # Build per-trial lick counts and stimulus IDs
+    try:
+        licks_str = project_data.iloc[index]["Licks"]
+        stimuli_str = project_data.iloc[index]["Stimuli"]
+
+        if isinstance(licks_str, str):
+            licks_str = re.sub(r'array\(', 'np.array(', licks_str)
+            licks = eval(licks_str, {"np": np, "None": None, "nan": None})
+        else:
+            licks = licks_str
+
+        licks = np.array(licks, dtype=object)
+        licks = np.array([
+            np.array(l, dtype=float) if not isinstance(l, np.ndarray) and l is not None and l != [] else
+            (l if isinstance(l, np.ndarray) else np.array([]))
+            for l in licks
+        ], dtype=object)
+        
+
+
+        licks = np.array([_trim_on_decrease(trial) for trial in licks], dtype=object)
+    
+        if isinstance(stimuli_str, str):
+            stimuli = np.array([float(x) for x in stimuli_str.strip("[]").split()])
+        else:
+            stimuli = np.array(stimuli_str)
+
+        n_licks = np.array([len(l) if isinstance(l, np.ndarray) else 0 for l in licks])
+
+        per_trial_df = pd.DataFrame({
+            "Trial": np.arange(1, len(n_licks) + 1),
+            "Stimulus ID": stimuli,
+            "N Licks": n_licks
+        })
+
+        grouped = per_trial_df.groupby("Stimulus ID").agg(
+            N_Trials=("N Licks", "size"),
+            Mean_N_Licks=("N Licks", "mean"),
+            Median_N_Licks=("N Licks", "median"),
+            Std_N_Licks=("N Licks", "std"),
+            Sum_N_Licks=("N Licks", "sum")
+        ).reset_index()
+
+    except Exception:
+        per_trial_df = pd.DataFrame(columns=["Trial", "Stimulus ID", "N Licks"]) 
+        grouped = pd.DataFrame(columns=["Stimulus ID", "N_Trials", "Mean_N_Licks", "Median_N_Licks", "Std_N_Licks", "Sum_N_Licks"]) 
+
+    if plot:
+        st.subheader("N Licks by Stimulus")
+        with st.expander("Licks", expanded=False):
+            st.dataframe(licks)
+
+        with st.expander("Per-trial counts", expanded=False):
+            st.dataframe(per_trial_df)
+
+        with st.expander("Grouped summary", expanded=False):
+            st.dataframe(grouped)
+
+        if not per_trial_df.empty:
+            fig = go.Figure()
+            
+            # Sort stimulus IDs for consistent x-axis ordering
+            stim_ids_sorted = sorted(per_trial_df["Stimulus ID"].unique())
+            
+            # Color by stimulus type (Go vs NoGo)
+            for stim_id in stim_ids_sorted:
+                stim_data = per_trial_df[per_trial_df["Stimulus ID"] == stim_id]
+                
+                # Determine color based on stimulus type
+                if 1 <= stim_id <= 1.5:
+                    color = COLOR_NOGO
+                    name = f"NoGo {stim_id}"
+                else:
+                    color = COLOR_GO
+                    name = f"Go {stim_id}"
+                
+                fig.add_trace(
+                    go.Violin(
+                        x=stim_data["Stimulus ID"].astype(str),
+                        y=stim_data["N Licks"],
+                        name=name,
+                        box_visible=False,
+                        meanline_visible=True,
+                        line_color=color,
+                        opacity=0.6,
+                        legendgroup=name
+                    )
+                )
+
+            # Add line connecting the means per stimulus
+            try:
+                grouped_sorted = grouped.sort_values("Stimulus ID")
+                fig.add_trace(
+                    go.Scatter(
+                        x=grouped_sorted["Stimulus ID"].astype(str),
+                        y=grouped_sorted["Mean_N_Licks"],
+                        mode='lines+markers',
+                        name='Mean',
+                        line=dict(color=COLOR_GRAY, width=3),
+                        marker=dict(color=COLOR_GRAY, size=3),
+                        showlegend=False
+                    )
+                )
+            except Exception:
+                pass
+
+            fig.update_layout(
+                title="N Licks by Stimulus",
+                xaxis_title="Stimulus ID",
+                yaxis_title="N Licks",
+                template="simple_white",
+                showlegend=False,
+                xaxis=dict(
+                    categoryorder='array',
+                    categoryarray=[str(x) for x in stim_ids_sorted]
+                )
+            )
+            st.plotly_chart(fig, use_container_width=True)
+    else:
+        return per_trial_df, grouped
+        
+def _trim_on_decrease(sequence: np.ndarray) -> np.ndarray:
+    if not isinstance(sequence, np.ndarray) or sequence.size == 0:
+        return sequence if isinstance(sequence, np.ndarray) else np.array([])
+    diffs = np.diff(sequence.astype(float))
+    dec_indices = np.where(diffs < 0)[0]
+    if dec_indices[0:1].size == 0:
+        return sequence
+    cut = int(dec_indices[0])
+    return sequence[cut+1:]

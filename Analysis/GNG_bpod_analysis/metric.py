@@ -18,11 +18,7 @@ def d_prime(selected_data, index=0, t=10, plot=False):
     from Analysis.GNG_bpod_analysis.licking_and_outcome import licking_rate
     rates, frac = licking_rate(selected_data, index, t=t, plot=False)
     
-    # Calculate hits, misses, false alarms, and correct rejections
-    hit = rates["Hit"]
-    miss = rates["Miss"]
-    fa = rates["FA"]
-    cr = rates["CR"]
+
     # Ensure the DataFrame has valid numeric data
     frac = frac.dropna(how = "all").astype(float)
 
@@ -41,14 +37,66 @@ def d_prime(selected_data, index=0, t=10, plot=False):
 
     # Compute d'
     d = norm.ppf(hit_rate) - norm.ppf(fa_rate)
-   
-    # valid_bins = (fa_rate+hit_rate) >= 0.5
-    # Create a DataFrame with a safer column name
-    df = pd.DataFrame({"index": range(len(d)), "d_prime": d})
 
+    # compute criterion
+    c = -0.5 * (norm.ppf(hit_rate) + norm.ppf(fa_rate))
+
+
+    # compute beta
+    beta = np.exp(-d*c)
+
+    
+    # Create a DataFrame with a safer column name
+    df = pd.DataFrame({"index": range(len(d)), "d_prime": d, "criterion": c, "beta": beta})
     if plot:
         st.subheader("d' over trials")
         fig = go.Figure()
+        # Helper to add segmented error bands without bridging gaps
+        def _add_error_band(center_series, error_series, x_series, fillcolor, upper_name, lower_name):
+            try:
+                c = np.asarray(center_series, dtype=float)
+                e = np.asarray(error_series, dtype=float)
+                x = np.asarray(x_series, dtype=float)
+            except Exception:
+                return
+            if not np.isfinite(e).any():
+                return
+            valid = np.isfinite(c) & np.isfinite(e)
+            if not valid.any():
+                return
+            # Find contiguous segments of True in 'valid'
+            indices = np.where(valid)[0]
+            if indices.size == 0:
+                return
+            # Split where gaps are >1 index apart
+            splits = np.where(np.diff(indices) > 1)[0] + 1
+            segments = np.split(indices, splits)
+            for seg in segments:
+                if seg.size == 0:
+                    continue
+                xs = x[seg]
+                upper = c[seg] + e[seg]
+                lower = c[seg] - e[seg]
+                fig.add_trace(go.Scatter(
+                    x=xs,
+                    y=upper,
+                    mode='lines',
+                    line=dict(width=0),
+                    showlegend=False,
+                    hoverinfo='skip',
+                    name=upper_name
+                ))
+                fig.add_trace(go.Scatter(
+                    x=xs,
+                    y=lower,
+                    mode='lines',
+                    line=dict(width=0),
+                    fill='tonexty',
+                    fillcolor=fillcolor,
+                    showlegend=False,
+                    hoverinfo='skip',
+                    name=lower_name
+                ))
         fig.add_trace(go.Scatter(
             x=df['index'], y=df['d_prime'], mode='lines',
             name="Overall",
@@ -61,6 +109,13 @@ def d_prime(selected_data, index=0, t=10, plot=False):
             line=dict(color=colors.COLOR_GRAY, dash='dash'),
             hoverinfo='skip', showlegend=True
         ))
+        fig.add_trace(go.Scatter(
+            x=df['index'], y=df['criterion'], mode='lines',
+            name="Criterion",
+            line=dict(color=colors.COLOR_SUBTLE),
+            hovertemplate="Trial: %{x}<br>Criterion: %{y:.3f}<extra></extra>"
+        ))
+
         fig.update_layout(
             xaxis_title="Trial Index",
             yaxis_title="d'",
@@ -148,77 +203,126 @@ def d_prime_multiple_sessions(selected_data, t=10, animal_name='None', plot = Tr
     if plot:
         import plotly.graph_objects as go
         fig = go.Figure()
-        # Main overall d' line
+        # Helper to add segmented error bands without bridging gaps
+        def _add_error_band(center_series, error_series, x_series, fillcolor, upper_name, lower_name):
+            try:
+                c = np.asarray(center_series, dtype=float)
+                e = np.asarray(error_series, dtype=float)
+                x = np.asarray(x_series, dtype=float)
+            except Exception:
+                return
+            if not np.isfinite(e).any():
+                return
+            valid = np.isfinite(c) & np.isfinite(e)
+            if not valid.any():
+                return
+            # Find contiguous segments of True in 'valid'
+            indices = np.where(valid)[0]
+            if indices.size == 0:
+                return
+            # Split where gaps are >1 index apart
+            splits = np.where(np.diff(indices) > 1)[0] + 1
+            segments = np.split(indices, splits)
+            for seg in segments:
+                if seg.size == 0:
+                    continue
+                xs = x[seg]
+                upper = c[seg] + e[seg]
+                lower = c[seg] - e[seg]
+                fig.add_trace(go.Scatter(
+                    x=xs,
+                    y=upper,
+                    mode='lines',
+                    line=dict(width=0),
+                    showlegend=False,
+                    hoverinfo='skip',
+                    name=upper_name
+                ))
+                fig.add_trace(go.Scatter(
+                    x=xs,
+                    y=lower,
+                    mode='lines',
+                    line=dict(width=0),
+                    fill='tonexty',
+                    fillcolor=fillcolor,
+                    showlegend=False,
+                    hoverinfo='skip',
+                    name=lower_name
+                ))
+        # Prepare marker arrays (shape by boundaries, size by tones per class)
+        try:
+            marker_symbols = colors.marker_symbols_from_boundaries(data['Boundaries'])
+        except Exception:
+            marker_symbols = ['circle'] * len(data)
+        try:
+            marker_sizes = colors.marker_sizes_from_tones(data['tones_per_class'], scale=5.0, default_size=6.0)
+        except Exception:
+            marker_sizes = [6.0] * len(data)
+
+        # Main overall d' line and markers slightly above the line
+        y_vals = np.asarray(data['d_prime'], dtype=float)
+        y_level = (np.nanmin(y_vals) if np.isfinite(y_vals).any() else 0.0) - 1.5
         fig.add_trace(go.Scatter(
             x=data['Session Index'], y=data['d_prime'], mode='lines',
             name="Overall d'",
-            line=dict(color=colors.COLOR_ACCENT),
-            marker=dict(symbol='circle')
-        ))
-        # Overall d' error band
-        fig.add_trace(go.Scatter(
-            x=data['Session Index'], y=data['d_prime'] + data['Error'],
-            mode='lines', line=dict(width=0),  # invisible line
-            showlegend=False,
-            hoverinfo='skip',
-            name='+1 Std'
+            line=dict(color=colors.COLOR_ACCENT)
         ))
         fig.add_trace(go.Scatter(
-            x=data['Session Index'], y=data['d_prime'] - data['Error'],
-            mode='lines', line=dict(width=0),  # invisible line
-            fill='tonexty',
-            fillcolor=colors.COLOR_ACCENT_TRANSPARENT,  # transparent version of COLOR_SUBTLE
-            showlegend=False,
-            hoverinfo='skip',
-            name='-1 Std'
+            x=data['Session Index'], y=[y_level] * len(y_vals), mode='markers',
+            name="Overall d'",
+            marker=dict(symbol=marker_symbols, size=marker_sizes, color=colors.COLOR_GRAY),
+            showlegend=False
         ))
+        # Legend entries for marker shapes (number of boundaries)
+        try:
+            unique_bounds = sorted(set(int(nb) for nb in data['Boundaries'] if pd.notna(nb)))
+        except Exception:
+            unique_bounds = [1, 2]
+        colors.add_marker_legends(fig, data['Boundaries'], data['tones_per_class'], scale=5.0)
+        # Overall d' error band (segmented)
+        _add_error_band(
+            data['d_prime'],
+            data['Error'],
+            data['Session Index'],
+            colors.COLOR_ACCENT_TRANSPARENT,
+            '+1 Std',
+            '-1 Std'
+        )
         # Low boundary overlay and error band
+        y_low = np.asarray(data['Low Boundary d_prime'], dtype=float)
+        y_low_level = (np.nanmin(y_low) if np.isfinite(y_low).any() else 0.0) - 1.5
         fig.add_trace(go.Scatter(
-            x=data['Session Index'], y=data['Low Boundary d_prime'],
-            mode='lines+markers', name="Low Boundary d'",
-            line=dict(color=colors.COLOR_LOW_BD),
-            marker=dict(symbol='triangle-up')
-        ))
-        fig.add_trace(go.Scatter(
-            x=data['Session Index'], y=data['Low Boundary d_prime'] + data['Low Boundary Error'],
-            mode='lines', line=dict(width=0),
-            showlegend=False,
-            hoverinfo='skip',
-            name='+1 Std Low',
-        ))
-        fig.add_trace(go.Scatter(
-            x=data['Session Index'], y=data['Low Boundary d_prime'] - data['Low Boundary Error'],
-            mode='lines', line=dict(width=0),
-            fill='tonexty',
-            fillcolor=colors.COLOR_LOW_BD_TRANSPARENT,  
-            showlegend=False,
-            hoverinfo='skip',
-            name='-1 Std Low',
+            x=data['Session Index'], y=y_low,
+            mode='lines', name="Low Boundary d'",
+            line=dict(color=colors.COLOR_LOW_BD)
         ))
 
+        _add_error_band(
+            data['Low Boundary d_prime'],
+            data['Low Boundary Error'],
+            data['Session Index'],
+            colors.COLOR_LOW_BD_TRANSPARENT,
+            '+1 Std Low',
+            '-1 Std Low'
+        )
+
         # High boundary overlay and error band
+        y_high = np.asarray(data['High Boundary d_prime'], dtype=float)
+        y_high_level = (np.nanmin(y_high) if np.isfinite(y_high).any() else 0.0) - 1.5
         fig.add_trace(go.Scatter(
-            x=data['Session Index'], y=data['High Boundary d_prime'],
-            mode='lines+markers', name="High Boundary d'",
-            line=dict(color=colors.COLOR_HIGH_BD),
-            marker=dict(symbol='triangle-down')
+            x=data['Session Index'], y=y_high,
+            mode='lines', name="High Boundary d'",
+            line=dict(color=colors.COLOR_HIGH_BD)
         ))
-        fig.add_trace(go.Scatter(
-            x=data['Session Index'], y=data['High Boundary d_prime'] + data['High Boundary Error'],
-            mode='lines', line=dict(width=0),
-            showlegend=False,
-            hoverinfo='skip',
-            name='+1 Std High',
-        ))
-        fig.add_trace(go.Scatter(
-            x=data['Session Index'], y=data['High Boundary d_prime'] - data['High Boundary Error'],
-            mode='lines', line=dict(width=0),
-            fill='tonexty',
-            fillcolor=colors.COLOR_HIGH_BD_TRANSPARENT,
-            showlegend=False,
-            hoverinfo='skip',
-            name='-1 Std High',
-        ))
+
+        _add_error_band(
+            data['High Boundary d_prime'],
+            data['High Boundary Error'],
+            data['Session Index'],
+            colors.COLOR_HIGH_BD_TRANSPARENT,
+            '+1 Std High',
+            '-1 Std High'
+        )
 
         # Learning threshold
         fig.add_trace(go.Scatter(
@@ -255,6 +359,8 @@ def multi_animal_d_prime_progression(selected_data, N_Boundaries = None):
     session_counts = []
     low_boundary_data = []
     high_boundary_data = []
+    tones_per_class_list = []
+    boundaries_list = []
 
     for subject in subjects:
         # Compute d' for each subject
@@ -262,6 +368,15 @@ def multi_animal_d_prime_progression(selected_data, N_Boundaries = None):
         d_prime_values = d_prime_result["d_prime"]
         d_prime_data.append(d_prime_values)
         session_counts.append(len(d_prime_values))
+        # Collect tones per class and boundaries for marker encoding
+        try:
+            tones_per_class_list.append(np.array(d_prime_result['tones_per_class'], dtype=float))
+        except Exception:
+            tones_per_class_list.append(np.array([np.nan] * len(d_prime_values), dtype=float))
+        try:
+            boundaries_list.append(np.array(d_prime_result['Boundaries'], dtype=float))
+        except Exception:
+            boundaries_list.append(np.array([np.nan] * len(d_prime_values), dtype=float))
         # If N_Boundaries == 2, collect low/high boundary d' as well
         if N_Boundaries == 2:
             low_vals = d_prime_result['Low Boundary d_prime']
@@ -274,9 +389,25 @@ def multi_animal_d_prime_progression(selected_data, N_Boundaries = None):
 
     # Convert list of arrays to DataFrame (aligned by padding with NaN)
     d_prime_df = pd.DataFrame([np.pad(d, (0, max_sessions - len(d)), constant_values=np.nan) for d in d_prime_data])
+    tones_df = pd.DataFrame([np.pad(arr, (0, max_sessions - len(arr)), constant_values=np.nan) for arr in tones_per_class_list])
+    bounds_df = pd.DataFrame([np.pad(arr, (0, max_sessions - len(arr)), constant_values=np.nan) for arr in boundaries_list])
 
     # Compute average d' across subjects
     avg_d_prime = d_prime_df.mean(axis=0, skipna=True)
+    # Compute representative tones and boundaries per session position
+    avg_tones = tones_df.mean(axis=0, skipna=True)
+    # Mode for boundaries per session; fallback to nearest non-NaN
+    rep_bounds = []
+    for col in bounds_df.columns:
+        s = bounds_df[col].dropna()
+        if len(s) == 0:
+            rep_bounds.append(np.nan)
+        else:
+            try:
+                modes = s.mode()
+                rep_bounds.append(float(modes.iloc[0]) if len(modes) > 0 else float(s.iloc[0]))
+            except Exception:
+                rep_bounds.append(float(s.iloc[0]))
 
     # Prepare DataFrame for Altair
     data_list = []
@@ -303,42 +434,84 @@ def multi_animal_d_prime_progression(selected_data, N_Boundaries = None):
 
     import plotly.graph_objects as go
     fig = go.Figure()
+    # Build a deterministic color map for subjects
+    try:
+        subject_color_map = colors.get_subject_color_map(subjects)
+    except Exception:
+        subject_color_map = {}
     # Plot all animals (gray lines)
     for i, subject in enumerate(subjects):
         fig.add_trace(go.Scatter(
             x=np.arange(1, max_sessions + 1),
             y=d_prime_df.iloc[i],
             mode='lines',
-            line=dict(color=colors.COLOR_VERY_SUBTLE, width=1),
+            line=dict(color=subject_color_map.get(str(subject), colors.COLOR_SUBTLE), width=1),
             name=f'{subject}',
             showlegend=False
         ))
-    # Plot average overall d'
+    # Plot average overall d' with markers slightly above the line
+    try:
+        marker_sizes = colors.marker_sizes_from_tones(avg_tones, scale=5.0, default_size=6.0)
+    except Exception:
+        marker_sizes = [6.0] * len(avg_d_prime)
+    try:
+        marker_symbols = colors.marker_symbols_from_boundaries(rep_bounds)
+    except Exception:
+        marker_symbols = ['circle'] * len(avg_d_prime)
+    y_vals = np.asarray(avg_d_prime, dtype=float)
+    y_level = (np.nanmin(y_vals) if np.isfinite(y_vals).any() else 0.0) - 1.5
     fig.add_trace(go.Scatter(
         x=np.arange(1, max_sessions + 1),
         y=avg_d_prime,
         mode='lines',
         name="Average Overall d'",
-        line=dict(color=colors.COLOR_ACCENT, width=7),
-        marker=dict(symbol='circle')
+        line=dict(color=colors.COLOR_ACCENT, width=5)
     ))
+    fig.add_trace(go.Scatter(
+        x=np.arange(1, max_sessions + 1),
+        y=[y_level] * len(y_vals),
+        mode='markers',
+        name="Average Overall d'",
+        marker=dict(symbol=marker_symbols, size=marker_sizes, color=colors.COLOR_GRAY),
+        showlegend=False
+    ))
+    # Add legends for marker shapes and sizes
+    colors.add_marker_legends(fig, rep_bounds, avg_tones, scale=5.0)
     # Plot average low/high boundary d' if N_Boundaries == 2
     if N_Boundaries == 2 and low_boundary_data and high_boundary_data:
         fig.add_trace(go.Scatter(
             x=np.arange(1, max_sessions + 1),
             y=avg_low,
-            mode='lines+markers',
+            mode='lines',
             name="Average Low Boundary d'",
-            line=dict(color=colors.COLOR_LOW_BD, width=2, dash='solid'),
-            marker=dict(symbol='triangle-up')
+            line=dict(color=colors.COLOR_LOW_BD, width=2, dash='solid')
+        ))
+        low_vals = np.asarray(avg_low, dtype=float)
+        low_level = (np.nanmin(low_vals) if np.isfinite(low_vals).any() else 0.0) - 1.5
+        fig.add_trace(go.Scatter(
+            x=np.arange(1, max_sessions + 1),
+            y=[low_level] * len(avg_low),
+            mode='markers',
+            name="Average Low Boundary d'",
+            marker=dict(symbol='triangle-up', size=marker_sizes, color=colors.COLOR_GRAY),
+            showlegend=False
         ))
         fig.add_trace(go.Scatter(
             x=np.arange(1, max_sessions + 1),
             y=avg_high,
-            mode='lines+markers',
+            mode='lines',
             name="Average High Boundary d'",
-            line=dict(color=colors.COLOR_HIGH_BD, width=2, dash='solid'),
-            marker=dict(symbol='triangle-down')
+            line=dict(color=colors.COLOR_HIGH_BD, width=2, dash='solid')
+        ))
+        high_vals = np.asarray(avg_high, dtype=float)
+        high_level = (np.nanmin(high_vals) if np.isfinite(high_vals).any() else 0.0) - 1.5
+        fig.add_trace(go.Scatter(
+            x=np.arange(1, max_sessions + 1),
+            y=[high_level] * len(avg_high),
+            mode='markers',
+            name="Average High Boundary d'",
+            marker=dict(symbol='triangle-down', size=marker_sizes, color=colors.COLOR_GRAY),
+            showlegend=False
         ))
     # Learning threshold
     fig.add_trace(go.Scatter(
@@ -379,6 +552,8 @@ def classifier_metric(project_data, index):
     # Compute d' and criterion (c)
     d_mean = np.nanmean(d)
     criterion_c = -0.5 * (norm.ppf(hit_rate) + norm.ppf(fa_rate))
+    beta = np.exp(-d_mean*criterion_c)
+    
 
     # Accuracy
     accuracy = (hit + cr) / (hit + miss + cr + fa)
@@ -407,10 +582,11 @@ def classifier_metric(project_data, index):
         "Hit Rate":                  [hit_rate],
         "False Alarm Rate":          [fa_rate],
         "d'":                        [d_mean],
+        "Criterion":                 [criterion_c],
+        "Beta":                      [beta],
         "Accuracy":                  [accuracy],
         "Precision":                 [precision],
         "F1 Score":                  [f1_score],
-        "False Positive Rate (FPR)": [fpr],
         "ROC-AUC Score":             [roc_auc]
     })
 
@@ -443,9 +619,9 @@ def classifier_metric(project_data, index):
             "F1 Score",
             help = "Harmonic mean of Precision and Recall: 2 * (Precision * Recall) / (Precision + Recall)"
         ),
-        "False Positive Rate (FPR)": st.column_config.NumberColumn(
-            "False Positive Rate (FPR)",
-            help = "Proportion of No-Go trials incorrectly classified as 'Go': FP / (FP + TN)"
+        "Criterion":                 st.column_config.NumberColumn(
+            "Criterion",
+            help = "Criterion value: -0.5 * (Z(Hit Rate) + Z(False Alarm Rate)), liberal is negative, conservative is positive"
         ),
         "ROC-AUC Score":             st.column_config.NumberColumn(
             "ROC-AUC Score",
@@ -738,3 +914,273 @@ def daily_multi_animal_dprime(project_data, t=10):
         showlegend=True
     )
     st.plotly_chart(fig, use_container_width=True)
+
+def d_prime_for_stim_pairs(selected_data, index=0, stim_pairs=None, t=10, plot=True, atol=1e-6):
+    """
+    Compare d' for user-specified pairs of stimuli within a single session.
+
+    Parameters:
+    - selected_data: DataFrame with a session row containing 'Stimuli', 'TrialTypes', 'Outcomes'.
+    - index: Row index of the session to analyze within selected_data.
+    - stim_pairs: List of 2-tuples specifying stimulus value pairs, e.g., [(0.8, 1.2), (1.0, 1.4)].
+                  If None, a UI will be shown to pick one pair interactively.
+    - t: Bin size used by existing d' computation.
+    - plot: If True, shows a Plotly bar chart of mean d' with error bars for each pair.
+    - atol: Absolute tolerance for matching float stimulus values.
+
+    Returns:
+    - pandas.DataFrame with columns: 'Pair', 'mean_d_prime', 'std_d_prime', 'n_bins'.
+    """
+    # Extract raw arrays for the session
+    try:
+        stimuli = selected_data.iloc[index]["Stimuli"]
+        if isinstance(stimuli, str):
+            stimuli = np.fromstring(stimuli.strip("[]"), sep=" ")
+        else:
+            stimuli = np.array(stimuli)
+    except Exception:
+        # Fallback to helper
+        from Analysis.GNG_bpod_analysis.licking_and_outcome import preprocess_stimuli_outcomes
+        stimuli, _ = preprocess_stimuli_outcomes(selected_data, index=index)
+
+    trials_val = selected_data.iloc[index]["TrialTypes"]
+    outcomes_val = selected_data.iloc[index]["Outcomes"]
+    trialtypes = to_array(trials_val)
+    outcomes = to_array(outcomes_val)
+
+    # Determine default pairs if not provided
+    if stim_pairs is None:
+        unique_vals = np.unique(np.round(stimuli.astype(float), 6))
+        unique_vals = np.sort(unique_vals)
+        # Try to read number of boundaries for the session
+        try:
+            n_boundaries = int(selected_data.iloc[index].get('N_Boundaries', 1))
+        except Exception:
+            n_boundaries = 1
+
+        default_pairs = []
+        if unique_vals.size >= 2:
+            if n_boundaries == 1:
+                # Pair first vs last, second vs end-1, etc.
+                half = unique_vals.size // 2
+                for i in range(half):
+                    default_pairs.append((float(unique_vals[i]), float(unique_vals[-(i+1)])))
+            elif n_boundaries == 2:
+                # Use boundaries from session_state if available
+                low_bd = getattr(st.session_state, 'low_boundary', None)
+                high_bd = getattr(st.session_state, 'high_boundary', None)
+                # Fallback: infer mid as the midpoint of middle region
+                if low_bd is None or high_bd is None:
+                    # Heuristic midpoint between 25% and 75%
+                    low_bd = float(np.quantile(unique_vals, 0.33))
+                    high_bd = float(np.quantile(unique_vals, 0.66))
+
+                # Middle stimulus ~ closest to midpoint between boundaries
+                mid_target = (float(low_bd) + float(high_bd)) / 2.0
+                mid_idx = int(np.argmin(np.abs(unique_vals - mid_target)))
+                mid_val = float(unique_vals[mid_idx])
+
+                # Extremes vs middle
+                default_pairs.append((float(unique_vals[0]), mid_val))
+                default_pairs.append((float(unique_vals[-1]), mid_val))
+
+                # Around each boundary: closest below and above
+                def around_boundary_pairs(boundary):
+                    below = unique_vals[unique_vals < boundary]
+                    above = unique_vals[unique_vals > boundary]
+                    if below.size == 0 or above.size == 0:
+                        return None
+                    return (float(below[-1]), float(above[0]))
+
+                p_low = around_boundary_pairs(float(low_bd))
+                p_high = around_boundary_pairs(float(high_bd))
+                if p_low is not None:
+                    default_pairs.append(p_low)
+                if p_high is not None:
+                    default_pairs.append(p_high)
+
+        # De-duplicate and ensure sorted within pair
+        if default_pairs:
+            norm_pairs = []
+            seen = set()
+            for a, b in default_pairs:
+                sa, sb = (a, b) if a <= b else (b, a)
+                key = (round(sa, 6), round(sb, 6))
+                if key not in seen and abs(sa - sb) > atol:
+                    seen.add(key)
+                    norm_pairs.append((sa, sb))
+            stim_pairs = norm_pairs
+
+        # If still empty, fall back to simple UI to pick two stimuli
+        if not stim_pairs:
+            options = [float(v) for v in unique_vals]
+            picked = st.multiselect("Pick exactly two stimuli to compare", options=options, key=f"stim_pair_{index}")
+            if len(picked) != 2:
+                st.info("Select two stimulus values to compute and compare d'.")
+                return pd.DataFrame(columns=["Pair", "mean_d_prime", "std_d_prime", "n_bins"]) 
+            stim_pairs = [tuple(sorted([float(picked[0]), float(picked[1])]))]
+
+    results = []
+    labels = []
+    pair_to_values = {}
+    pair_meta = []
+
+    def _format_pair_label(a, b):
+        a = float(a)
+        b = float(b)
+        lo, hi = (a, b) if a <= b else (b, a)
+        if lo <= 0 or not np.isfinite(lo) or not np.isfinite(hi):
+            return f"{a:g} vs {b:g}"
+        ratio = hi / lo
+        octaves = np.log2(ratio) if ratio > 0 else np.nan
+        # Nicely formatted octave value
+        if np.isfinite(octaves):
+            # Round to nearest 0.05
+            oct_rounded = round(octaves * 20) / 20  # 1/20 = 0.05
+            if abs(octaves - oct_rounded) < 0.025:
+                oct_str = f"{oct_rounded:.2f}".rstrip('0').rstrip('.')  # Remove trailing zeros
+            else:
+                oct_str = f"{octaves:.2f}"
+            return f"{lo * 10:.1f} vs. {hi * 10:.1f} [~{oct_str} oct]"
+        return f"{lo * 10:.1f} vs. {hi * 10:.1f}"
+
+    # Prepare boundary refs if available
+    try:
+        n_boundaries = int(selected_data.iloc[index].get('N_Boundaries', 1))
+    except Exception:
+        n_boundaries = 1
+    low_bd = getattr(st.session_state, 'low_boundary', None)
+    high_bd = getattr(st.session_state, 'high_boundary', None)
+    # Derive a middle value if needed
+    if n_boundaries == 2:
+        if low_bd is None or high_bd is None:
+            low_bd = float(np.quantile(stimuli, 0.33))
+            high_bd = float(np.quantile(stimuli, 0.66))
+        mid_val = (float(low_bd) + float(high_bd)) / 2.0
+    else:
+        mid_val = None
+
+    for (s1, s2) in stim_pairs:
+        # Build mask for the two stimuli with tolerance
+        mask = np.isclose(stimuli, s1, atol=atol) | np.isclose(stimuli, s2, atol=atol)
+        # Safety checks
+        if mask.sum() == 0:
+            continue
+        # Filter arrays
+        filtered_trials = trialtypes[mask]
+        filtered_outcomes = outcomes[mask]
+        # Prepare a one-row DataFrame for existing d' function
+        df_one = selected_data.loc[[index]].copy()
+        df_one.iloc[0, df_one.columns.get_loc('TrialTypes')] = str(np.asarray(filtered_trials).tolist())
+        df_one.iloc[0, df_one.columns.get_loc('Outcomes')] = str(np.asarray(filtered_outcomes).tolist())
+        # Compute d' over bins
+        d_vals = d_prime(df_one, index=0, t=t, plot=False)
+        d_vals = np.asarray(d_vals, dtype=float)
+        d_vals = d_vals[~np.isnan(d_vals)]
+        mean_dp = float(np.nanmean(d_vals)) if d_vals.size else np.nan
+        std_dp = float(np.nanstd(d_vals)) if d_vals.size else np.nan
+        results.append((mean_dp, std_dp, int(d_vals.size)))
+        label = _format_pair_label(s1, s2)
+        labels.append(label)
+        pair_to_values[label] = d_vals
+        # Compute metadata: category and distance
+        a = float(s1); b = float(s2)
+        lo, hi = (a, b) if a <= b else (b, a)
+        ratio = (hi / lo) if (lo > 0 and np.isfinite(lo) and np.isfinite(hi)) else np.nan
+        octaves = np.log2(ratio) if (isinstance(ratio, (int, float)) and ratio > 0) else np.nan
+        if n_boundaries == 2 and low_bd is not None and high_bd is not None and mid_val is not None:
+            # Determine category
+            around_low = (lo < float(low_bd)) and (hi > float(low_bd))
+            around_high = (lo < float(high_bd)) and (hi > float(high_bd))
+            near_mid = (abs(a - mid_val) < abs(a - float(low_bd)) and abs(a - mid_val) < abs(a - float(high_bd))) or \
+                      (abs(b - mid_val) < abs(b - float(low_bd)) and abs(b - mid_val) < abs(b - float(high_bd)))
+            if around_low and not around_high:
+                category = 'Around Low Boundary'
+                color = colors.COLOR_LOW_BD
+            elif around_high and not around_low:
+                category = 'Around High Boundary'
+                color = colors.COLOR_HIGH_BD
+            else:
+                category = 'General'
+                color = colors.COLOR_SUBTLE
+        else:
+            category = 'Distance Pair'
+            color = colors.COLOR_ACCENT
+        pair_meta.append({
+            'label': label,
+            'category': category,
+            'color': color,
+            'octaves': float(octaves) if np.isfinite(octaves) else np.nan
+        })
+
+    # Build result DataFrame
+    out_df = pd.DataFrame([
+        {"Pair": labels[i], "mean_d_prime": r[0], "std_d_prime": r[1], "n_bins": r[2]}
+        for i, r in enumerate(results)
+    ])
+
+    if plot and not out_df.empty:
+        fig = go.Figure()
+        # Build a lookup for meta
+        meta_by_label = {m['label']: m for m in pair_meta}
+        categories_present = []
+        for pair_label in out_df['Pair']:
+            vals = pair_to_values.get(pair_label, np.array([]))
+            if vals.size == 0:
+                continue
+            meta = meta_by_label.get(pair_label, {})
+            color = meta.get('color', colors.COLOR_ACCENT)
+            octaves = meta.get('octaves', np.nan)
+            # Line width encodes distance level
+            lw = 1
+            if np.isfinite(octaves):
+                lw = max(1, min(5, int(round(octaves)) + 1))
+            fig.add_trace(go.Box(
+                y=vals,
+                name=pair_label,
+                boxpoints='outliers',
+                marker_color=color,
+                line=dict(color=color, width=lw),
+                showlegend=False
+            ))
+            cat = meta.get('category')
+            if cat and cat not in categories_present:
+                categories_present.append(cat)
+        # Add legend entries for categories
+        for cat in categories_present:
+            # Use a dummy invisible scatter to show legend color
+            sample_color = None
+            for m in pair_meta:
+                if m['category'] == cat:
+                    sample_color = m['color']
+                    break
+            if sample_color is None:
+                sample_color = colors.COLOR_ACCENT
+            fig.add_trace(go.Scatter(
+                x=[None], y=[None], mode='markers',
+                marker=dict(color=sample_color, size=10),
+                name=cat
+            ))
+        ordered_pairs = list(out_df['Pair'])
+        if len(ordered_pairs) >= 1:
+            x_start = ordered_pairs[0]
+            x_end = ordered_pairs[-1]
+            fig.add_trace(go.Scatter(
+                x=[x_start, x_end],
+                y=[1, 1],
+                mode='lines',
+                name="Learning Threshold",
+                line=dict(color=colors.COLOR_GRAY, dash='dash'),
+                hoverinfo='skip',
+                showlegend=True
+            ))
+        fig.update_layout(
+            title="d' distributions by Boundary Category and Distance",
+            xaxis_title="Stimulus Pair",
+            yaxis_title="d'",
+            height=400,
+            width=700
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    return out_df

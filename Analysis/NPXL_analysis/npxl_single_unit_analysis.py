@@ -1789,9 +1789,12 @@ def single_unit_analysis_panel(
             parent_dir = os.path.dirname(selected_folder)
             qa_folder = os.path.join(parent_dir, "bombcell")
             st.write("QA folder:", qa_folder)
-
-            distribution_img_path = os.path.join(qa_folder, "quality_metrics_distribution.png")
-            classification_img_path = os.path.join(qa_folder, "waveform_classification.png")
+            try:
+                distribution_img_path = os.path.join(qa_folder, "quality_metrics_histograms.png")
+                classification_img_path = os.path.join(qa_folder, "waveforms_overlay.png")
+            except Exception:
+                distribution_img_path = os.path.join(qa_folder, "quality_metrics_distribution.png")
+                classification_img_path = os.path.join(qa_folder, "waveform_classification.png")
 
             def pil_image_to_data_uri(image):
                 """Convert a PIL Image to a data URI for plotly."""
