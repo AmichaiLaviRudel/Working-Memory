@@ -1321,10 +1321,10 @@ def cumulative_number_of_trials_vs_daily_dprime(project_data, t=15):
         session_dates = mouse_data["SessionDate"].values
         n_trials_per_day = []
         d_prime_per_day = []
-        colors = []
+        mouse_colors = []
         for i in range(len(mouse_data)):
             color = mouse_data.iloc[i]["Color"] if "Color" in mouse_data.columns else "gray"
-            colors.append(color)
+            mouse_colors.append(color)
             stimuli, outcomes = preprocess_stimuli_outcomes(mouse_data, i)
             n_trials_per_day.append(len(stimuli))
         # Cumulative number of trials
@@ -1346,12 +1346,12 @@ def cumulative_number_of_trials_vs_daily_dprime(project_data, t=15):
             y=d_prime_per_day,
             mode='lines+markers',
             marker=dict(
-                color=colors[0],
+                color=mouse_colors[0],
                 size=marker_sizes,
                 symbol=marker_symbols,
                 line=dict(
                     width=2,
-                    color=colors[0]
+                    color=mouse_colors[0]
                 )
             ),
             name=str(mouse),

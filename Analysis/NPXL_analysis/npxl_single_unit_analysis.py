@@ -1789,10 +1789,10 @@ def single_unit_analysis_panel(
             parent_dir = os.path.dirname(selected_folder)
             qa_folder = os.path.join(parent_dir, "bombcell")
             st.write("QA folder:", qa_folder)
-            try:
-                distribution_img_path = os.path.join(qa_folder, "quality_metrics_histograms.png")
-                classification_img_path = os.path.join(qa_folder, "waveforms_overlay.png")
-            except Exception:
+            # Try the first path; if not found, try the second path
+            distribution_img_path = os.path.join(qa_folder, "quality_metrics_histograms.png")
+            classification_img_path = os.path.join(qa_folder, "waveforms_overlay.png")
+            if not (os.path.exists(distribution_img_path) and os.path.exists(classification_img_path)):
                 distribution_img_path = os.path.join(qa_folder, "quality_metrics_distribution.png")
                 classification_img_path = os.path.join(qa_folder, "waveform_classification.png")
 
