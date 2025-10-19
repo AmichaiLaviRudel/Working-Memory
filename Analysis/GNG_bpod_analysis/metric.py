@@ -1,5 +1,4 @@
-from Analysis.GNG_bpod_analysis.psychometric_curves import *
-from Analysis.GNG_bpod_analysis.licking_and_outcome import *
+# Removed imports to avoid circular dependency
 
 from Analysis.GNG_bpod_analysis.GNG_bpod_general import *
 import Analysis.GNG_bpod_analysis.colors as colors
@@ -12,6 +11,7 @@ from sklearn.metrics import roc_auc_score, roc_curve, confusion_matrix
 import streamlit as st
 import plotly.graph_objects as go
 import ast
+from Analysis.GNG_bpod_analysis.GNG_bpod_general import get_plotly_config
 
 # Function to calculate the d prime
 def d_prime(selected_data, index=0, t=10, plot=False):
@@ -124,7 +124,7 @@ def d_prime(selected_data, index=0, t=10, plot=False):
             height=400,
             width=700
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, config=get_plotly_config())
     return d
 
 def d_prime_multiple_sessions(selected_data, t=10, animal_name='None', plot = True):
@@ -339,7 +339,7 @@ def d_prime_multiple_sessions(selected_data, t=10, animal_name='None', plot = Tr
             height=400,
             width=700
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, config=get_plotly_config())
 
     return data
 
@@ -528,7 +528,7 @@ def multi_animal_d_prime_progression(selected_data, N_Boundaries = None):
         height=400,
         width=700
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, config=get_plotly_config())
 
 def classifier_metric(project_data, index):
     from Analysis.GNG_bpod_analysis.licking_and_outcome import responses, licking_rate
@@ -843,7 +843,7 @@ def d_prime_low_high_boundary_sessions(selected_data, idx, t=10, plot=True):
             xanchor='left',
             yanchor='top'
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, config=get_plotly_config())
 
 
 
@@ -913,7 +913,7 @@ def daily_multi_animal_dprime(project_data, t=10):
         width=900,
         showlegend=True
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, config=get_plotly_config())
 
 def d_prime_for_stim_pairs(selected_data, index=0, stim_pairs=None, t=10, plot=True, atol=1e-6):
     """
@@ -1181,6 +1181,6 @@ def d_prime_for_stim_pairs(selected_data, index=0, stim_pairs=None, t=10, plot=T
             height=400,
             width=700
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, config=get_plotly_config())
 
     return out_df

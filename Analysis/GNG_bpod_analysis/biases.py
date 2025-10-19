@@ -5,6 +5,7 @@ import plotly.graph_objects as go
 from scipy import stats
 import Analysis.GNG_bpod_analysis.colors as colors
 import hashlib
+from Analysis.GNG_bpod_analysis.GNG_bpod_general import get_plotly_config
 
 @st.cache_data(show_spinner="Computing choice bias...")
 def calculate_choice_bias_cached(trial_types_tuple, outcomes_tuple, n_previous_trials, data_hash):
@@ -425,7 +426,7 @@ def bias_multiple_sessions(selected_data, animal_name="None", n_previous_trials=
             width=700
         )
         
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, config=get_plotly_config())
     
     return {
         'session_numbers': session_numbers,

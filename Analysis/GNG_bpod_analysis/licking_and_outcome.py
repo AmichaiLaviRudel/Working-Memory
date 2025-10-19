@@ -1,5 +1,4 @@
-from Analysis.GNG_bpod_analysis.psychometric_curves import *
-from Analysis.GNG_bpod_analysis.metric import *
+# Removed imports to avoid circular dependency
 from Analysis.GNG_bpod_analysis.GNG_bpod_general import filter_valid_arrays, parse_stimuli
 from Analysis.GNG_bpod_analysis.colors import COLOR_FA, OUTCOME_COLOR_MAP, COLOR_ACCENT, COLOR_GRAY, COLOR_GO, COLOR_NOGO, COLOR_BLUE, COLOR_D_PRIME, COLOR_HIT, COLOR_CR
 
@@ -11,6 +10,7 @@ import plotly.graph_objects as go
 import altair as alt
 from plotly.subplots import make_subplots
 import streamlit as st
+from Analysis.GNG_bpod_analysis.GNG_bpod_general import get_plotly_config
 
 
 def responses(selected_data, index=0):
@@ -632,7 +632,7 @@ def plot_first_lick_by_stimulus(project_data, index, plot=True):
     )
 
     if plot:
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, config=get_plotly_config())
         
 # Prepare raster plot data
 def prepare_raster_data(licks_list, trial_type, trial_stim, start_index=1):
@@ -778,7 +778,7 @@ def plot_first_lick_latency(selected_data, index=0, df_go_first_licks=None, df_n
         st.write(f"- NoGo trials: n={len(no_go_latencies)}, mean={np.mean(no_go_latencies):.3f}s ± {np.std(no_go_latencies):.3f}s")
         st.write(f"- Mann-Whitney U test: p={p_value:.3g}")
     
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, config=get_plotly_config())
     
     # return df_first_licks
 
@@ -956,7 +956,7 @@ def plot_first_lick_latency_multiple_sessions(selected_data, animal_name="None",
                 gridwidth=0.2
             )
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, config=get_plotly_config())
         
     
     return results_df
@@ -1108,7 +1108,7 @@ def daily_activity_single_animal(project_data, index, plot=False):
             showlegend=False
         )
         
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, config=get_plotly_config())
 
 def daily_activity_multi_animal(project_data):
     """
@@ -1226,7 +1226,7 @@ def daily_activity_multi_animal(project_data):
         showlegend=True
     )
     
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, config=get_plotly_config())
 
 def daily_multi_animal_lick_rate(project_data, t=15):
     """
@@ -1302,7 +1302,7 @@ def daily_multi_animal_lick_rate(project_data, t=15):
         width=900,
         showlegend=True
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, config=get_plotly_config())
 
 def cumulative_number_of_trials_vs_daily_dprime(project_data, t=15):
     """
@@ -1389,7 +1389,7 @@ def cumulative_number_of_trials_vs_daily_dprime(project_data, t=15):
             legend_title_text="Legend"
         )
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, config=get_plotly_config())
 
 def plot_n_lick_by_stimulus(project_data, index, plot=True):
 
@@ -1510,7 +1510,7 @@ def plot_n_lick_by_stimulus(project_data, index, plot=True):
                     categoryarray=[str(x) for x in stim_ids_sorted]
                 )
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True, config=get_plotly_config())
     else:
         return per_trial_df, grouped
         

@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 from Analysis.NPXL_analysis.npxl_single_unit_analysis import compute_stimulus_selectivity, compute_psth_pvalues_from_event_windows
 from Analysis.GNG_bpod_analysis.colors import COLOR_ORANGE
+from Analysis.GNG_bpod_analysis.GNG_bpod_general import get_plotly_config
 
 def plot_population_heatmap(event_windows_matrix, stimuli_outcome_df, metadata):
     """
@@ -234,7 +235,7 @@ def plot_population_heatmap(event_windows_matrix, stimuli_outcome_df, metadata):
         )
     )
     fig.update_layout(height=800)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, config=get_plotly_config())
 
 
 def plot_best_stimulus_panel(event_windows_matrix, stimuli_outcome_df, metadata, window=(-0.1, 0.5)):
@@ -411,7 +412,7 @@ def plot_best_stimulus_panel(event_windows_matrix, stimuli_outcome_df, metadata,
         paper_bgcolor='white'
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, config=get_plotly_config())
 
     # Barplot of unit percentage per stimulus (based on best stimulus)
     counts_series = pd.Series(best_stimuli_arr).value_counts()
@@ -599,7 +600,7 @@ def advanced_population_analysis_panel(event_windows_matrix, stimuli_outcome_df,
             yaxis_title="Accuracy",
             yaxis=dict(range=[0,1])
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, config=get_plotly_config())
 
         # New figure: compare adjacent stimulus pairs (near each other)
         if len(unique_stimuli) >= 2:
@@ -746,7 +747,7 @@ def advanced_population_analysis_panel(event_windows_matrix, stimuli_outcome_df,
             yaxis_title="Accuracy",
             yaxis=dict(range=[0,1])
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, config=get_plotly_config())
 
     with action_tab:
         if 'outcome' not in stimuli_outcome_df.columns:
@@ -785,7 +786,7 @@ def advanced_population_analysis_panel(event_windows_matrix, stimuli_outcome_df,
             yaxis_title="Accuracy",
             yaxis=dict(range=[0,1])
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, config=get_plotly_config())
 
 
 

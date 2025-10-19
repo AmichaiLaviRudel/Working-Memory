@@ -1,6 +1,7 @@
 from Analysis.GNG_bpod_analysis.licking_and_outcome import preprocess_stimuli_outcomes, compute_lick_rate
 from Analysis.GNG_bpod_analysis.metric import *
-from Analysis.GNG_bpod_analysis.psychometric_curves_plotting import *
+# Removed wildcard import to avoid circular dependency
+from Analysis.GNG_bpod_analysis.GNG_bpod_general import get_plotly_config
 from Analysis.GNG_bpod_analysis.GNG_bpod_general import get_sessions_for_animal
 import Analysis.GNG_bpod_analysis.colors as colors
 import plotly.graph_objects as go
@@ -464,7 +465,7 @@ def multi_animal_psychometric_slope_progression(selected_data, N_Boundaries=1):
         width=700
     )
     fig.update_yaxes(autorange=True)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, config=get_plotly_config('psychometric_curve_multiple_sessions'))
 
     return long_df, avg_df
 

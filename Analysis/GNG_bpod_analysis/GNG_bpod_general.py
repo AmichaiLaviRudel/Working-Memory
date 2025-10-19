@@ -1,9 +1,7 @@
-from Analysis.GNG_bpod_analysis.psychometric_curves import *
-from Analysis.GNG_bpod_analysis.licking_and_outcome import *
-from Analysis.GNG_bpod_analysis.metric import *
-
+# Removed imports to avoid circular dependency
 
 import numpy as np
+import ast
 
 
 def getNameAndSession(project_data, index):
@@ -71,3 +69,28 @@ def to_array(val):
         return np.array(val)
     else:
         return np.array([])
+
+
+def get_plotly_config(filename_prefix="plot", height=800, width=1200):
+    """
+    Get standardized Plotly configuration with download functionality.
+    
+    Parameters:
+    - filename_prefix: Prefix for downloaded files
+    - height: Chart height in pixels
+    - width: Chart width in pixels
+    
+    Returns:
+    - config: Plotly configuration dict with download options
+    """
+    return {
+        'displayModeBar': True,
+        'modeBarButtonsToAdd': ['toImage'],
+        'toImageButtonOptions': {
+            'format': 'svg',  # Default to SVG
+            'filename': filename_prefix,
+            'height': height,
+            'width': width,
+            'scale': 1
+        }
+    }

@@ -1,4 +1,5 @@
 from Analysis.GNG_bpod_analysis.psychometric_curves import *
+from Analysis.GNG_bpod_analysis.psychometric_curves_plotting import remove_outlier_sessions
 from Analysis.GNG_bpod_analysis.metric import *
 from Analysis.GNG_bpod_analysis.GNG_bpod_general import *
 from Analysis.GNG_bpod_analysis.licking_and_outcome import *
@@ -153,6 +154,16 @@ def gng_bpod_analysis_multipule(project_data, index):
 
 
     with tab3:
+        # Add session filtering options
+        with st.expander("🔍 Filter Outlier Sessions", expanded=False):
+            filter_outliers = st.checkbox("Remove sessions with low d-prime", value=False, 
+                                         help="Filter out sessions where mean d-prime is below threshold")
+            d_prime_threshold = 1.0
+            if filter_outliers:
+                d_prime_threshold = st.slider("d-prime threshold", 0.0, 3.0, 1.0, 0.1, 
+                                             help="Sessions with d' below this value will be removed")
+        
+        # Use filtered data for all analyses
         try:
             psychometric_curve_multiple_sessions(project_data, animal_name = animal_name, plot=True)
         except Exception as e:
@@ -167,8 +178,19 @@ def gng_bpod_analysis_multipule(project_data, index):
             
         # multi_animal_psychometric_slope_progression(project_data,  N_Boundaries = 2)
         try:
-            plot_psychometric_curves_with_boundaries(project_data, N_Boundaries = 1, n_indices = 2)
-            plot_psychometric_curves_with_boundaries(project_data,  N_Boundaries = 2, n_indices = 2)
+            plot_psychometric_curves_with_boundaries(project_data, N_Boundaries = 1, n_indices = 2, 
+                                                   filter_outliers=filter_outliers, 
+                                                   d_prime_threshold=d_prime_threshold, 
+                                                   t=bin)
+            plot_psychometric_curves_with_boundaries(project_data,  N_Boundaries = 2, n_indices = 2,
+                                                   filter_outliers=filter_outliers, 
+                                                   d_prime_threshold=d_prime_threshold, 
+                                                   t=bin)
+            plot_psychometric_curves_with_boundaries(project_data,  N_Boundaries = 0, n_indices = 2,
+                                                   filter_outliers=filter_outliers, 
+                                                   d_prime_threshold=d_prime_threshold, 
+                                                   t=bin)
+
 
         except Exception as e:
             st.warning(f"Something went wrong with psychometric curves plotting :|\n\n{e}")
