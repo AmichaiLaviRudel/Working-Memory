@@ -71,7 +71,7 @@ def to_array(val):
         return np.array([])
 
 
-def get_plotly_config(filename_prefix="plot", height=800, width=1200):
+def get_plotly_config(filename_prefix="plot", height=1080/2, width=1800):
     """
     Get standardized Plotly configuration with download functionality.
     

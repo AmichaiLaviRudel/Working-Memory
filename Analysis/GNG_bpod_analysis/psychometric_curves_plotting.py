@@ -285,7 +285,7 @@ def plot_psychometric_curves_with_boundaries(project_data, N_Boundaries, n_indic
             avg_responses[n_bd] = interpolated_lick_rates
             common_stimuli_dict[n_bd] = common_stimuli
             add_boundary_lines(fig, n_bd, common_stimuli, label)
-        
+            
         # Statistical comparison
         if 1 in avg_responses and 2 in avg_responses:
             pvals, corrected_pvals, points_of_interest, shared_x = perform_statistical_comparison(
@@ -427,7 +427,7 @@ def perform_statistical_comparison(avg_responses, common_stimuli_dict, fig):
         pval = corrected_pvals[i]
         
         if np.isnan(pval) or pval >= 0.05:
-            annotation = "n.s."
+            annotation = f"({pval:.2g})"
         elif pval < 0.001:
             annotation = "***"
         elif pval < 0.01:
@@ -492,11 +492,6 @@ def plot_psychometric_curve(unique_stimuli, lick_rates, x_fit, y_fit, x0, slope_
             st.error("Error: x_fit contains non-positive values. Log scale requires all values > 0.")
             return
 
-        # st.table(pd.DataFrame({
-        #     "x": unique_stimuli,
-        #     "y": lick_rates,
-        # }))
-
         max_dp, min_dp = lick_rates.max(), lick_rates.min()
 
         # Define figure
@@ -509,7 +504,6 @@ def plot_psychometric_curve(unique_stimuli, lick_rates, x_fit, y_fit, x0, slope_
             name = "Data Points",
             hovertemplate = "Stimulus: %{x:.2f} kHz<br>Lick Rate: %{y:.2f}%<extra></extra>"
         ))
-        # ((data_points - min_dp) / (max_dp - min_dp)) * 100
         # Fitted sigmoid curve
         fig.add_trace(go.Scatter(
             x = x_fit, y = ((y_fit+min_dp)/(max_dp+min_dp)*100),

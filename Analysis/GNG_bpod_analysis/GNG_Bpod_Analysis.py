@@ -1,5 +1,5 @@
 from Analysis.GNG_bpod_analysis.psychometric_curves import *
-from Analysis.GNG_bpod_analysis.psychometric_curves_plotting import remove_outlier_sessions
+from Analysis.GNG_bpod_analysis.psychometric_curves_plotting import remove_outlier_sessions, plot_psychometric_curves_with_boundaries
 from Analysis.GNG_bpod_analysis.metric import *
 from Analysis.GNG_bpod_analysis.GNG_bpod_general import *
 from Analysis.GNG_bpod_analysis.licking_and_outcome import *

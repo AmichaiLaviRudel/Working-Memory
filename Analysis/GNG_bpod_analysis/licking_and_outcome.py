@@ -1,5 +1,6 @@
 # Removed imports to avoid circular dependency
 from Analysis.GNG_bpod_analysis.GNG_bpod_general import filter_valid_arrays, parse_stimuli
+import Analysis.GNG_bpod_analysis.colors as colors
 from Analysis.GNG_bpod_analysis.colors import COLOR_FA, OUTCOME_COLOR_MAP, COLOR_ACCENT, COLOR_GRAY, COLOR_GO, COLOR_NOGO, COLOR_BLUE, COLOR_D_PRIME, COLOR_HIT, COLOR_CR
 
 import re
@@ -1316,6 +1317,25 @@ def cumulative_number_of_trials_vs_daily_dprime(project_data, t=15):
     # Prepare data: for each mouse, sum up number of trials over days, and plot daily d' vs cumulative trials
     mice = sorted(project_data["MouseName"].unique())
     fig = go.Figure()
+    
+    # Add horizontal line at y=1
+    # Draw the horizontal line as a shape in the layout, so it appears in the background of the plot
+    fig.update_layout(
+        shapes=[
+            dict(
+                type="line",
+                xref="paper", yref="y",
+                x0=0, x1=1,
+                y0=1, y1=1,
+                line=dict(
+                    color=COLOR_GRAY,
+                    width=5,
+                    dash="solid"
+                ),
+                layer="below"  # ensures it is in the background
+            )
+        ]
+    )
     for mouse in mice:
         mouse_data = project_data[project_data["MouseName"] == mouse].sort_values("SessionDate")
         session_dates = mouse_data["SessionDate"].values
@@ -1381,6 +1401,8 @@ def cumulative_number_of_trials_vs_daily_dprime(project_data, t=15):
             ))
             # Add legend entries for marker sizes via shared helper
             colors.add_marker_legends(fig, n_b, n_t, scale=5.0)
+
+        
         fig.update_layout(
             xaxis_title="Cumulative Number of Trials",
             yaxis_title="Daily d'",
