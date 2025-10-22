@@ -178,15 +178,16 @@ def gng_bpod_analysis_multipule(project_data, index):
             
         # multi_animal_psychometric_slope_progression(project_data,  N_Boundaries = 2)
         try:
-            plot_psychometric_curves_with_boundaries(project_data, N_Boundaries = 1, n_indices = 2, 
+            n_indices = st.slider("Number of indices to include", 1, 10, 2, 1)
+            plot_psychometric_curves_with_boundaries(project_data, N_Boundaries = 1, n_indices = n_indices, 
                                                    filter_outliers=filter_outliers, 
                                                    d_prime_threshold=d_prime_threshold, 
                                                    t=bin)
-            plot_psychometric_curves_with_boundaries(project_data,  N_Boundaries = 2, n_indices = 2,
+            plot_psychometric_curves_with_boundaries(project_data,  N_Boundaries = 2, n_indices = n_indices,
                                                    filter_outliers=filter_outliers, 
                                                    d_prime_threshold=d_prime_threshold, 
                                                    t=bin)
-            plot_psychometric_curves_with_boundaries(project_data,  N_Boundaries = 0, n_indices = 2,
+            plot_psychometric_curves_with_boundaries(project_data,  N_Boundaries = 0, n_indices = n_indices,
                                                    filter_outliers=filter_outliers, 
                                                    d_prime_threshold=d_prime_threshold, 
                                                    t=bin)
