@@ -286,6 +286,23 @@ def process_and_plot_lick_data(project_data, index, plot=False):
     misses = np.where(outcomes == "Miss")[0]
     fas = np.where(outcomes == "False Alarm")[0]
     crs = np.where(outcomes == "Correct Rejection")[0]
+    
+    # Check for data consistency issues and fix if possible
+    if len(stimuli) != len(outcomes):
+        print(f"Warning: Data inconsistency detected - stimuli length ({len(stimuli)}) != outcomes length ({len(outcomes)})")
+        print(f"Stimuli: {stimuli}")
+        print(f"Outcomes: {outcomes}")
+        print(f"Trial indices - hits: {hits}, misses: {misses}, fas: {fas}, crs: {crs}")
+        
+        # Try to fix by padding stimuli array with NaN values if it's shorter
+        if len(stimuli) < len(outcomes):
+            print(f"Attempting to fix by padding stimuli array with NaN values")
+            padding_size = len(outcomes) - len(stimuli)
+            stimuli = np.concatenate([stimuli, np.full(padding_size, np.nan)])
+        # If stimuli is longer, truncate it
+        elif len(stimuli) > len(outcomes):
+            print(f"Attempting to fix by truncating stimuli array")
+            stimuli = stimuli[:len(outcomes)]
 
     # Extract licks
     go_licks = licks[hits]
@@ -516,22 +533,55 @@ def process_and_plot_lick_data(project_data, index, plot=False):
     # Hits
     outcome_data["Outcome"].append("Hit")
     outcome_data["Licks"].append(go_licks)
-    outcome_data["Stimuli"].append(go_stimuli)
+    # Add bounds checking for hits
+    if len(hits) > 0 and len(stimuli) > 0:
+        valid_hit_indices = hits[hits < len(stimuli)]
+        if len(valid_hit_indices) > 0:
+            outcome_data["Stimuli"].append(stimuli[valid_hit_indices])
+        else:
+            outcome_data["Stimuli"].append(np.array([]))
+    else:
+        outcome_data["Stimuli"].append(np.array([]))
 
     # Misses
     outcome_data["Outcome"].append("Miss")
     outcome_data["Licks"].append(licks[misses])
-    outcome_data["Stimuli"].append(stimuli[misses])
+    # Add bounds checking to prevent index out of bounds error
+    if len(misses) > 0 and len(stimuli) > 0:
+        # Only include stimuli for misses that are within bounds
+        valid_miss_indices = misses[misses < len(stimuli)]
+        if len(valid_miss_indices) > 0:
+            outcome_data["Stimuli"].append(stimuli[valid_miss_indices])
+        else:
+            outcome_data["Stimuli"].append(np.array([]))
+    else:
+        outcome_data["Stimuli"].append(np.array([]))
 
     # False Alarms
     outcome_data["Outcome"].append("False Alarm")
     outcome_data["Licks"].append(no_go_licks)
-    outcome_data["Stimuli"].append(no_go_stimuli)
+    # Add bounds checking for false alarms
+    if len(fas) > 0 and len(stimuli) > 0:
+        valid_fa_indices = fas[fas < len(stimuli)]
+        if len(valid_fa_indices) > 0:
+            outcome_data["Stimuli"].append(stimuli[valid_fa_indices])
+        else:
+            outcome_data["Stimuli"].append(np.array([]))
+    else:
+        outcome_data["Stimuli"].append(np.array([]))
 
     # Correct Rejections
     outcome_data["Outcome"].append("Correct Rejection")
     outcome_data["Licks"].append(licks[crs])
-    outcome_data["Stimuli"].append(stimuli[crs])
+    # Add bounds checking for correct rejections
+    if len(crs) > 0 and len(stimuli) > 0:
+        valid_cr_indices = crs[crs < len(stimuli)]
+        if len(valid_cr_indices) > 0:
+            outcome_data["Stimuli"].append(stimuli[valid_cr_indices])
+        else:
+            outcome_data["Stimuli"].append(np.array([]))
+    else:
+        outcome_data["Stimuli"].append(np.array([]))
 
 
     outcome_df = pd.DataFrame(outcome_data)
@@ -542,7 +592,7 @@ def plot_first_lick_by_stimulus(project_data, index, plot=True):
     """Plot first lick times by stimulus ID."""
     from Analysis.GNG_bpod_analysis.colors import COLOR_GO, COLOR_NOGO
     # Get first lick data
-    df_go, df_nogo = process_and_plot_lick_data(project_data, index, plot=False)
+    df_go, df_nogo, _ = process_and_plot_lick_data(project_data, index, plot=False)
     ftl_df = pd.concat([df_go, df_nogo])
     
     # Filter out values larger than 2 seconds
@@ -610,7 +660,7 @@ def plot_first_lick_by_stimulus(project_data, index, plot=True):
         annotation_text="Reinforcement Delay"
     )
     fig.add_hline(
-        y=2,
+        y=2.2,
         line_width=2,
         line_dash="dash",
         line_color=COLOR_GRAY,
@@ -688,11 +738,10 @@ def plot_first_lick_latency(selected_data, index=0, df_go_first_licks=None, df_n
     import numpy as np
     import ast
     from Analysis.GNG_bpod_analysis.colors import COLOR_GO, COLOR_NOGO, COLOR_GRAY
-    
     # If first lick data is not provided, calculate it
     if df_go_first_licks is None or df_no_go_first_licks is None:
         # Get the data from process_and_plot_lick_data
-        df_go_first_licks, df_no_go_first_licks = process_and_plot_lick_data(selected_data, index, plot=False)
+        df_go_first_licks, df_no_go_first_licks, _ = process_and_plot_lick_data(selected_data, index, plot=False)
     
     # Check if we have valid data
     if df_go_first_licks is None or df_no_go_first_licks is None:
@@ -805,7 +854,7 @@ def plot_first_lick_latency_multiple_sessions(selected_data, animal_name="None",
 
     for idx, session_idx in enumerate(session_indices):
         try:
-            df_go_first_licks, df_no_go_first_licks = process_and_plot_lick_data(selected_data, session_idx, plot=False)
+            df_go_first_licks, df_no_go_first_licks, _ = process_and_plot_lick_data(selected_data, session_idx, plot=False)
             
             go_latencies = df_go_first_licks["First Lick Time (s)"].values if not df_go_first_licks.empty else []
             go_mean = np.mean(go_latencies) if len(go_latencies) > 0 else np.nan

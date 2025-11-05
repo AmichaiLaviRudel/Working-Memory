@@ -2,7 +2,7 @@ import plotly.graph_objects as go
 import numpy as np
 from Analysis.GNG_bpod_analysis.stats_tests import mannwhitneyu
 
-def plot_unit_psth(spike_matrix, event_times, unit_idx, bin_size=0.01, window=(-1, 2)):
+def plot_unit_psth(spike_matrix, event_times, unit_idx, bin_size=0.005, window=(-1, 2)):
     """
     Plots PSTH for a single unit aligned to event_times, adds a vertical line at x=0, and calculates significance (Mann-Whitney U test) between pre- and post-event activity.
     Args:
@@ -16,6 +16,7 @@ def plot_unit_psth(spike_matrix, event_times, unit_idx, bin_size=0.01, window=(-
     peri_event_window = np.arange(window[0], window[1], bin_size)
     peri_event_hist = np.zeros_like(peri_event_window)
     n_events = 0
+    
     for t in event_times:
         event_bin = int(t / bin_size)
         start_bin = event_bin + int(window[0] / bin_size)

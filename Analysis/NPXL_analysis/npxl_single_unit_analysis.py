@@ -569,7 +569,7 @@ def plot_advanced_unit_analysis(event_windows_data, stimuli_outcome_df, unit_idx
     
     return fig
 
-def plot_unit_psth(event_windows_data, display_window, unit_idx, sorted_pvals, unit_rank, outcome_filter="All", bin_size=0.01):
+def plot_unit_psth(event_windows_data, display_window, unit_idx, sorted_pvals, unit_rank, outcome_filter="All", bin_size=0.005):
     """
     Plots PSTH for a single unit aligned to event_times, adds a vertical line at x=0, and calculates significance (Mann-Whitney U test) between pre- and post-event activity.
     
@@ -586,12 +586,13 @@ def plot_unit_psth(event_windows_data, display_window, unit_idx, sorted_pvals, u
     # Get the unit's data
     unit_data = event_windows_matrix[unit_idx, :, :]  # Shape: [time × events]
     n_time_bins = event_windows_matrix.shape[1]
-    
+
     # Create time axis for the window
     peri_event_window = np.linspace(display_window[0], display_window[1], n_time_bins)
     # Find the index corresponding to time 0
     zero_idx = np.argmin(np.abs(peri_event_window))
-    unit_data = unit_data[zero_idx+int(display_window[0]*10):zero_idx+int(display_window[1]*10),:]
+    sec2bin = 1/bin_size
+    unit_data = unit_data[zero_idx+int(display_window[0]*sec2bin):zero_idx+int(display_window[1]*sec2bin),:]
 
     event_outcomes = None
     if 'outcome' in event_stimuli_outcome_df.columns:
@@ -903,7 +904,7 @@ def _create_matrix_hash(matrix, additional_params=None):
     return hashlib.md5(hash_input.encode()).hexdigest()
 
 @st.cache_data(show_spinner="Computing p-values...")
-def compute_psth_pvalues_from_event_windows_cached(matrix_hash, event_windows_matrix, event_times, bin_size=0.01, window=(-1, 2)):
+def compute_psth_pvalues_from_event_windows_cached(matrix_hash, event_windows_matrix, event_times, bin_size=0.005, window=(-0.1, 0.2)):
     """
     Cached version of p-values computation.
     
@@ -921,10 +922,9 @@ def compute_psth_pvalues_from_event_windows_cached(matrix_hash, event_windows_ma
     n_units = event_windows_matrix.shape[0]
     n_time_bins = event_windows_matrix.shape[1]
     n_events = event_windows_matrix.shape[2]
-    
+    sec2bin = 1/bin_size
     # Create time axis for the window
-    peri_event_window = np.linspace(window[0], window[1], n_time_bins)
-    
+    peri_event_window = np.linspace(window[0]*sec2bin, window[1]*sec2bin, n_time_bins)
     pvals = []
     
     for unit_idx in range(n_units):
@@ -985,7 +985,7 @@ def compute_all_unit_metrics_cached(event_windows_data, stimuli_outcome_df, avai
     
     return metrics
 
-def compute_psth_pvalues_from_event_windows(event_windows_matrix, event_times, bin_size=0.01, window=(-1, 2)):
+def compute_psth_pvalues_from_event_windows(event_windows_matrix, event_times, bin_size=0.005, window=(-1, 2)):
     """
     Compute p-values using event windows data for more accurate statistical analysis.
     
@@ -1235,7 +1235,7 @@ def get_trial_statistics(event_windows_data, unit_idx):
     }
 
 def single_unit_analysis_panel(
-    event_windows_data, stimuli_outcome_df, selected_folder=None, bin_size=0.01, default_window=1.0):
+    event_windows_data, stimuli_outcome_df, selected_folder=None, bin_size=0.005, default_window=1.0):
     import streamlit as st
     import numpy as np
     from .npxl_single_unit_analysis import plot_unit_psth
@@ -1268,7 +1268,7 @@ def single_unit_analysis_panel(
             bin_size_display = st.number_input(
                 "Bin Size (s)", 
                 min_value=0.001, max_value=0.1, value=bin_size, step=0.001,
-                help="Time bin size for PSTH calculation"
+                help="Time bin size for PSTH calculation (read from metadata file)"
             )
 
         # P-value Analysis Section
@@ -1284,7 +1284,7 @@ def single_unit_analysis_panel(
             # Use event windows data for more accurate p-value calculation
             event_windows_matrix, time_axis, valid_event_indices, event_stimuli_outcome_df, metadata = event_windows_data
             # Calculate p-values using the full event windows data (cached)
-            pvals = compute_psth_pvalues_from_event_windows(event_windows_matrix, event_times, bin_size=bin_size_display, window=display_window)
+            pvals = compute_psth_pvalues_from_event_windows(event_windows_matrix, event_times, bin_size=bin_size_display, window=[-0.1, 0.3])
 
         
         sorted_indices = np.argsort(pvals)
@@ -1304,13 +1304,23 @@ def single_unit_analysis_panel(
 
         # Save p-values and metrics with caching awareness
         if selected_folder is not None:
-            # Add button for manual save (cached data will be used)
-            if st.button("Save PSTH Metrics"):
-                try:
-                    save_all_psth_metrics(event_windows_data, selected_folder, display_window, pvals)
-                    st.toast("PSTH metrics saved successfully")
-                except Exception as e:
-                    st.error(f"Error saving PSTH metrics: {e}")
+            # Add buttons for saving data
+            save_col1, save_col2 = st.columns(2)
+            with save_col1:
+                if st.button("💾 Save P-values Only"):
+                    try:
+                        save_pvalues_to_folder(pvals, selected_folder, window=[-0.1, 0.3], bin_size=bin_size_display)
+                        st.toast("P-values saved successfully")
+                    except Exception as e:
+                        st.error(f"Error saving p-values: {e}")
+            
+            with save_col2:
+                if st.button("📊 Save PSTH Metrics"):
+                    try:
+                        save_all_psth_metrics(event_windows_data, selected_folder, display_window, pvals)
+                        st.toast("PSTH metrics saved successfully")
+                    except Exception as e:
+                        st.error(f"Error saving PSTH metrics: {e}")
             
             # Add cache management
             cache_col1, cache_col2 = st.columns(2)

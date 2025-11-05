@@ -176,10 +176,10 @@ def psychometric_curve(selected_data, index, plot=True):
                 if len(model_boundaries) >= 2 and len(slopes_mid) >= 2:
                     st.latex(
                         r"\text{Double sigmoid fit:}\\"
-                        r"x_{0,\text{low}} = " + f"{model_boundaries[0]:.4g}" + 
-                        r",\quad \text{Slope at Boundary}_{\text{low}} = " + f"{slopes_mid[0]:.4g}" + r"\\"
-                        r"x_{0,\text{high}} = " + f"{model_boundaries[1]:.4g}" + 
-                        r",\quad \text{Slope at Boundary}_{\text{high}} = " + f"{slopes_mid[1]:.4g}"
+                        r"\text{Low:}\ x_0 = " + f"{model_boundaries[0]:.4g}" +
+                        r",\quad \text{Slope at Boundary} = " + f"{slopes_mid[0]:.4g}" + r"\\"
+                        r"\text{High:}\ x_0 = " + f"{model_boundaries[1]:.4g}" +
+                        r",\quad \text{Slope at Boundary} = " + f"{slopes_mid[1]:.4g}"
                     )
                     fig = go.Figure()
                     # Data points

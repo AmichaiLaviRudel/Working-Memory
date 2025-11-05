@@ -24,7 +24,7 @@ def gng_bpod_analysis(project_data, index):
     bin = st.slider("Choose bin size", 5, 50, 30, 5, help="⚡ Cached - only recomputes when changed")
 
 
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([ "👨‍🎓Matrices", "👅 Lick Rate", "📈 Learning Curve", "👂 Psychometric Curve", "🎯 Bias Analysis"])
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([ "👨‍🎓Matrices", "👅 Lick Rate", "📈 Learning Curve", "👂 Psychometric Curve", "🎯 Bias Analysis", "🧠 GLM Analysis"])
 
     with tab1:
         try:
@@ -46,7 +46,7 @@ def gng_bpod_analysis(project_data, index):
 
         try:
             df_go_first_licks, df_no_go_first_licks, lick_by_stimulus = process_and_plot_lick_data(project_data, index, plot=True)
-            if st.session_state.analysis_type == 'GNG-Bpod GUI':
+            if st.session_state.analysis_type == 'Behavior-Bpod GUI':
                 plot_first_lick_by_stimulus(project_data, index, plot=True)
                 try:
                     st.subheader("First Lick Latency Analysis")
@@ -90,6 +90,14 @@ def gng_bpod_analysis(project_data, index):
             plot_bias_analysis(project_data, index, n_previous_trials=n_previous_trials, plot=True)
         except Exception as e:
             st.warning(f"something went wrong with bias analysis :|\n\n{e}")
+            st.text(traceback.format_exc())
+
+    with tab6:
+        try:
+            from Analysis.GNG_bpod_analysis.licking_and_outcome import glm_licking_analysis
+            glm_licking_analysis(project_data, index, plot=True)
+        except Exception as e:
+            st.warning(f"something went wrong with GLM analysis :|\n\n{e}")
             st.text(traceback.format_exc())
 
 

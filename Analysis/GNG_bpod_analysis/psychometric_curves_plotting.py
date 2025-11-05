@@ -115,6 +115,10 @@ def filter_and_prepare_data(project_data, n_bd, n_indices):
     """Filter data by N_Boundaries and keep only last n sessions per mouse."""
     filtered_df = project_data[project_data["N_Boundaries"] == n_bd].reset_index(drop=True)
     
+    # Filter out sessions with fewer than 3 tones per class if available
+    if "Tones_per_class" in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df["Tones_per_class"] >= 3].reset_index(drop=True)
+    
     # Handle both possible column names for stimuli data
     if "Unique_Stimuli_Values" in filtered_df.columns:
         filtered_df["Parsed_Stimuli"] = filtered_df["Unique_Stimuli_Values"].apply(parse_stimuli)
@@ -342,10 +346,32 @@ def plot_psychometric_curves_with_boundaries(project_data, N_Boundaries, n_indic
     if common_stimuli is None:
         common_stimuli = np.array([st.session_state.low_boundary, st.session_state.high_boundary])
     
+    # Normalize each session individually if requested
+    if normalize_avg and interpolated_lick_rates is not None:
+        # Normalize each session to 0-100 range
+        normalized_rates = []
+        for session_rates in interpolated_lick_rates:
+            min_val = np.nanmin(session_rates)
+            max_val = np.nanmax(session_rates)
+            if max_val > min_val:
+                normalized_session = 100 * (session_rates - min_val) / (max_val - min_val)
+            else:
+                normalized_session = session_rates  # Keep original if all values are the same
+            normalized_rates.append(normalized_session)
+        interpolated_lick_rates = np.array(normalized_rates)
+    
     # Add individual traces
-    for unique_stimuli, lick_rates, name, session in individual_traces:
+    for i, (unique_stimuli, lick_rates, name, session) in enumerate(individual_traces):
+        # Use normalized data if normalization is enabled
+        if normalize_avg and interpolated_lick_rates is not None and i < len(interpolated_lick_rates):
+            # Interpolate the normalized session data to the original stimulus values
+            normalized_session_rates = np.interp(unique_stimuli, common_stimuli, interpolated_lick_rates[i])
+            display_rates = normalized_session_rates
+        else:
+            display_rates = lick_rates
+        
         fig.add_trace(go.Scatter(
-            x=unique_stimuli, y=lick_rates,
+            x=unique_stimuli, y=display_rates,
             mode='lines',
             line=dict(width=colors.LINE_WIDTH_MEDIUM, color=colors.COLOR_GRAY),
             marker=dict(size=6, color=colors.COLOR_GRAY),
@@ -356,8 +382,6 @@ def plot_psychometric_curves_with_boundaries(project_data, N_Boundaries, n_indic
     # Compute and add average trace
     if interpolated_lick_rates is not None:
         avg_lick_rate = np.mean(interpolated_lick_rates, axis=0)
-        if normalize_avg:
-            avg_lick_rate = normalize_lick_rate(avg_lick_rate)
         
         color = colors.COLOR_LOW_BD if N_Boundaries == 1 else colors.COLOR_HIGH_BD
         hovertemplate = ("Stimulus: %{x:.2f} kHz<br>Avg Normalized Lick Rate: %{y:.2f}%<extra></extra>" 
@@ -394,7 +418,7 @@ def plot_psychometric_curves_with_boundaries(project_data, N_Boundaries, n_indic
         hovermode="x unified"
     )
     
-    st.plotly_chart(fig, use_container_width=False, config=get_plotly_config(f'psychometric_curve_{N_Boundaries}_boundaries', width=600*N_Boundaries))
+    st.plotly_chart(fig, use_container_width=False, config=get_plotly_config(f'psychometric_curve_{N_Boundaries}_boundaries', width=450*(N_Boundaries+1)))
 
 
 def perform_statistical_comparison(avg_responses, common_stimuli_dict, fig, session_data_1=None, session_data_2=None):

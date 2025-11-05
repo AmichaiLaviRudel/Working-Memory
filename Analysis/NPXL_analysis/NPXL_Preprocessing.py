@@ -37,6 +37,33 @@ def read_sample_rate(folder):
                     return float(line.strip().split('=')[-1])
     return 30000  # fallback default
 
+def read_bin_size_from_metadata(folder, default_bin_size=0.005):
+    """
+    Reads the bin size from the event_windows_metadata.txt file created by NPXL_Preprocessing.py.
+    If not found, returns a default bin size.
+    
+    Parameters:
+        folder (str): Path to the folder containing the event_windows_metadata.txt file.
+        default_bin_size (float): Default bin size in seconds if metadata file not found.
+    Returns:
+        float: The bin size in seconds.
+    """
+    metadata_file = os.path.join(folder, "event_windows_metadata.txt")
+    
+    if os.path.exists(metadata_file):
+        try:
+            with open(metadata_file, 'r') as f:
+                for line in f:
+                    if 'bin_size:' in line:
+                        bin_size = float(line.strip().split(': ')[1])
+                        print(f"Read bin size from metadata: {bin_size:.6f}s")
+                        return bin_size
+        except Exception as e:
+            print(f"Error reading bin size from metadata: {e}")
+    
+    print(f"Using default bin size: {default_bin_size:.6f}s")
+    return default_bin_size
+
 def load_cluster_info(working_dir, data_dirs):
     """
     Loads cluster information from a bombcell unit_labels.tsv or cluster_info.tsv file in the working directory.
@@ -638,12 +665,12 @@ def main():
     """
     force_rerun = True
     
-    bin_size=0.1
+    bin_size=0.005 # in seconds
 
     # recordings_root_directory = r"/ems/elsc-labs/mizrahi-a/Shared/Amichai/NPXL/Recs/group5"
     # experiment_metadata_csv_path = r"/ems/elsc-labs/mizrahi-a/Code\DB\users_data\Amichai\NPXL recordings _experimental_data.csv".replace("\\", "/")
     
-    recordings_root_directory = r"Z:/Shared/Amichai/NPXL/Recs/group6"
+    recordings_root_directory = r"Z:/Shared/Amichai/NPXL/Recs/group5"
     experiment_metadata_csv_path = r"Z:\Shared\Amichai/Code\DB\users_data\Amichai\NPXL recordings _experimental_data.csv".replace("\\", "/")
     
 

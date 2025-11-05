@@ -314,7 +314,10 @@ if 'Checkbox' in st_project_data.columns and st_project_data['Checkbox'].any():
                 
                 if loaded_data:
                     event_windows_matrix, time_axis_from_load, valid_event_indices, stimuli_outcome_df, metadata, lick_event_windows_matrix = loaded_data
-                    single_unit_analysis_panel(event_windows_matrix, stimuli_outcome_df, selected_folder)
+                    # Read bin_size from event_windows_metadata.txt file
+                    from Analysis.NPXL_analysis.NPXL_Preprocessing import read_bin_size_from_metadata
+                    bin_size_from_metadata = read_bin_size_from_metadata(selected_folder)
+                    single_unit_analysis_panel(event_windows_matrix, stimuli_outcome_df, selected_folder, bin_size=bin_size_from_metadata)
                 else:
                     st.error(f"Event windows data could not be loaded from: {selected_folder}")
                     st.info("Please ensure the event windows data has been generated.")

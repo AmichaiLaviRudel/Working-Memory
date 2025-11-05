@@ -1181,6 +1181,7 @@ def d_prime_for_stim_pairs(selected_data, index=0, stim_pairs=None, t=10, plot=T
             height=400,
             width=700
         )
-        st.plotly_chart(fig, use_container_width=True, config=get_plotly_config())
+        st.plotly_chart(fig, use_container_width=True, config=get_plotly_config(width=1000))
+        
 
     return out_df
