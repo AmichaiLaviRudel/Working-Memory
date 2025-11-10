@@ -252,9 +252,11 @@ def process_and_plot_lick_data(project_data, index, plot=False):
         response_window_end = round(states_array[index_end_trial,1][0][1] - tone_onset,3)
         response_window_end = max(response_window_end,reinforsment_delay_end+2)
     except Exception as e:
-        reinforsment_delay_end = 0.2
-        response_window_end = 2
-        response_window_end = 2+0.2
+        stim_dur = 0.02
+        reinforsment_delay_dur = 0.01
+        response_window_dur = 2
+        reinforsment_delay_end = stim_dur + reinforsment_delay_dur
+        response_window_end = response_window_dur+reinforsment_delay_end
         response_window_end = max(response_window_end,reinforsment_delay_end+3)
 
 

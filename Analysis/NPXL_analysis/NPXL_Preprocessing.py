@@ -663,14 +663,14 @@ def main():
     """
     Main analysis workflow. Finds KS folders, copies behavioral files, and (optionally) runs further analysis for each folder.
     """
-    force_rerun = True
+    force_rerun = False
     
     bin_size=0.005 # in seconds
 
     # recordings_root_directory = r"/ems/elsc-labs/mizrahi-a/Shared/Amichai/NPXL/Recs/group5"
     # experiment_metadata_csv_path = r"/ems/elsc-labs/mizrahi-a/Code\DB\users_data\Amichai\NPXL recordings _experimental_data.csv".replace("\\", "/")
     
-    recordings_root_directory = r"Z:/Shared/Amichai/NPXL/Recs/group5"
+    recordings_root_directory = r"Z:/Shared/Amichai/NPXL/Recs/group7"
     experiment_metadata_csv_path = r"Z:\Shared\Amichai/Code\DB\users_data\Amichai\NPXL recordings _experimental_data.csv".replace("\\", "/")
     
 

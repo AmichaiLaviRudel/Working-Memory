@@ -5,13 +5,16 @@ import numpy as np
 import re
 
 # Source file path
-path1 = r"Z:\Shared\Noam\results\pilot_amichai_08_09_2025\pilot_amichai_08_09_2025.txt"
-path2 = r"Z:\Shared\Noam\results\experiments\experiments.txt"
-# Read file
-df1 = pd.read_csv(path1)
-df2 = pd.read_csv(path2)
-df = pd.concat([df1, df2])
+path1 = r"Z:\Shared\Noam\results\Educage1_09_11_2025\Educage1_09_11_2025.txt"
+# path2 = r"Z:\Shared\Noam\results\experiments\experiments.txt"
 
+out_csv = Path(r"Z:\\Shared\\Amichai\\Code\\DB\\users_data\\Amichai\\Educage1_experimental_data.csv")
+out_test = Path(r"Z:\\Shared\\Amichai\\Educage1_experimental_data_test.csv")
+# Read file
+df = pd.read_csv(path1)
+# df2 = pd.read_csv(path2)
+# df = pd.concat([df1, df2])
+df.to_csv(out_test, index=False)
 # Sort by datetime if possible and reindex
 datetime_cols = [col for col in ["datetime", "date", "start_time", "start_dt"] if col in df.columns]
 if "start_dt" in df.columns:
@@ -48,8 +51,14 @@ def _parse_licks_list(x):
     except Exception:
         return []
 
+# Check if licks_time_RD exists and combine with licks_time if present
 if "licks_time" in df.columns:
     df["licks_time_list"] = df["licks_time"].apply(_parse_licks_list)
+    if "licks_time_rd" in df.columns:
+        # Parse licks_time_RD and concatenate with licks_time_list row-wise
+        licks_time_rd_parsed = df["licks_time_rd"].apply(_parse_licks_list)
+        # Combine lists for each row (licks_time_rd comes before licks_time)
+        df["licks_time_list"] = licks_time_rd_parsed + df["licks_time_list"]
     licks_test = df["licks_time_list"].copy()
     # Vectorized lick processing via explode/groupby
     if "start_dt" in df.columns:
@@ -145,7 +154,7 @@ grouped = (
 )
 
 # Save grouped to parent of the source path
-base_dir = Path(path2).resolve().parent
+base_dir = Path(path1).resolve().parent
 
 # Per-row normalization removed: done pre-grouping
 
@@ -180,8 +189,8 @@ grouped_out = (
           "licks": "Licks",
           "start_time": "StartTime",
       })
-      .assign(FilePath=path2)
-      .query("n_trials >= 50")  # Filter rows with at least 50 trials
+      .assign(FilePath=path1)
+      .query("n_trials >= 10")  # Filter rows with at least 50 trials
       [
           ["MouseName", "SessionDate", "TrialTypes", "Outcomes", "Stimuli", "Licks", "StartTime", "Notes", "FilePath", "Tones_per_class", "N_Boundaries"]
       ]
@@ -202,7 +211,6 @@ else:
     _sort_dt = pd.to_datetime(grouped_out["SessionDate"], errors="coerce")
 
 grouped_out = grouped_out.assign(_sort_dt=_sort_dt).sort_values(["_sort_dt", "MouseName", "Notes"]).drop(columns=["_sort_dt"])  
-out_csv = Path(r"Z:\\Shared\\Amichai\\Code\\DB\\users_data\\Amichai\\Educage_experimental_data.csv")
 # Format Stimuli lists without commas, space-separated within brackets
 def _format_space_list(lst):
     try:
@@ -218,6 +226,7 @@ def _format_space_list(lst):
 _export_df = grouped_out.copy()
 if "Stimuli" in _export_df.columns:
     _export_df["Stimuli"] = _export_df["Stimuli"].apply(_format_space_list)
+out_csv = Path(r"Z:\\Shared\\Amichai\\Code\\DB\\users_data\\Amichai\\Educage1_experimental_data.csv")
 
 _export_df.to_csv(out_csv, index=False)
 print(f"Grouped summary saved to: {out_csv}")

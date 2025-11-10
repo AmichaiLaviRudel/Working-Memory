@@ -53,6 +53,10 @@ def initialize_session_state():
     if 'high_boundary' not in st.session_state:
         st.session_state.high_boundary = 1.5
 
+    # Global preference: filter bins where FA rate = Hit rate = 100%
+    if 'filter_fa_equal_hit' not in st.session_state:
+        st.session_state.filter_fa_equal_hit = False
+
     st.session_state['nidq_events_times_path'] = 'nidq.xd_0_1_100.txt'
 
 

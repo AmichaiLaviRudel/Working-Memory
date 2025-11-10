@@ -14,7 +14,7 @@ import ast
 from Analysis.GNG_bpod_analysis.GNG_bpod_general import get_plotly_config
 
 # Function to calculate the d prime
-def d_prime(selected_data, index=0, t=10, plot=False):
+def d_prime(selected_data, index=0, t=10, plot=False, filter_fa_equal_hit=None):
     from Analysis.GNG_bpod_analysis.licking_and_outcome import licking_rate
     rates, frac = licking_rate(selected_data, index, t=t, plot=False)
     
@@ -29,6 +29,32 @@ def d_prime(selected_data, index=0, t=10, plot=False):
     valid_bins = (hit_rate + fa_rate) > 0.3
     hit_rate = hit_rate[valid_bins]
     fa_rate = fa_rate[valid_bins]
+    
+    # Determine and persist global preference for filtering 100%/100% bins
+    # Priority: explicit arg (only to initialize) > existing session_state > default False
+    if plot:
+        # Initialize session state before creating the widget to avoid modification-after-instantiation errors
+        if "filter_fa_equal_hit" not in st.session_state:
+            st.session_state["filter_fa_equal_hit"] = bool(filter_fa_equal_hit) if filter_fa_equal_hit is not None else False
+        # Render the single global checkbox; do not manually overwrite session_state afterwards
+        new_pref = st.checkbox(
+            "Filter out bins where FA rate = Hit rate = 100%",
+            value=st.session_state["filter_fa_equal_hit"],
+            key="filter_fa_equal_hit",
+            help="When enabled, remove bins where both hit and false alarm rates are 100%"
+        )
+        filter_fa_equal_hit = bool(new_pref)
+    else:
+        # Non-plot calls follow persisted preference unless explicitly provided
+        if filter_fa_equal_hit is None:
+            filter_fa_equal_hit = bool(st.session_state.get("filter_fa_equal_hit", False))
+    
+    # Filter out bins only when both hit_rate and fa_rate are effectively 100%
+    if filter_fa_equal_hit:
+        tolerance = 1e-6
+        both_hundred_mask = ~((hit_rate >= 1.0 - tolerance) & (fa_rate >= 1.0 - tolerance))
+        hit_rate = hit_rate[both_hundred_mask]
+        fa_rate = fa_rate[both_hundred_mask]
 
 
     # Prevent hit_rate and fa_rate from being exactly 0 or 1
