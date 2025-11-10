@@ -1361,10 +1361,12 @@ def cumulative_number_of_trials_vs_daily_dprime(project_data, t=15):
     Args:
         project_data (pd.DataFrame): DataFrame containing experiment data
         t (int): Bin size for d' calculation
-    """
+    """    
+
     from Analysis.GNG_bpod_analysis.metric import d_prime_multiple_sessions
     # Prepare data: for each mouse, sum up number of trials over days, and plot daily d' vs cumulative trials
     mice = sorted(project_data["MouseName"].unique())
+
     fig = go.Figure()
     
     # Add horizontal line at y=1
@@ -1387,7 +1389,8 @@ def cumulative_number_of_trials_vs_daily_dprime(project_data, t=15):
     )
     for mouse in mice:
         mouse_data = project_data[project_data["MouseName"] == mouse].sort_values("SessionDate")
-        session_dates = mouse_data["SessionDate"].values
+        session_dates = mouse_data["SessionDate"].astype(str).values
+        original_indices = mouse_data.index.values
         n_trials_per_day = []
         d_prime_per_day = []
         mouse_colors = []
@@ -1406,14 +1409,20 @@ def cumulative_number_of_trials_vs_daily_dprime(project_data, t=15):
 
         # Determine marker symbols: 'circle' if n_b == 1, 'square' if n_b == 2
         marker_symbols = ['circle' if nb == 1 else 'square' for nb in n_b]
-        # Marker line width is n_t value for each point
-        marker_line_widths = n_t
         # Use shared helpers for marker sizes and legends
         marker_sizes = colors.marker_sizes_from_tones(n_t, scale=5.0, default_size=6.0)
+        # Attach rich customdata for hover/click: [orig_index, session_date, tones, boundaries]
+        customdata = np.column_stack([
+            original_indices[:len(d_prime_per_day)],
+            np.array(session_dates[:len(d_prime_per_day)], dtype=object),
+            np.array(n_t[:len(d_prime_per_day)], dtype=object),
+            np.array(n_b[:len(d_prime_per_day)], dtype=object)
+        ])
         fig.add_trace(go.Scatter(
             x=cumulative_trials,
             y=d_prime_per_day,
             mode='lines+markers',
+            customdata=customdata,
             marker=dict(
                 color=mouse_colors[0],
                 size=marker_sizes,
@@ -1424,7 +1433,14 @@ def cumulative_number_of_trials_vs_daily_dprime(project_data, t=15):
                 )
             ),
             name=str(mouse),
-            text=[f"{n_t[i]}T_ {n_b[i]}B" for i, date in enumerate(session_dates)],
+            text=[f"{n_t[i]}T | {n_b[i]}B" for i in range(len(d_prime_per_day))],
+            hovertemplate=(
+                "Mouse: %{name}<br>"
+                "Date: %{customdata[1]} (idx %{customdata[0]})<br>"
+                "Cumulative Trials: %{x}<br>"
+                "d': %{y:.2f}<br>"
+                "T|B: %{text}<extra></extra>"
+            ),
             textposition="top center",
             showlegend=True
         ))
@@ -1451,16 +1467,53 @@ def cumulative_number_of_trials_vs_daily_dprime(project_data, t=15):
             # Add legend entries for marker sizes via shared helper
             colors.add_marker_legends(fig, n_b, n_t, scale=5.0)
 
-        
-        fig.update_layout(
-            xaxis_title="Cumulative Number of Trials",
-            yaxis_title="Daily d'",
-            title="Daily d' vs Cumulative Number of Trials per Mouse",
-            plot_bgcolor="white",
-            legend_title_text="Legend"
-        )
+    fig.update_layout(
+        xaxis_title="Cumulative Number of Trials",
+        yaxis_title="Daily d'",
+        title="Daily d' vs Cumulative Number of Trials per Mouse",
+        plot_bgcolor="white",
+        legend_title_text="Legend"
+    )
 
-    st.plotly_chart(fig, use_container_width=True, config=get_plotly_config())
+    # Try interactive click capture: write details and set selected_session
+    try:
+        from streamlit_plotly_events import plotly_events
+        selected_points = plotly_events(
+            fig,
+            click_event=True,
+            hover_event=False,
+            select_event=False,
+            key=f"cum_trials_dprime_{len(mice)}"
+        )
+        if selected_points:
+            pt = selected_points[0]
+            x_val = pt.get('x')
+            y_val = pt.get('y')
+            curve_num = pt.get('curveNumber', 0)
+            point_num = pt.get('pointNumber', 0)
+            trace = fig.data[curve_num]
+            name = trace.name
+            cd = trace.customdata[point_num] if hasattr(trace, 'customdata') else None
+            orig_idx = int(cd[0]) if cd is not None else None
+            sess_date = cd[1] if cd is not None else None
+            tones = cd[2] if cd is not None else None
+            bounds = cd[3] if cd is not None else None
+            # Update session state for external panels
+            try:
+                st.session_state.selected_session = orig_idx
+            except Exception:
+                pass
+            st.write({
+                "Mouse": name,
+                "Original Index": orig_idx,
+                "Session Date": sess_date,
+                "Cumulative Trials": x_val,
+                "d'": y_val,
+                "Tones per class": tones,
+                "Boundaries": bounds,
+            })
+    except Exception:
+        st.plotly_chart(fig, use_container_width=True, config=get_plotly_config())
 
 def plot_n_lick_by_stimulus(project_data, index, plot=True):
 

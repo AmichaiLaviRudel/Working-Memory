@@ -38,6 +38,8 @@ def compress_bin_files(root_dir, overwrite=False):
             continue
 
 # Example usage:
-# Set your root directory here:
-root_dir = r"E:\Amichai - bad recs"
+# Set your root directory here (works on both Windows and Linux):
+# Windows example: root_dir = r"E:\Amichai - bad recs"
+# Linux example: root_dir = "/path/to/your/directory"
+root_dir = r"Z:\Shared\Amichai\NPXL\Recs\group7\G7A2_novice_2b_4t_g0"  # Update this path for Linux environment
 compress_bin_files(root_dir, overwrite=False)

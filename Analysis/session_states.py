@@ -35,6 +35,12 @@ def initialize_session_state():
     if 'selected_project' not in st.session_state:
         st.session_state.selected_project = ''
 
+    # Deep-linking and selection flags
+    if 'force_single_index' not in st.session_state:
+        st.session_state.force_single_index = None
+    if 'selected_session' not in st.session_state:
+        st.session_state.selected_session = None
+
     # Animal selection keys (used in metric.py)
     if 'd_prime_animal_select' not in st.session_state:
         st.session_state.d_prime_animal_select = None

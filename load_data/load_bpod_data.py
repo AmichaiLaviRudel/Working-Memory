@@ -6,7 +6,7 @@ import os as os
 from tqdm import tqdm
 import re as re
 
-# file_path = r"Z:\Shared\Amichai\NPXL\Recs\group5\catgt_G5A3_1b_4t_new_g0\G5A3_GNG_20250731_133810.mat"
+# file_path = r"Z:\Shared\Amichai\Behavior\data\Group_7\G7A1\GNG\Session Data\G7A1_GNG_20251028_095524.mat"
 def load_mat_file(file_path):
     # Load the .mat file
 
@@ -27,11 +27,13 @@ def load_mat_file(file_path):
         boundaries = []
         trial_types_df = []
         raw_events_df = []
-        return trial_types_df, raw_events_df, session_date, session_time, trial_settings, notes, licks, states, stimuli, Unique_Stimuli_Values, tones_per_class, boundaries
+        recs = False
+        return trial_types_df, raw_events_df, session_date, session_time, trial_settings, notes, licks, states, stimuli, Unique_Stimuli_Values, tones_per_class, boundaries, recs
     
     # Extract the 'SessionData' field
     session_data_content = mat_contents['SessionData'][0, 0]
     trial_settings = session_data_content['TrialSettings'][0]
+
 
     # Extract the date and time information
     session_date = session_data_content['Info']['SessionDate'][0][0]
@@ -40,8 +42,18 @@ def load_mat_file(file_path):
     # Extract 'TrialTypes' and 'RawEvents'
     trial_types = session_data_content['TrialTypes'][0]
     raw_events = session_data_content['RawEvents'][0, 0]
-
-
+    
+    count_recs = 0
+    recs = False
+    if ['Recording'] in trial_settings[0]['GUI'][0, 0]:
+        for i in range(len(trial_settings)):
+            count_recs += trial_settings[i]['GUI'][0, 0]['Recording'][0, 0]
+            if count_recs > 10:
+                recs = True
+                break
+    else:
+        recs = False
+    
     try:
         # Extract 'Stimulus' field from 'session_data_content'
         stimuli = session_data_content['stimulus']
@@ -171,7 +183,7 @@ def load_mat_file(file_path):
     # Convert the extracted information into a DataFrame
     raw_events_df = pd.DataFrame(states_timestamps_info)
 
-    return trial_types_df, raw_events_df, session_date, session_time, trial_settings, notes, licks, states, stimuli, Unique_Stimuli_Values, tones_per_class, boundaries
+    return trial_types_df, raw_events_df, session_date, session_time, trial_settings, notes, licks, states, stimuli, Unique_Stimuli_Values, tones_per_class, boundaries, recs
 
 # Function to extract states and timestamps from 'Trial' data in 'RawEvents'
 def extract_states_timestamps(trial_data):
@@ -184,7 +196,7 @@ def extract_states_timestamps(trial_data):
     return states_info
 
 
-def create_single_row_with_outcome(file_path, trial_types_df, raw_events_df, session_date, session_time, trial_settings, notes, licks, states, Unique_Stimuli_Values, tones_per_class, boundaries):
+def create_single_row_with_outcome(file_path, trial_types_df, raw_events_df, session_date, session_time, trial_settings, notes, licks, states, Unique_Stimuli_Values, tones_per_class, boundaries, recs):
     file_name = os.path.basename(file_path)
 
     # Split the file name to extract the required part
@@ -250,6 +262,7 @@ def create_single_row_with_outcome(file_path, trial_types_df, raw_events_df, ses
         'WaterConsumption': water,
         'FilePath':         file_path,
         'Notes':            notes,
+        'Recording':        recs,
         'Unique_Stimuli_Values': Unique_Stimuli_Values,
         'Tones_per_class': tones_per_class,
         'N_Boundaries': boundaries
@@ -403,13 +416,13 @@ if __name__ == "__main__":
     # Process each .mat file if not already done
     for mat_file in tqdm(mat_files_list, desc = "Processing .mat files"):
         if not is_processed(mat_file):
-            trial_types_df, raw_events_df, session_date, session_time, trial_settings, notes, licks, states,  stimuli, Unique_Stimuli_Values, tones_per_class, boundaries = load_mat_file(mat_file)
+            trial_types_df, raw_events_df, session_date, session_time, trial_settings, notes, licks, states,  stimuli, Unique_Stimuli_Values, tones_per_class, boundaries, recs = load_mat_file(mat_file)
             if len(trial_types_df) < 50 or "Fake" in mat_file:
                 continue
 
             combined_row_df = create_single_row_with_outcome(mat_file, trial_types_df, raw_events_df, session_date,
                                                              session_time, trial_settings, notes, licks, states,
-                                                             Unique_Stimuli_Values, tones_per_class, boundaries)
+                                                             Unique_Stimuli_Values, tones_per_class, boundaries, recs)
             df = save_combined_data_to_df(df, combined_row_df)
             mark_as_processed(mat_file)  # Mark the file as processed
     #

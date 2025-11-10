@@ -66,21 +66,26 @@ def current_project_overview(existing_projects, selected_project, path, types):
         # Ensure that a 'Checkbox' column exists for selecting rows
         if 'Checkbox' not in project_data.columns:
             project_data.insert(0, 'Checkbox', False)
+        if 'Recording' not in project_data.columns:
+            project_data.insert(0, 'Recording', False)
 
-        columns_to_present = ["Checkbox", "MouseName", "SessionDate", "SessionTime", "WaterConsumption","Notes", "FilePath"]
+        columns_to_present = ["Checkbox", "MouseName", "SessionDate", "SessionTime", "Recording", "WaterConsumption","Notes", "FilePath"]
         # Display the project data editor with column configurations
         st_project_data = st.data_editor(
             data = project_data,
             height = 400,
-            use_container_width = True,
+            use_container_width = False,
             hide_index = True,
             column_order = columns_to_present,
             column_config = {
                 "Checkbox":         st.column_config.CheckboxColumn(
                     "Analyse?", help = "Select rows for analysis", default = False,
                 ),
+                "Recording":        st.column_config.CheckboxColumn(
+                    "Recording", width = "small", help = "Have a recording session?", default = False,
+                ),
                 "SessionDate":      st.column_config.Column(
-                    width = "small", help = "Date of the session", disabled = True
+                    width = None, help = "Date of the session", disabled = True
                 ),
                 "SessionTime":      st.column_config.Column(
                     width = "small", help = "Time of the session", disabled = True
@@ -94,16 +99,16 @@ def current_project_overview(existing_projects, selected_project, path, types):
                     width = "medium", help = "Stimuli used in trials", disabled = True
                 ),
                 "FilePath":         st.column_config.Column(
-                    width = "small", help = "Path to the file", disabled = True
+                    width = "medium", help = "Path to the file", disabled = True
                 ),
                 "WaterConsumption": st.column_config.Column(
-                    width = "small", help = "Water consumption in mL", disabled = True
+                    width = None, help = "Water consumption in mL", disabled = True
                 ),
                 "Notes":            st.column_config.Column(
-                    width = "medium", help = "Editable notes field", disabled = False
+                    width = None, help = "Editable notes field", disabled = False
                 ),
                 "Animal":           st.column_config.Column(
-                    width = "large", help = "Editable animal field", disabled = False
+                    width = None, help = "Editable animal field", disabled = False
                 ),
                 "Date":             st.column_config.Column(
                     width = "large", help = "Editable date field", disabled = False
@@ -153,19 +158,32 @@ def analysis(project_data, analysis_type):
         analysis_type (str): Type of analysis to perform.
     """
     # Get indices of rows selected for analysis via the 'Checkbox'
-    selected_indices = project_data.loc[project_data["Checkbox"] == True].index
+    # Allow deep-linking to a specific row via session_state.force_single_index
+    try:
+        force_idx = st.session_state.get('force_single_index', None)
+    except Exception:
+        force_idx = None
+
+    if force_idx is not None and force_idx in project_data.index:
+        st.session_state.selected_session = pd.Index([force_idx])
+        try:
+            st.session_state.force_single_index = None
+        except Exception:
+            pass
+    else:
+        st.session_state.selected_session = project_data.loc[project_data["Checkbox"] == True].index
 
 
-    if len(selected_indices) == 1:
+    if len(st.session_state.selected_session) == 1:
         # Single-row analysis
-        index = selected_indices.values[0]
+        index = st.session_state.selected_session.values[0]
         st.markdown(f"### {analysis_type}")
 
         if analysis_type == 'Behavior-Bpod GUI' or analysis_type == 'Educage':
             from Analysis.GNG_bpod_analysis.GNG_Bpod_Analysis import gng_bpod_analysis
             gng_bpod_analysis(project_data, index)
 
-    elif len(selected_indices) < 1:
+    elif len(st.session_state.selected_session) < 1:
         st.info("Please select row(s) to start the analysis")
 
         # If more than one row is selected, run group analysis
@@ -175,7 +193,7 @@ def analysis(project_data, analysis_type):
         if analysis_type == 'Behavior-Bpod GUI' or analysis_type == 'Educage':
             try:
                 from Analysis.GNG_bpod_analysis.GNG_Bpod_Analysis import gng_bpod_analysis_multipule
-                gng_bpod_analysis_multipule(project_data, selected_indices)
+                gng_bpod_analysis_multipule(project_data, st.session_state.selected_session)
             except Exception as e:
                 st.error(f"Something went wrong in group Bpod analysis.\n\n{e}")
                 st.text(traceback.format_exc())
@@ -199,6 +217,7 @@ st.session_state.selected_project = st.sidebar.radio("Select Project", project_l
 project_types_str = existing_projects[
     existing_projects["Project Name"] == st.session_state.selected_project
 ]["Project Type"]
+
 if isinstance(project_types_str, pd.Series):
     project_types_str = project_types_str.iloc[0]
 elif hasattr(project_types_str, 'item'):
@@ -257,6 +276,7 @@ st.divider()
 
 # Analysis section header
 st.title("Analysis")
+
 
 # Run analysis for each project type
 for project_type in project_types:

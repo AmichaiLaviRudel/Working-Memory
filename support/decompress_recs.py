@@ -42,5 +42,5 @@ def decompress_bin_files(root_dir, overwrite=False):
 
 # Example usage:
 # Set your root directory here:
-root_dir = r"E:\Amichai - bad recs"
+root_dir = r"E:\Amichai - bad recs\Group3\G3A3\G3A3_rec2_g0\G3A3_rec2_g0_imec0"
 decompress_bin_files(root_dir, overwrite=False)
