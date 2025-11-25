@@ -115,9 +115,9 @@ def filter_and_prepare_data(project_data, n_bd, n_indices):
     """Filter data by N_Boundaries and keep only last n sessions per mouse."""
     filtered_df = project_data[project_data["N_Boundaries"] == n_bd].reset_index(drop=True)
     
-    # Filter out sessions with fewer than 3 tones per class if available
+    # Filter out sessions with fewer than 2 tones per class if available
     if "Tones_per_class" in filtered_df.columns:
-        filtered_df = filtered_df[filtered_df["Tones_per_class"] >= 3].reset_index(drop=True)
+        filtered_df = filtered_df[filtered_df["Tones_per_class"] >= 2].reset_index(drop=True)
     
     # Handle both possible column names for stimuli data
     if "Unique_Stimuli_Values" in filtered_df.columns:
@@ -158,14 +158,12 @@ def compute_avg_lick_rates(filtered_df):
         try:
             name, session = getNameAndSession(filtered_df, index)
             stimuli, outcomes = preprocess_stimuli_outcomes(filtered_df, index)
-            unique_stimuli, lick_rates = compute_lick_rate(stimuli, outcomes)
-            
+            unique_stimuli, lick_rates, catch_summary = compute_lick_rate(stimuli, outcomes)
             all_stimuli.append(unique_stimuli)
             all_lick_rates.append(lick_rates)
             individual_traces.append((unique_stimuli, lick_rates, name, session))
         except Exception as e:
             print(f"Error processing index {index}: {e}")
-    
     if not all_stimuli or not all_lick_rates:
         return None, None, []
     
@@ -197,7 +195,7 @@ def normalize_lick_rate(avg_lick_rate, label=""):
 def add_boundary_lines(fig, n_bd, common_stimuli, label=None):
     """Add vertical boundary lines to figure."""
     if n_bd == 2:
-        for x_val, bname in zip([1, 1.5], ["Low Boundary", "High Boundary"]):
+        for x_val, bname in zip([st.session_state.low_boundary, st.session_state.high_boundary], ["Low Boundary", "High Boundary"]):
             if x_val > 0:
                 name = f"{bname} (Two Boundaries)" if label else bname
                 fig.add_trace(go.Scatter(
@@ -210,7 +208,7 @@ def add_boundary_lines(fig, n_bd, common_stimuli, label=None):
     elif n_bd == 1:
         name = "Low Boundary (One Boundary)" if label else "Low Boundary"
         fig.add_trace(go.Scatter(
-            x=[1, 1], y=[0, 100],
+            x=[st.session_state.low_boundary, st.session_state.low_boundary], y=[0, 100],
             mode="lines", line=dict(dash="dash", width=colors.LINE_WIDTH_MEDIUM, color='gray'),
             name=name,
             hoverinfo="skip",
@@ -239,7 +237,6 @@ def plot_psychometric_curves_with_boundaries(project_data, N_Boundaries, n_indic
             t=t,
             show_details=False
         )
-    
     fig = go.Figure()
     normalize_avg = st.checkbox("Normalize average response", value=False, 
                                 key=f"normalize_avg_{N_Boundaries}_{n_indices}")
@@ -255,7 +252,6 @@ def plot_psychometric_curves_with_boundaries(project_data, N_Boundaries, n_indic
             filtered_df = filter_and_prepare_data(project_data, n_bd, n_indices)
             if filtered_df is None:
                 continue
-            
             common_stimuli, interpolated_lick_rates, individual_traces = compute_avg_lick_rates(filtered_df)
             if common_stimuli is None:
                 continue
@@ -301,6 +297,8 @@ def plot_psychometric_curves_with_boundaries(project_data, N_Boundaries, n_indic
             # Compute and add average trace
             avg_lick_rate = np.mean(interpolated_lick_rates, axis=0)
             
+
+
             fig.add_trace(go.Scatter(
                 x=common_stimuli, y=avg_lick_rate,
                 mode='lines',
@@ -400,7 +398,7 @@ def plot_psychometric_curves_with_boundaries(project_data, N_Boundaries, n_indic
     add_boundary_lines(fig, N_Boundaries, common_stimuli)
     
     title = "Psychometric Curve, Two Boundaries" if N_Boundaries == 2 else "Psychometric Curve, One Boundary"
-    default_ticks = [1, 1.5] if N_Boundaries == 2 else [1.5]
+    default_ticks = [st.session_state.low_boundary, st.session_state.high_boundary] if N_Boundaries == 2 else [st.session_state.high_boundary]
     tickvals = default_ticks + sorted(np.round(common_stimuli, 2).tolist())
     
     fig.update_layout(
@@ -412,7 +410,7 @@ def plot_psychometric_curves_with_boundaries(project_data, N_Boundaries, n_indic
             tickvals=tickvals,
             showgrid=True
         ),
-        yaxis=dict(title="Lick Rate (%)", range=[-5, 110]),
+        yaxis=dict(title="Lick Rate (%)", range=[-15, 110]),
         legend=dict(x=1.01, y=0.99, bgcolor="rgba(255,255,255,0.4)"),
         margin=dict(l=40, r=40, t=60, b=40),
         hovermode="x unified"

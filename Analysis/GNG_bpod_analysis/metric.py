@@ -787,6 +787,19 @@ def d_prime_low_high_boundary_sessions(selected_data, idx, t=10, plot=True):
     trialtypes = np.array(trialtypes)
     outcomes = np.array(outcomes)
 
+    # Ensure arrays are aligned to the same length first
+    min_len = min(len(stimuli), len(trialtypes), len(outcomes))
+    stimuli = stimuli[:min_len]
+    trialtypes = trialtypes[:min_len]
+    outcomes = outcomes[:min_len]
+
+    # Filter out 'Catch' trials
+    catch_mask = np.array([tt != 'Catch' for tt in trialtypes])
+    if not np.all(catch_mask):
+        stimuli = stimuli[catch_mask]
+        trialtypes = trialtypes[catch_mask]
+        outcomes = outcomes[catch_mask]
+
     # Now mask
     filtered_trials_low = trialtypes[low_mask]
     filtered_outcomes_low = outcomes[low_mask]
@@ -973,6 +986,19 @@ def d_prime_for_stim_pairs(selected_data, index=0, stim_pairs=None, t=10, plot=T
     outcomes_val = selected_data.iloc[index]["Outcomes"]
     trialtypes = to_array(trials_val)
     outcomes = to_array(outcomes_val)
+
+    # Ensure arrays are aligned to the same length first
+    min_len = min(len(stimuli), len(trialtypes), len(outcomes))
+    stimuli = stimuli[:min_len]
+    trialtypes = trialtypes[:min_len]
+    outcomes = outcomes[:min_len]
+
+    # Filter out 'Catch' trials
+    catch_mask = np.array([tt != 'Catch' for tt in trialtypes])
+    if not np.all(catch_mask):
+        stimuli = stimuli[catch_mask]
+        trialtypes = trialtypes[catch_mask]
+        outcomes = outcomes[catch_mask]
 
     # Determine default pairs if not provided
     if stim_pairs is None:
@@ -1280,10 +1306,20 @@ def daily_dprime_by_hour_multi_animal(project_data, t=10):
         trialtypes = to_array(mouse_data.iloc[0]["TrialTypes"])
         outcomes = to_array(mouse_data.iloc[0]["Outcomes"])
         
+        # Filter out 'Catch' trials
+        catch_mask = np.array([tt != 'Catch' for tt in trialtypes])
+        if not np.all(catch_mask):
+            trialtypes = trialtypes[catch_mask]
+            outcomes = outcomes[catch_mask]
+        
         # Parse start times
         times = _parse_start_times(start_times)
         if not times or len(times) == 0:
             continue
+        
+        # Filter times array to match filtered trialtypes/outcomes
+        if not np.all(catch_mask):
+            times = np.array(times)[catch_mask] if len(times) == len(catch_mask) else times
         
         # Ensure arrays are same length
         min_len = min(len(times), len(trialtypes), len(outcomes))

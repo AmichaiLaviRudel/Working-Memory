@@ -1,5 +1,5 @@
 # Removed imports to avoid circular dependency
-from Analysis.GNG_bpod_analysis.GNG_bpod_general import filter_valid_arrays, parse_stimuli
+from Analysis.GNG_bpod_analysis.GNG_bpod_general import filter_valid_arrays, parse_stimuli, filter_out_catch_and_early_response
 import Analysis.GNG_bpod_analysis.colors as colors
 from Analysis.GNG_bpod_analysis.colors import COLOR_FA, OUTCOME_COLOR_MAP, COLOR_ACCENT, COLOR_GRAY, COLOR_GO, COLOR_NOGO, COLOR_BLUE, COLOR_D_PRIME, COLOR_HIT, COLOR_CR
 
@@ -25,10 +25,10 @@ def responses(selected_data, index=0):
     # Check if we have valid data
     if not outcomes_list or len(outcomes_list) == 0:
         # Return empty DataFrame with proper structure
-        return pd.DataFrame({"Hit": [], "CR": [], "FA": [], "Miss": []})
+        return pd.DataFrame({"Hit": [], "CR": [], "FA": [], "Miss": [], "Catch - No Response": [], "Catch - Response": []})
 
     # Define all unique outcomes in the list
-    unique_outcomes = {'Hit', 'CR', 'False Alarm', 'Miss'}
+    unique_outcomes = {'Hit', 'CR', 'False Alarm', 'Miss', 'Catch - No Response', 'Catch - Response'}
     # Dictionary to store cumulative counts for each outcome
     cumulative_counts = {}
     # Calculate cumulative counts for each unique outcome
@@ -47,7 +47,9 @@ def responses(selected_data, index=0):
         "Hit":  cumulative_counts["Hit"],
         "CR":   cumulative_counts["CR"],
         "FA":   cumulative_counts["False Alarm"],  # Corrected the label to match 'False Alarm'
-        "Miss": cumulative_counts["Miss"]
+        "Miss": cumulative_counts["Miss"],
+        "Catch - No Response": cumulative_counts["Catch - No Response"],
+        "Catch - Response": cumulative_counts["Catch - Response"]
     })
     return responses
     
@@ -60,8 +62,8 @@ def licking_rate(selected_data, index=0, t=10, plot=True):
     # Check if we have valid data
     if responses_data.empty:
         # Return empty DataFrames with proper structure
-        rates = pd.DataFrame({"Hit": [], "Miss": [], "CR": [], "FA": []})
-        frac = pd.DataFrame({"Go": [], "NoGo": []})
+        rates = pd.DataFrame({"Hit": [], "Miss": [], "CR": [], "FA": [], "Catch - No Response": [], "Catch - Response": []})
+        frac = pd.DataFrame({"Go": [], "NoGo": [], "Catch": []})
         return rates, frac
 
     # Fix column names for consistency
@@ -69,52 +71,72 @@ def licking_rate(selected_data, index=0, t=10, plot=True):
     miss_bin = responses_data["Miss"].diff().rolling(t).sum()
     cr_bin = responses_data["CR"].diff().rolling(t).sum()
     fa_bin = responses_data["FA"].diff().rolling(t).sum()
-
+    catch_no_response_bin = responses_data["Catch - No Response"].diff().rolling(t).sum()
+    catch_response_bin = responses_data["Catch - Response"].diff().rolling(t).sum()
 
     rates = pd.DataFrame({
         "Hit":  hit_bin,
         "Miss": miss_bin,
         "CR":   cr_bin,
-        "FA":   fa_bin
+        "FA":   fa_bin,
+        "Catch - No Response": catch_no_response_bin,
+        "Catch - Response": catch_response_bin
     }).dropna()
     # Check if we still have data after dropna
     if rates.empty:
-        frac = pd.DataFrame({"Go": [], "NoGo": []})
+        frac = pd.DataFrame({"Go": [], "NoGo": [], "Catch": []})
         return rates, frac
 
     # Avoid division by zero
     hit_rate = 100 * hit_bin / (hit_bin + miss_bin).replace(0, np.nan)
     fa_rate = 100 * fa_bin / (cr_bin + fa_bin).replace(0, np.nan)
-
-    frac = pd.DataFrame({"Go": hit_rate, "NoGo": fa_rate})
+    catch_rate = 100 * catch_response_bin / (catch_no_response_bin + catch_response_bin).replace(0, np.nan)
+    frac = pd.DataFrame({"Go": hit_rate, "NoGo": fa_rate, "Catch": catch_rate})
 
    
     c_go = colors.COLOR_GO 
     c_nogo = colors.COLOR_NOGO  
-
+    c_catch = colors.COLOR_LOW_BD
     if plot:
         st.subheader("Licking rate")
-        st.line_chart(frac, color=[c_go, c_nogo])
+        st.line_chart(frac, color=[c_catch, c_go, c_nogo])
 
     return rates, frac
 
 ### Function: Compute Lick Rate ###
-def compute_lick_rate(stimuli, outcomes):
+def compute_lick_rate(stimuli, outcomes, trialtypes=None):
     """
     Computes the lick rate (as a percentage) for each unique stimulus level.
+    
+    Parameters:
+    - stimuli: array of stimulus values
+    - outcomes: array of trial outcomes
+    - trialtypes: optional array of trial types (used to filter out 'Catch' trials)
     """
-    from Analysis.GNG_bpod_analysis.colors import COLOR_HIT, COLOR_FA
+    # Robustly compute catch trials and separate unique stimuli
+    if trialtypes is None:
+        catch_mask = np.zeros_like(stimuli, dtype=bool)
+    else:
+        catch_mask = np.array([tt == 'Catch' for tt in trialtypes], dtype=bool)
 
-    unique_stimuli = np.unique(stimuli)
+    catch_stimuli = np.unique(stimuli[catch_mask])
+    all_unique_stimuli = np.unique(stimuli)
+    unique_stimuli = np.setdiff1d(all_unique_stimuli, catch_stimuli)
+
     lick_rates = []
-
+    catch_lick_rates = []
     for stimulus in unique_stimuli:
         mask = stimuli == stimulus
         relevant_outcomes = outcomes[mask]
         licks = sum(outcome in {"Hit", "False Alarm"} for outcome in relevant_outcomes)
         lick_rates.append((licks / len(relevant_outcomes) * 100) if len(relevant_outcomes) > 0 else 0)
+    for stimulus in catch_stimuli:
+        mask = stimuli == stimulus
+        relevant_outcomes = outcomes[mask]
+        licks = sum(outcome in {"Catch - Response"} for outcome in relevant_outcomes)
+        catch_lick_rates.append((licks / len(relevant_outcomes) * 100) if len(relevant_outcomes) > 0 else 0)
 
-    return unique_stimuli, np.array(lick_rates)
+    return unique_stimuli, np.array(lick_rates), catch_stimuli, np.array(catch_lick_rates)
 
 def lick_rate_multipule_sessions(selected_data, t=10, plot=True,  animal_name = "None"):
     from Analysis.GNG_bpod_analysis.colors import COLOR_HIT, COLOR_FA
@@ -252,8 +274,8 @@ def process_and_plot_lick_data(project_data, index, plot=False):
         response_window_end = round(states_array[index_end_trial,1][0][1] - tone_onset,3)
         response_window_end = max(response_window_end,reinforsment_delay_end+2)
     except Exception as e:
-        stim_dur = 0.02
-        reinforsment_delay_dur = 0.01
+        stim_dur = 0.3
+        reinforsment_delay_dur = 0.001
         response_window_dur = 2
         reinforsment_delay_end = stim_dur + reinforsment_delay_dur
         response_window_end = response_window_dur+reinforsment_delay_end
@@ -386,7 +408,7 @@ def process_and_plot_lick_data(project_data, index, plot=False):
 
     )
 
-    # ✅ Add Raster Plot (Scatter)
+    # Raster Plot
     if not df_go_raster.empty or not df_nogo_raster.empty:
         if not df_go_raster.empty:
             fig.add_trace(
@@ -419,7 +441,7 @@ def process_and_plot_lick_data(project_data, index, plot=False):
     else:
         st.warning("No valid lick raster data to plot.")
 
-    # ✅ Add Histogram Plot (Bar Chart)
+    # Histogram Plot
     df_go_hist = pd.DataFrame({"Time": concatenated_go, "Trial Type": "Go"})
     df_nogo_hist = pd.DataFrame({"Time": concatenated_no_go, "Trial Type": "No-Go"})
     df_hist = pd.concat([df_go_hist, df_nogo_hist])
@@ -464,7 +486,7 @@ def process_and_plot_lick_data(project_data, index, plot=False):
     else:
         st.warning("No valid lick data to plot.")
 
-    # ✅ Update layout and styling
+    # Update layout and styling
     fig.update_layout(
         height=500,
         width = 1000,

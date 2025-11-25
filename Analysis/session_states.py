@@ -49,7 +49,7 @@ def initialize_session_state():
 
     # Low/high boundary values
     if 'low_boundary' not in st.session_state:
-        st.session_state.low_boundary = 1.0
+        st.session_state.low_boundary = 0.983
     if 'high_boundary' not in st.session_state:
         st.session_state.high_boundary = 1.5
 

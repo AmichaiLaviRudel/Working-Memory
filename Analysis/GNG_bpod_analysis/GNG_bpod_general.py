@@ -94,3 +94,12 @@ def get_plotly_config(filename_prefix="plot", height=1080/2, width=1800):
             'scale': 1
         }
     }
+
+def filter_out_catch_and_early_response(outcomes, trialtypes):
+    # Filter out 'Catch' trials
+    catch_mask = np.array([tt != 'Catch' for tt in trialtypes], dtype=bool)
+    # Filter out trials with 'Early Response' outcomes
+    early_response_mask = np.array(['Early Response' not in str(outcome) for outcome in outcomes])
+    # Combine both masks (keep trials that pass both filters)
+    combined_mask = catch_mask & early_response_mask
+    return catch_mask, early_response_mask, combined_mask

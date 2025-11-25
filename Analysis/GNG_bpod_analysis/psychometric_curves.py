@@ -151,10 +151,25 @@ def psychometric_curve(selected_data, index, plot=True):
     """
     Processes psychometric data, fits a sigmoid curve, and plots the psychometric curve.
     """
+
+
+
     try:
         # Extract and preprocess data
+
         stimuli, outcomes = preprocess_stimuli_outcomes(selected_data, index)
-        unique_stimuli, lick_rates = compute_lick_rate(stimuli, outcomes)
+
+        # Get trialtypes to filter out 'Catch' trials
+        trials_val = selected_data.iloc[index]["TrialTypes"]
+        trialtypes = to_array(trials_val)
+
+        
+        # compute_lick_rate will handle filtering of 'Catch' trials and 'Early Response' outcomes
+        unique_stimuli, lick_rates, catch_stimuli, catch_lick_rates = compute_lick_rate(stimuli, outcomes, trialtypes=trialtypes)
+        
+        unique_stimuli = np.concatenate([unique_stimuli, catch_stimuli])
+        lick_rates = np.concatenate([lick_rates, catch_lick_rates])
+        
         n_b = selected_data.loc[index, 'N_Boundaries']
         session_type =  selected_data.at[index, "Notes"]
         if "TA" in session_type or "Discrimination" in session_type:

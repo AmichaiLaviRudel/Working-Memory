@@ -94,14 +94,17 @@ if "licks_time" in df.columns:
 
             
 
-# Prepare cleaned stimulus names: drop .npz and replace '-' with '.'
+# Prepare cleaned stimulus names: drop .npz, replace '-' with '.', and drop all letters
 if "stim_name" in df.columns:
     df["stim_name_clean"] = (
         df["stim_name"].astype(str)
           .str.replace(".npz", "", regex=False)
-          .str.replace("-", ".", regex=False)
+          .str.replace(r"[A-Za-z]", "", regex=True)  # drop all letters
+          .str.replace(r'(?<=\d)-(?=\d)', '.', regex=True)   # replace '-' between digits with '.'
+          .str.replace("-", "", regex=False)                 # drop any remaining '-'
     )
-
+print(df["stim_name"].unique())
+print(df["stim_name_clean"].unique())
 # Exclude dummy probe mouse_id before processing
 df = df[df["mouse_id"] != "000799EB9B"]
 
@@ -123,6 +126,8 @@ if "score" in df.columns:
         "cr": "CR",
         "correct rejection": "CR",
         "correct_rejection": "CR",
+        "catch - no response": "Catch - No Response",
+        "catch - response": "Catch - Response",
     }
     df["score_norm"] = _sc.map(_map).fillna(_sc.str.title())
 

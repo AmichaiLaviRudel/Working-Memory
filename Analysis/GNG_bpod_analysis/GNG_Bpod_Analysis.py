@@ -192,11 +192,11 @@ def gng_bpod_analysis_multipule(project_data, index):
                                                    filter_outliers=filter_outliers, 
                                                    d_prime_threshold=d_prime_threshold, 
                                                    t=bin)
-            plot_psychometric_curves_with_boundaries(project_data,  N_Boundaries = 2, n_indices = n_indices,
+            plot_psychometric_curves_with_boundaries(project_data, N_Boundaries = 2, n_indices = n_indices,
                                                    filter_outliers=filter_outliers, 
                                                    d_prime_threshold=d_prime_threshold, 
                                                    t=bin)
-            plot_psychometric_curves_with_boundaries(project_data,  N_Boundaries = 0, n_indices = n_indices,
+            plot_psychometric_curves_with_boundaries(project_data, N_Boundaries = 0, n_indices = n_indices,
                                                    filter_outliers=filter_outliers, 
                                                    d_prime_threshold=d_prime_threshold, 
                                                    t=bin)
