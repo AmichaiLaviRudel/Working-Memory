@@ -152,6 +152,7 @@ def gng_bpod_analysis_multipule(project_data, index):
         # d_prime_multiple_sessions_divde_oneNtwo(project_data, t = 10, animal_name = 'None', plot = True)
 
         multi_animal_d_prime_progression(project_data)
+        daily_dprime_by_hour_multi_animal(project_data, t=10)
         # multi_animal_d_prime_progression(project_data, N_Boundaries = 2)
         try:
             st.subheader("Daily Multi-Animal d' Comparison")

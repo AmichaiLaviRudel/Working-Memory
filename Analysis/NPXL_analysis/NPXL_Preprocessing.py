@@ -1,10 +1,17 @@
 import sys
 import os
+import re
+
+# Add the workspace root to Python path to enable imports
+workspace_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if workspace_root not in sys.path:
+    sys.path.insert(0, workspace_root)
+
 from load_data.load_bpod_data import load_mat_file, create_single_row_with_outcome
 import numpy as np
 import pandas as pd
 from scipy.stats import norm
-import pandas as pd
+
 import shutil
 
 
@@ -69,14 +76,19 @@ def load_cluster_info(working_dir, data_dirs):
     Loads cluster information from a bombcell unit_labels.tsv or cluster_info.tsv file in the working directory.
 
     Parameters:
-        working_dir (str): Path to the working directory.
+        working_dir (str): Path to the working directory (e.g., imec1_ks4).
         data_dirs (str): Path to the data directory (used as fallback).
 
     Returns:
         pd.DataFrame or None: DataFrame with cluster info, or None if not found.
     """
-    # working_dir, data_dirs = current_ks_folder, spikeglx_data_dir 
-    label_dir = os.path.join(working_dir, "bombcell", "unit_labels.tsv")
+    # Normalize paths to handle both forward and backward slashes
+    working_dir = working_dir.replace("\\", "/")
+    data_dirs = data_dirs.replace("\\", "/") if data_dirs else None
+    
+    # working_dir, data_dirs = current_ks_folder, ks4_data_dir 
+    # The bombcell folder is inside the working_dir (imec*_ks4)
+    label_dir = os.path.join(working_dir, "bombcell", "unit_labels.tsv").replace("\\", "/")
     if os.path.isfile(label_dir):
         return pd.read_csv(label_dir, sep='\t')
     elif "cluster_bc_unitType.tsv" in os.listdir(data_dirs):
@@ -127,13 +139,15 @@ def extract_spike_matrices(spikes_times, spikes_clusters, cluster_info):
         mua_clusters_index = cluster_info[cluster_info[unit_type_column] == "MUA"].index
         non_somatic_index = cluster_info[cluster_info[unit_type_column] == 'NON-SOMA'].index
         ordered_indices = list(good_clusters_index) + list(mua_clusters_index) + list(non_somatic_index)
+        if len(ordered_indices) == 0:
+            unit_type_column = cluster_info.columns[1]
+            good_clusters_index = cluster_info[cluster_info[unit_type_column] == 1].index
+            mua_clusters_index = cluster_info[cluster_info[unit_type_column] == 2].index
+            non_somatic_index = cluster_info[cluster_info[unit_type_column] == 3].index
+            ordered_indices = list(good_clusters_index) + list(mua_clusters_index) + list(non_somatic_index)
     except Exception:
-        unit_type_column = cluster_info.columns[0]
-        good_clusters_index = cluster_info[cluster_info[unit_type_column] == 1].index
-        mua_clusters_index = cluster_info[cluster_info[unit_type_column] == 2].index
-        non_somatic_index = cluster_info[cluster_info[unit_type_column] == 3].index
-        ordered_indices = list(good_clusters_index) + list(mua_clusters_index) + list(non_somatic_index)
-
+        print(f"Warning: No good, MUA, or non-somatic clusters found in {cluster_info}")
+        return None, None
 
     # Collect spike times for each cluster
     spike_lists = []
@@ -278,7 +292,7 @@ def copy_behavioral_file_for_dir(parent_dir, df, spike_glx_col='spike glx file',
     """
     For a given parent_dir, check if any spikeglx file in the CSV is present in that directory.
     If so, find the corresponding behavioral file and copy it to the parent_dir if not already present.
-    Also updates the 'parent_dir' column in the DataFrame for the corresponding row and saves the DataFrame if csv_path is provided.
+    Also updates the 'current_dir' column in the DataFrame for the corresponding row and saves the DataFrame if csv_path is provided.
     Parameters:
         parent_dir (str): Directory to check for spikeglx file and to copy behavioral file into.
         df (pd.DataFrame): DataFrame containing experiment metadata.
@@ -287,53 +301,76 @@ def copy_behavioral_file_for_dir(parent_dir, df, spike_glx_col='spike glx file',
         csv_path (str, optional): Path to save the updated DataFrame.
         force_rerun (bool): If True, force copy the behavioral file even if it already exists.
     Returns:
-        str: Path to the behavioral file in the parent_dir (if copied or found).
+        str: Path to the behavioral file in the parent_dir (if copied or found), or None if not found.
     """
     behav_file = None
+   # parent_dir, df, csv_path=nidq_dir, experiment_metadata_df, experiment_metadata_csv_path
+            
+    # Check if parent_dir exists
+    if not os.path.exists(parent_dir):
+        print(f"Warning: Parent directory does not exist: {parent_dir}")
+        return None
+
+    # Get list of directories in parent_dir to check for spikeglx matches
+    try:
+        entries_in_parent = os.listdir(parent_dir)
+    except (OSError, PermissionError) as e:
+        print(f"Warning: Could not list directory {parent_dir}: {e}")
+        return None
 
     for idx, row in df.iterrows():
-        spikeglx_base = str(row[spike_glx_col]).strip()
+        # Use parameter column names instead of hardcoded ones
+        spikeglx_base = str(row[spike_glx_col]).strip() if spike_glx_col in row else None
+        behavioral_full_name = str(row[behavioral_file_col]).strip() if behavioral_file_col in row else None
+        
+        # Skip if values are invalid or NaN
+        if not spikeglx_base or not behavioral_full_name or spikeglx_base.lower() == 'nan' or behavioral_full_name.lower() == 'nan':
+            continue
+        
+        # Check if source behavioral file exists
+        if not os.path.exists(behavioral_full_name):
+            continue
+        
+        # Construct spikeglx directory name (e.g., "catgt_G7A1_novice_FRA_g0")
         spikeglx_name = f"catgt_{spikeglx_base}"
-        behavioral_full_name = str(row[behavioral_file_col]).strip()
-        behavioral_name = os.path.basename(behavioral_full_name)
         
-        if not spikeglx_name or not behavioral_full_name:
+        if not spikeglx_base in parent_dir:
             continue
+        else:
+            print(f"Found spikeglx directory: {spikeglx_base} in {parent_dir}")
+            # Get behavioral file name
+            behavioral_name = os.path.basename(behavioral_full_name)
+            behav_file_in_parent = os.path.join(parent_dir, behavioral_name).replace("\\", "/")
             
-        # Check if spikeglx directory exists in parent_dir
-        spikeglx_dir = None
-        for entry in os.listdir(parent_dir):
-            if spikeglx_name in entry:
-                spikeglx_dir = os.path.join(parent_dir, entry)
-                break
+            # Copy behavioral file to parent_dir if it doesn't exist or if force_rerun is True
+            try:
+                if not os.path.exists(behav_file_in_parent) or force_rerun:
+                    shutil.copy2(behavioral_full_name, parent_dir)
+                    print(f"Copied {behavioral_name} to {parent_dir}")
+                    behav_file = behav_file_in_parent
+                else:
+                    behav_file = behav_file_in_parent
+                    print(f"Behavioral file {behavioral_name} already exists in {parent_dir}")
+            except Exception as e:
+                print(f"Error copying behavioral file {behavioral_name} to {parent_dir}: {e}")
+
                 
-        if spikeglx_dir is None:
-            continue
-                    
-        # Check if behavioral file already exists in parent_dir
-        behav_file_in_parent = os.path.join(parent_dir, behavioral_name)
-        
-        # Copy behavioral file to parent_dir if it doesn't exist or if force_rerun is True
-        if not os.path.exists(behav_file_in_parent) or force_rerun:
-            shutil.copy2(behavioral_full_name, parent_dir)
-            print(f"Copied {behavioral_name} to {parent_dir}")
-            behav_file = behav_file_in_parent
-        else:
-            behav_file = behav_file_in_parent
-            print(f"Behavioral file {behavioral_name} already exists in {parent_dir}")
-            
-        # Update the parent_dir column for this row
-        if 'current_dir' in df.columns:
-            df.at[idx, 'current_dir'] = parent_dir
-        else:
-            df.loc[idx, 'current_dir'] = parent_dir
-            
-        # Save the DataFrame if a path is provided
+               
+        # Save the DataFrame if a path is provided (with error handling for permission issues)
         if csv_path is not None:
-            df.to_csv(csv_path, index=False)
-        break
+            try:
+                df.to_csv(csv_path, index=False)
+            except PermissionError as e:
+                print(f"Warning: Could not save CSV file (file may be open in another program): {e}")
+                # Continue processing even if CSV save fails
+            except Exception as e:
+                print(f"Warning: Error saving CSV file: {e}")
         
-    return behav_file
+        # Found a match, return the behavioral file path
+        return behav_file
+        
+    # No matching spikeglx directory found in parent_dir
+    return None
 
 def spike_times_to_binary_matrix(spike_matrix, t_start, t_end, bin_size=0.01):
     """
@@ -663,14 +700,14 @@ def main():
     """
     Main analysis workflow. Finds KS folders, copies behavioral files, and (optionally) runs further analysis for each folder.
     """
-    force_rerun = False
+    force_rerun = True
     
     bin_size=0.005 # in seconds
 
     # recordings_root_directory = r"/ems/elsc-labs/mizrahi-a/Shared/Amichai/NPXL/Recs/group5"
     # experiment_metadata_csv_path = r"/ems/elsc-labs/mizrahi-a/Code\DB\users_data\Amichai\NPXL recordings _experimental_data.csv".replace("\\", "/")
     
-    recordings_root_directory = r"Z:/Shared/Amichai/NPXL/Recs/group7"
+    recordings_root_directory = r"Z:/Shared/Amichai/NPXL/Recs/group7".replace("\\", "/")
     experiment_metadata_csv_path = r"Z:\Shared\Amichai/Code\DB\users_data\Amichai\NPXL recordings _experimental_data.csv".replace("\\", "/")
     
 
@@ -679,28 +716,57 @@ def main():
     for idx, current_ks_folder in enumerate(ks_analysis_folders):
         print(f"\n\nProcessing {idx+1} of {len(ks_analysis_folders)}: {current_ks_folder}")
         try:
-            # current_ks_folder = ks_analysis_folders[-1].replace("\\", "/")
-            os.chdir(current_ks_folder)
+            # current_ks_folder = ks_analysis_folders[-3].replace("\\", "/")
+
             recording_session_dir = os.path.dirname(current_ks_folder)
-            probe_identifier = current_ks_folder[-1]
-            spikeglx_data_dir = os.path.join(current_ks_folder, f"imec{probe_identifier}_ks4")
-            analysis_output_dir = os.path.join(current_ks_folder, "analysis_output")
+            os.chdir(recording_session_dir)
+            nidq_dir = recording_session_dir
+            
+            # Extract probe identifier from folder name (e.g., "imec1_ks4" -> "1")
+            # The current_ks_folder is already the imec*_ks4 folder, so spike data is directly in it
+            probe_match = re.search(r'imec(\d+)', os.path.basename(current_ks_folder))
+            if probe_match:
+                probe_identifier = probe_match.group(1)
+            else:
+                # Fallback: try to extract from last character (old method)
+                probe_identifier = current_ks_folder[-1] if current_ks_folder[-1].isdigit() else "0"
+
+            ks4_data_dir = os.path.join(current_ks_folder, f"imec{probe_identifier}_ks4").replace("\\", "/")
+            analysis_output_dir = os.path.join(current_ks_folder, "analysis_output").replace("\\", "/")
             behavioral_data_file_path = copy_behavioral_file_for_dir(parent_dir=recording_session_dir, df = experiment_metadata_df, csv_path=experiment_metadata_csv_path, force_rerun=False)
+            
+            # Skip if no behavioral file was found
+            if behavioral_data_file_path is None:
+                print(f"Warning: No behavioral file found for {recording_session_dir}. Skipping...")
+                continue
             
             if not os.path.exists(analysis_output_dir) or force_rerun:
 
                 # Process behavioral data
                 try:
-                    trial_types_df, raw_events_df, session_date, session_time, trial_settings, notes, licks, states, stimulis, Unique_Stimuli_Values, tones_per_class, boundaries = load_mat_file(behavioral_data_file_path)
+                    trial_types_df, raw_events_df, session_date, session_time, trial_settings, notes, licks, states, stimulis, Unique_Stimuli_Values, tones_per_class, boundaries, recs = load_mat_file(behavioral_data_file_path)
                     
-                    if "FRA" in current_ks_folder:
-                        stimuli = stimulis[:, 0]
-                        atten = stimulis[:, 1]
-                        outcomes = np.zeros(len(stimuli))
+                    # Check if this is actually an FRA file by checking if stimulis is a 2D array (FRA) or 1D (regular)
+                    is_fra_file = "FRA" in current_ks_folder and isinstance(stimulis, np.ndarray) and len(stimulis.shape) == 2
+                    
+                    if is_fra_file:
+                        try:
+                            stimuli = stimulis[:, 0]
+                            atten = stimulis[:, 1]
+                            outcomes = np.zeros(len(stimuli))
+                        except (IndexError, TypeError) as e:
+                            print(f"Warning: File in FRA folder but doesn't have FRA structure. Processing as regular file: {e}")
+                            # Fall back to regular processing
+                            session_summary_df = create_single_row_with_outcome(behavioral_data_file_path, trial_types_df, raw_events_df, session_date,
+                                                                    session_time, trial_settings, notes, licks, states,
+                                                                    Unique_Stimuli_Values, tones_per_class, boundaries, recs)
+                            stimuli = stimulis
+                            atten = np.ones(len(stimuli))*(-60)
+                            outcomes = session_summary_df["Outcomes"].iloc[0]
                     else:
                         session_summary_df = create_single_row_with_outcome(behavioral_data_file_path, trial_types_df, raw_events_df, session_date,
                                                                 session_time, trial_settings, notes, licks, states,
-                                                                Unique_Stimuli_Values, tones_per_class, boundaries)
+                                                                Unique_Stimuli_Values, tones_per_class, boundaries, recs)
                         stimuli = stimulis
                         atten = np.ones(len(stimuli))*(-60)
                         outcomes = session_summary_df["Outcomes"].iloc[0]
@@ -710,14 +776,14 @@ def main():
 
                 # --- Load Spikeglx Data ---
                 try:
-                    spike_timestamps_seconds, spike_cluster_assignments = load_spike_data(spikeglx_data_dir)
+                    spike_timestamps_seconds, spike_cluster_assignments = load_spike_data(ks4_data_dir)
                     
                     if len(spike_timestamps_seconds) != len(spike_cluster_assignments):
                         print(f"{current_ks_folder}: Warning: spike times and cluster assignments not in the same length")
                         continue
                         
                     # check if spike_timestamps_seconds and spike_cluster_assignments are in the same length
-                    cluster_metadata = load_cluster_info(current_ks_folder, spikeglx_data_dir)
+                    cluster_metadata = load_cluster_info(current_ks_folder, ks4_data_dir)
                     
                     spike_times_matrix, cluster_metadata_list = extract_spike_matrices(spike_timestamps_seconds, spike_cluster_assignments, cluster_metadata) 
                     
@@ -726,11 +792,11 @@ def main():
                     recording_end_time = np.ceil(spike_timestamps_seconds.max()) 
                     firing_rate_matrix, time_bins = spike_times_to_firing_rate_matrix(spike_times_matrix, recording_start_time, recording_end_time, bin_size)
                     
-                    stimuli_outcome_df = couple_stimuli_outcome_and_times(recording_session_dir, stimuli, atten, outcomes, bin_size)
+                    stimuli_outcome_df = couple_stimuli_outcome_and_times(nidq_dir, stimuli, atten, outcomes, bin_size)
                     
                     # Load licking data
                     try:
-                        licking_timestamps_seconds = load_nidq_stream(recording_session_dir, stream_suffix="nidq.xd_0_2_0.txt")
+                        licking_timestamps_seconds = load_nidq_stream(nidq_dir, stream_suffix="nidq.xd_0_2_0.txt")
                         licking_timestamps_in_bins = licking_timestamps_seconds*(1/bin_size)
 
                     except FileNotFoundError:

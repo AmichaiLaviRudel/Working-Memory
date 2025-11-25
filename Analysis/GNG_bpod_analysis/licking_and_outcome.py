@@ -317,48 +317,6 @@ def process_and_plot_lick_data(project_data, index, plot=False):
     # Filter valid Go and No-Go licks
     filtered_go_licks = filter_valid_arrays(go_licks)
     filtered_no_go_licks = filter_valid_arrays(no_go_licks)
-
-
-    # plot_diff = 0
-    
-    # if plot_diff:
-    #     # Compute diffs for each trial's licks individually to avoid ValueError
-    #     go_licks_diff = [np.diff(trial_licks) for trial_licks in filtered_go_licks if len(trial_licks) > 1]
-    #     no_go_licks_diff = [np.diff(trial_licks) for trial_licks in filtered_no_go_licks if len(trial_licks) > 1]
-
-    #     # Add all diffs together into single arrays
-    #     all_go_diffs = np.concatenate(go_licks_diff) if go_licks_diff else np.array([])
-    #     all_nogo_diffs = np.concatenate(no_go_licks_diff) if no_go_licks_diff else np.array([])
-
-    #     # Plot the distribution using plotly.graph_objects
-    #     fig_diff = go.Figure()
-    #     if all_go_diffs.size > 0:
-    #         fig_diff.add_trace(go.Histogram(
-    #             x=all_go_diffs,
-    #             name="Go Trials",
-    #             opacity=0.7,
-    #             marker_color=colors.COLOR_GO,
-    #             nbinsx=150
-    #         ))
-    #     if all_nogo_diffs.size > 0:
-    #         fig_diff.add_trace(go.Histogram(
-    #             x=all_nogo_diffs,
-    #             name="No-Go Trials",
-    #             opacity=0.7,
-    #             marker_color=colors.COLOR_NOGO,
-    #             nbinsx=150
-    #         ))
-
-    #     fig_diff.update_layout(
-    #         barmode='overlay',
-    #         title="Distribution of Inter-Lick Intervals (Diffs)",
-    #         xaxis_title="Inter-Lick Interval (s)",
-    #         yaxis_title="Count",
-    #         legend_title="Trial Type",
-    #         template="simple_white"
-    #     )
-
-    #     st.plotly_chart(fig_diff, use_container_width=True, key=f"lick_diff_distribution_plot_{index}")
     
     # Concatenate valid licks
     concatenated_go = np.concatenate(filtered_go_licks) if filtered_go_licks else np.array([])

@@ -11,24 +11,38 @@ def load_mat_file(file_path):
     # Load the .mat file
 
     mat_contents = scipy.io.loadmat(file_path)
-    if "FRA" in file_path:
+    # Check if FRA is in file path or in the directory path
+    file_dir = os.path.dirname(file_path) if os.path.dirname(file_path) else ""
+    is_fra = "FRA" in file_path or "FRA" in file_dir
+    if is_fra:
         session_data_content = mat_contents['SessionData'][0, 0]
-        trial_settings = [session_data_content['SettingsFile'][0]]
-        session_date = session_data_content['Info']['SessionDate'][0][0]
-        session_time = session_data_content['Info']['SessionStartTime_UTC'][0][0]
-        trial_types = []
-        raw_events = session_data_content['RawEvents'][0, 0]
-        stimuli = session_data_content['trialTable']
-        notes = ['FRA']
-        licks = []
-        states = []
-        Unique_Stimuli_Values = np.unique(session_data_content['freq'])
-        tones_per_class = np.unique(session_data_content['atten'])
-        boundaries = []
-        trial_types_df = []
-        raw_events_df = []
-        recs = False
-        return trial_types_df, raw_events_df, session_date, session_time, trial_settings, notes, licks, states, stimuli, Unique_Stimuli_Values, tones_per_class, boundaries, recs
+        # Check if this is actually an FRA file by trying to access the trialTable field
+        try:
+            # Try to access trialTable to see if it exists
+            _ = session_data_content['trialTable']
+            # If we get here, it's an FRA file
+            trial_settings = [session_data_content['SettingsFile'][0]]
+            session_date = session_data_content['Info']['SessionDate'][0][0]
+            session_time = session_data_content['Info']['SessionStartTime_UTC'][0][0]
+            trial_types = []
+            raw_events = session_data_content['RawEvents'][0, 0]
+            stimuli = session_data_content['trialTable']
+            notes = ['FRA']
+            licks = []
+            states = []
+            Unique_Stimuli_Values = np.unique(session_data_content['freq'])
+            tones_per_class = np.unique(session_data_content['atten'])
+            boundaries = []
+            trial_types_df = []
+            raw_events_df = []
+            recs = False
+            return trial_types_df, raw_events_df, session_date, session_time, trial_settings, notes, licks, states, stimuli, Unique_Stimuli_Values, tones_per_class, boundaries, recs
+        except (KeyError, ValueError, IndexError):
+            # Not actually an FRA file, fall through to regular processing
+            pass
+    
+    # If we get here, either it's not FRA or the FRA file didn't have the expected structure
+    # Process as regular file
     
     # Extract the 'SessionData' field
     session_data_content = mat_contents['SessionData'][0, 0]

@@ -1,5 +1,11 @@
 Project Name,Project Type,Project Description,Status - traning,Status - histology,Status - recs
-Group 7,['Behavior-Bpod GUI'],Automatically added group,,,
+Group 7,['Behavior-Bpod GUI'],"DOB: 31/8/25
+Novice recs: 28/10/25
+1B Expert: A1 on the OFC only than I broke 2 probs :((( (I think the head wasn't fixed so tight)
+
+note: in the craniotomy of A2 a lot of blood came out of the OFC hole - than preformence of the mouse weant down. 
+
+",,,
 Group 6,['Behavior-Bpod GUI'],"DOB: 6/7/25; 6 Males; C57; I got them at 7 weeks;
 28-29/8/25: Headbars
 1/9: Habitoation
@@ -61,4 +67,5 @@ Educage,['Educage'],"cage init: 4 c57 mice 6 weeks 7/9/25
 -26-27/9: The cap was closed and therefore no water came out.
 -28/9: changing again the lick registraion method.",,,
 Educage1,['Educage'],"DOB: XXXX
-Bug:6-8 - no lick registrasion",,,
+Bug:6-8 - no lick registrasion
+bug - 11-14 - no sound ",,,

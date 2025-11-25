@@ -1211,3 +1211,255 @@ def d_prime_for_stim_pairs(selected_data, index=0, stim_pairs=None, t=10, plot=T
         
 
     return out_df
+
+def daily_dprime_by_hour_multi_animal(project_data, t=10):
+    """
+    Plot d' by hour of day for multiple animals on a selected date.
+    Groups trials by hour based on StartTime and calculates d' for each hour.
+    """
+    if project_data is None or project_data.empty:
+        st.info("No data loaded.")
+        return
+    
+    if "StartTime" not in project_data.columns:
+        st.info("No StartTime data available for hourly d' analysis.")
+        return
+    
+    # Get unique dates
+    dates = sorted(project_data["SessionDate"].astype(str).unique())
+    if len(dates) == 0:
+        st.info("No dates found in data.")
+        return
+    
+    # Select date
+    selected_date = st.selectbox("Select a date", options=dates,
+                                index=max(0, len(dates) - 1),
+                                key=f"daily_dprime_hour_date_{len(project_data)}")
+    
+    # Filter data for selected date
+    date_data = project_data[project_data["SessionDate"].astype(str) == str(selected_date)]
+    
+    if date_data.empty:
+        st.info(f"No data found for date {selected_date}")
+        return
+    
+    # Get unique mice for this date
+    mice = sorted(date_data["MouseName"].unique())
+    if len(mice) == 0:
+        st.info("No animals found for selected date.")
+        return
+    
+    # Import helper functions from licking_and_outcome
+    from Analysis.GNG_bpod_analysis.licking_and_outcome import _parse_start_times
+    
+    # Determine per-mouse colors
+    try:
+        color_map = st.session_state.get('mouse_color_map', {})
+        if not color_map:
+            from Analysis.GNG_bpod_analysis.colors import get_subject_color_map
+            color_map = get_subject_color_map(date_data['MouseName'])
+    except Exception:
+        color_map = {}
+    
+    fig = go.Figure()
+    
+    # Store all hourly d' values for average calculation
+    all_hourly_dprimes = []
+    
+    # Process each mouse
+    for mouse in mice:
+        mouse_data = date_data[date_data["MouseName"] == mouse]
+        if len(mouse_data) == 0:
+            continue
+        
+        # Get the row index for this mouse
+        row_idx = mouse_data.index[0]
+        
+        # Get start times, trial types, and outcomes
+        start_times = mouse_data.iloc[0]["StartTime"]
+        trialtypes = to_array(mouse_data.iloc[0]["TrialTypes"])
+        outcomes = to_array(mouse_data.iloc[0]["Outcomes"])
+        
+        # Parse start times
+        times = _parse_start_times(start_times)
+        if not times or len(times) == 0:
+            continue
+        
+        # Ensure arrays are same length
+        min_len = min(len(times), len(trialtypes), len(outcomes))
+        times = times[:min_len]
+        trialtypes = trialtypes[:min_len]
+        outcomes = outcomes[:min_len]
+        
+        # Group trials by hour (0-23)
+        hourly_dprimes = []
+        hourly_hours = []
+        
+        for hour in range(24):
+            # Create hour range
+            hour_start = pd.Timestamp(f"2024-01-01 {hour:02d}:00:00").time()
+            hour_end = pd.Timestamp(f"2024-01-01 {(hour+1)%24:02d}:00:00").time()
+            
+            # Find trials in this hour
+            hour_mask = []
+            for time_obj in times:
+                if hour == 23:
+                    # Special case for hour 23 (includes up to 24:00, which wraps to 00:00)
+                    hour_mask.append(time_obj >= hour_start)
+                else:
+                    hour_mask.append(hour_start <= time_obj < hour_end)
+            
+            hour_mask = np.array(hour_mask)
+            
+            if hour_mask.sum() == 0:
+                hourly_dprimes.append(np.nan)
+                hourly_hours.append(hour)
+                continue
+            
+            # Filter trials for this hour
+            hour_trialtypes = trialtypes[hour_mask]
+            hour_outcomes = outcomes[hour_mask]
+            
+            if len(hour_trialtypes) == 0 or len(hour_outcomes) == 0:
+                hourly_dprimes.append(np.nan)
+                hourly_hours.append(hour)
+                continue
+            
+            # Create a one-row DataFrame for d' calculation
+            df_one = mouse_data.loc[[row_idx]].copy()
+            df_one.iloc[0, df_one.columns.get_loc('TrialTypes')] = str(np.asarray(hour_trialtypes).tolist())
+            df_one.iloc[0, df_one.columns.get_loc('Outcomes')] = str(np.asarray(hour_outcomes).tolist())
+            
+            # Calculate d' for this hour
+            try:
+                d_vals = d_prime(df_one, index=0, t=t, plot=False)
+                if d_vals is None or len(d_vals) == 0:
+                    mean_dp = np.nan
+                else:
+                    d_vals = np.asarray(d_vals, dtype=float)
+                    d_vals = d_vals[~np.isnan(d_vals)]
+                    mean_dp = float(np.nanmean(d_vals)) if d_vals.size > 0 else np.nan
+            except Exception:
+                mean_dp = np.nan
+            
+            hourly_dprimes.append(mean_dp)
+            hourly_hours.append(hour)
+        
+        # Normalize d' values for this mouse (0 = worst, 1 = best)
+        hourly_dprimes_array = np.array(hourly_dprimes)
+        valid_dprimes_for_norm = hourly_dprimes_array[~np.isnan(hourly_dprimes_array)]
+        
+        if len(valid_dprimes_for_norm) > 0:
+            min_dp = np.nanmin(valid_dprimes_for_norm)
+            max_dp = np.nanmax(valid_dprimes_for_norm)
+            
+            # Normalize: (value - min) / (max - min)
+            if max_dp != min_dp:
+                normalized_dprimes = (hourly_dprimes_array - min_dp) / (max_dp - min_dp)
+            else:
+                # All values are the same, set to 0.5 (middle)
+                normalized_dprimes = np.full_like(hourly_dprimes_array, 0.5)
+                # Keep NaN as NaN
+                normalized_dprimes[np.isnan(hourly_dprimes_array)] = np.nan
+        else:
+            # No valid values, keep as is
+            normalized_dprimes = hourly_dprimes_array
+        
+        all_hourly_dprimes.append(normalized_dprimes.tolist())
+        
+        # Separate valid and invalid points
+        valid_mask = ~np.isnan(normalized_dprimes)
+        valid_hours = np.array(hourly_hours)[valid_mask]
+        valid_dprimes = np.array(normalized_dprimes)[valid_mask]
+        
+        # Add main trace with lines and markers for valid points
+        fig.add_trace(go.Scatter(
+            x=valid_hours,
+            y=valid_dprimes,
+            mode='lines+markers',
+            name=str(mouse),
+            line=dict(width=2, color=color_map.get(str(mouse), colors.COLOR_SUBTLE)),
+            marker=dict(size=4, color=color_map.get(str(mouse), colors.COLOR_SUBTLE)),
+            opacity=0.7,
+            showlegend=True
+        ))
+        
+        # Add dashed connecting lines across gaps
+        if len(valid_hours) > 1:
+            for i in range(len(valid_hours) - 1):
+                if valid_hours[i+1] - valid_hours[i] > 1:
+                    # There's a gap, add a dashed connecting line
+                    fig.add_trace(go.Scatter(
+                        x=[valid_hours[i], valid_hours[i+1]],
+                        y=[valid_dprimes[i], valid_dprimes[i+1]],
+                        mode='lines',
+                        line=dict(
+                            width=1,
+                            color=color_map.get(str(mouse), colors.COLOR_SUBTLE),
+                            dash='dash'
+                        ),
+                        opacity=0.4,
+                        showlegend=False,
+                        hoverinfo='skip'
+                    ))
+    
+    if len(fig.data) == 0:
+        st.info("No d' data found for any animals on selected date.")
+        return
+    
+    # Calculate and add average line across all animals
+    if all_hourly_dprimes:
+        avg_hourly_dprimes = np.nanmean(all_hourly_dprimes, axis=0)
+        hours = np.array(list(range(24)))
+        
+        # Separate valid and invalid points for average
+        valid_mask_avg = ~np.isnan(avg_hourly_dprimes)
+        valid_hours_avg = hours[valid_mask_avg]
+        valid_avg_dprimes = np.array(avg_hourly_dprimes)[valid_mask_avg]
+        
+        # Add main average line
+        fig.add_trace(go.Scatter(
+            x=valid_hours_avg,
+            y=valid_avg_dprimes,
+            mode='lines+markers',
+            name='Average',
+            line=dict(color='black', width=4),
+            marker=dict(size=6, color='black'),
+            opacity=0.9
+        ))
+        
+        # Add dashed connecting lines across gaps for average
+        if len(valid_hours_avg) > 1:
+            for i in range(len(valid_hours_avg) - 1):
+                if valid_hours_avg[i+1] - valid_hours_avg[i] > 1:
+                    # There's a gap, add a dashed connecting line
+                    fig.add_trace(go.Scatter(
+                        x=[valid_hours_avg[i], valid_hours_avg[i+1]],
+                        y=[valid_avg_dprimes[i], valid_avg_dprimes[i+1]],
+                        mode='lines',
+                        line=dict(color='black', width=2, dash='dash'),
+                        opacity=0.6,
+                        showlegend=False,
+                        hoverinfo='skip'
+                    ))
+    
+    # Update layout
+    fig.update_layout(
+        title=f"Normalized d' by Hour of Day — {selected_date}",
+        xaxis_title="Hour of Day",
+        yaxis_title="Normalized d' (0=worst, 1=best)",
+        xaxis=dict(
+            tickmode='linear',
+            tick0=0,
+            dtick=2,
+            range=[-0.5, 23.5]
+        ),
+        yaxis=dict(
+            range=[-0.05, 1.05]
+        ),
+        height=500,
+        width=900,
+        showlegend=True
+    )
+    
+    st.plotly_chart(fig, use_container_width=True, config=get_plotly_config())
