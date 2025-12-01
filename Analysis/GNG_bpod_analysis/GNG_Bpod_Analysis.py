@@ -266,7 +266,6 @@ def gng_bpod_analysis_multi_animal(project_data, index):
         n_indices_multi = st.slider("Number of indices to include", 1, 10, 2, 1, key="n_indices_multi")
         
         try:
-            st.subheader("Multi-Animal Psychometric Curves (1 Boundary)")
             plot_psychometric_curves_with_boundaries(project_data, N_Boundaries = 1, n_indices = n_indices_multi, 
                                                     filter_outliers=filter_outliers, 
                                                     d_prime_threshold=d_prime_threshold, 
@@ -276,7 +275,6 @@ def gng_bpod_analysis_multi_animal(project_data, index):
             st.text(traceback.format_exc())
 
         try:
-            st.subheader("Multi-Animal Psychometric Curves (2 Boundaries)")
             plot_psychometric_curves_with_boundaries(project_data, N_Boundaries = 2, n_indices = n_indices_multi,
                                                     filter_outliers=filter_outliers, 
                                                     d_prime_threshold=d_prime_threshold, 
@@ -286,7 +284,6 @@ def gng_bpod_analysis_multi_animal(project_data, index):
             st.text(traceback.format_exc())
         
         try:
-            st.subheader("Multi-Animal Psychometric Curves (0 Boundaries)")
             plot_psychometric_curves_with_boundaries(project_data, N_Boundaries = 0, n_indices = n_indices_multi,
                                                     filter_outliers=filter_outliers, 
                                                     d_prime_threshold=d_prime_threshold, 
