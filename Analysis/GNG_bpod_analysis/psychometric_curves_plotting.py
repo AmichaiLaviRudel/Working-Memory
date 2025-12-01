@@ -118,18 +118,17 @@ def filter_and_prepare_data(project_data, n_bd, n_indices):
     # Filter out sessions with fewer than 2 tones per class if available
     if "Tones_per_class" in filtered_df.columns:
         filtered_df = filtered_df[filtered_df["Tones_per_class"] >= 2].reset_index(drop=True)
-    
     # Handle both possible column names for stimuli data
     if "Unique_Stimuli_Values" in filtered_df.columns:
         filtered_df["Parsed_Stimuli"] = filtered_df["Unique_Stimuli_Values"].apply(parse_stimuli)
-    elif "Stimuli" in filtered_df.columns:
-        filtered_df["Parsed_Stimuli"] = filtered_df["Stimuli"].apply(parse_stimuli)
+    if "Stimuli" in filtered_df.columns:
+        filtered_df["Stimuli"] = filtered_df["Stimuli"].apply(parse_stimuli)
     else:
         return None
     
     # Further filter if N_Boundaries == 1
     if n_bd == 1:
-        filtered_df = filtered_df[filtered_df["Parsed_Stimuli"].apply(
+        filtered_df = filtered_df[filtered_df["Stimuli"].apply(
             lambda x: np.all(x <= st.session_state.high_boundary))].reset_index(drop=True)
     
     # Get sessions for each mouse and keep only last n_indices
@@ -155,15 +154,21 @@ def compute_avg_lick_rates(filtered_df):
     individual_traces = []
     
     for i, (index, row) in enumerate(filtered_df.iterrows()):
-        try:
-            name, session = getNameAndSession(filtered_df, index)
-            stimuli, outcomes = preprocess_stimuli_outcomes(filtered_df, index)
-            unique_stimuli, lick_rates, catch_summary = compute_lick_rate(stimuli, outcomes)
-            all_stimuli.append(unique_stimuli)
-            all_lick_rates.append(lick_rates)
-            individual_traces.append((unique_stimuli, lick_rates, name, session))
-        except Exception as e:
-            print(f"Error processing index {index}: {e}")
+
+        name, session = getNameAndSession(filtered_df, index)
+        stimuli, outcomes = preprocess_stimuli_outcomes(filtered_df, index)
+        unique_stimuli, lick_rates, catch_stimuli, catch_lick_rates = compute_lick_rate(stimuli, outcomes)
+        # Concatenate stimuli and lick rates
+        unique_stimuli = np.concatenate((unique_stimuli, catch_stimuli))
+        lick_rates = np.concatenate((lick_rates, catch_lick_rates))
+        # Sort unique stimuli and reorder lick_rates accordingly
+        sort_idx = np.argsort(unique_stimuli)
+        unique_stimuli = unique_stimuli[sort_idx]
+        lick_rates = lick_rates[sort_idx]
+        all_stimuli.append(unique_stimuli)
+        all_lick_rates.append(lick_rates)
+        individual_traces.append((unique_stimuli, lick_rates, name, session))
+
     if not all_stimuli or not all_lick_rates:
         return None, None, []
     
@@ -285,9 +290,9 @@ def plot_psychometric_curves_with_boundaries(project_data, N_Boundaries, n_indic
                 
                 fig.add_trace(go.Scatter(
                     x=unique_stimuli, y=display_rates,
-                    mode='lines',
-                    line=dict(width=colors.LINE_WIDTH_MEDIUM, color=colors.COLOR_GRAY),
-                    marker=dict(size=6, color=colors.COLOR_GRAY),
+                    mode='lines+markers',
+                    line=dict(width=colors.LINE_WIDTH_MEDIUM, color=colors.COLOR_GRAY, shape='spline'),
+                    marker=dict(size=6, color=colors.COLOR_GRAY, symbol='circle'),
                     name=f"{name}, #{session} ({label})",
                     hovertemplate="Stimulus: %{x:.2f} kHz<br>Lick Rate: %{y:.2f}%<extra></extra>",
                     legendgroup=label,
@@ -301,8 +306,9 @@ def plot_psychometric_curves_with_boundaries(project_data, N_Boundaries, n_indic
 
             fig.add_trace(go.Scatter(
                 x=common_stimuli, y=avg_lick_rate,
-                mode='lines',
-                line=dict(width=colors.LINE_WIDTH_THICK, color=color, dash='solid'),
+                mode='lines+markers',
+                line=dict(width=colors.LINE_WIDTH_THICK, color=color, dash='solid', shape='spline'),
+                marker=dict(size=8, color=color, symbol='circle'),
                 name=f"Average Response ({label})",
                 hovertemplate="Stimulus: %{x:.2f} kHz<br>Avg Lick Rate: %{y:.2f}%<extra></extra>",
                 legendgroup=label
@@ -325,7 +331,7 @@ def plot_psychometric_curves_with_boundaries(project_data, N_Boundaries, n_indic
                 margin=dict(l=40, r=40, t=60, b=40),
                 hovermode="x unified"
             )
-            
+            colors.apply_standard_font_sizes(fig)
             st.plotly_chart(fig, use_container_width=False, config=get_plotly_config('psychometric_curves_comparison'))
             
             if pvals is not None and points_of_interest:
@@ -370,9 +376,9 @@ def plot_psychometric_curves_with_boundaries(project_data, N_Boundaries, n_indic
         
         fig.add_trace(go.Scatter(
             x=unique_stimuli, y=display_rates,
-            mode='lines',
-            line=dict(width=colors.LINE_WIDTH_MEDIUM, color=colors.COLOR_GRAY),
-            marker=dict(size=6, color=colors.COLOR_GRAY),
+            mode='lines+markers',
+            line=dict(width=colors.LINE_WIDTH_MEDIUM, color=colors.COLOR_GRAY, shape='spline'),
+            marker=dict(size=6, color=colors.COLOR_GRAY, symbol='circle'),
             name=f"{name}, #{session}",
             hovertemplate="Stimulus: %{x:.2f} kHz<br>Lick Rate: %{y:.2f}%<extra></extra>"
         ))
@@ -388,8 +394,9 @@ def plot_psychometric_curves_with_boundaries(project_data, N_Boundaries, n_indic
         
         fig.add_trace(go.Scatter(
             x=common_stimuli, y=avg_lick_rate,
-            mode='lines',
-            line=dict(width=colors.LINE_WIDTH_THICK, color=color),
+            mode='lines+markers',
+            line=dict(width=colors.LINE_WIDTH_THICK, color=color, shape='spline'),
+            marker=dict(size=8, color=color, symbol='circle'),
             name="Average Response",
             hovertemplate=hovertemplate
         ))
@@ -415,7 +422,7 @@ def plot_psychometric_curves_with_boundaries(project_data, N_Boundaries, n_indic
         margin=dict(l=40, r=40, t=60, b=40),
         hovermode="x unified"
     )
-    
+    colors.apply_standard_font_sizes(fig)
     st.plotly_chart(fig, use_container_width=False, config=get_plotly_config(f'psychometric_curve_{N_Boundaries}_boundaries', width=450*(N_Boundaries+1)))
 
 
@@ -561,7 +568,11 @@ def perform_statistical_comparison(avg_responses, common_stimuli_dict, fig, sess
             y=110,
             text=annotation,
             showarrow=False,
-            font=dict(size=18, color="black", family="Baskerville"),
+            font=dict(
+                size=colors.TITLE_FONT_SIZE,
+                color="black",
+                family="Baskerville"
+            ),
             xref="x",
             yref="y"
         )
@@ -662,7 +673,7 @@ def plot_psychometric_curve(unique_stimuli, lick_rates, x_fit, y_fit, x0, slope_
             margin = dict(l = 40, r = 40, t = 60, b = 40),
             hovermode = "x unified"
         )
-
+        colors.apply_standard_font_sizes(fig)
         # Display in Streamlit
         st.plotly_chart(fig, use_container_width = False, config=get_plotly_config())
 

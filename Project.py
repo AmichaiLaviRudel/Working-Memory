@@ -186,20 +186,24 @@ def analysis(project_data, analysis_type):
     elif len(st.session_state.selected_session) < 1:
         st.info("Please select row(s) to start the analysis")
 
-        # If more than one row is selected, run group analysis
-    with st.expander("Multianimal Analysis"):
-        st.markdown(f"### {analysis_type}")
+    # If more than one row is selected, run group analysis
+    st.markdown(f"### {analysis_type}")
+    if analysis_type == 'Behavior-Bpod GUI' or analysis_type == 'Educage':
+        try:
+            from Analysis.GNG_bpod_analysis.GNG_Bpod_Analysis import gng_bpod_analysis_multi_animal, gng_bpod_analysis_multi_session
+            analysis_type_selection = st.radio(
+                "Select Analysis Type",
+                options=["Multi-Animal", "Multi-Session"],
+                key="multi_animal_analysis_type"
+            )
+            if analysis_type_selection == "Multi-Animal":
+                gng_bpod_analysis_multi_animal(project_data, st.session_state.selected_session)
+            elif analysis_type_selection == "Multi-Session":
+                gng_bpod_analysis_multi_session(project_data, st.session_state.selected_session)
+        except Exception as e:
+            st.error(f"Something went wrong in group Bpod analysis.\n\n{e}")
+            st.text(traceback.format_exc())
 
-        if analysis_type == 'Behavior-Bpod GUI' or analysis_type == 'Educage':
-            try:
-                from Analysis.GNG_bpod_analysis.GNG_Bpod_Analysis import gng_bpod_analysis_multipule
-                gng_bpod_analysis_multipule(project_data, st.session_state.selected_session)
-            except Exception as e:
-                st.error(f"Something went wrong in group Bpod analysis.\n\n{e}")
-                st.text(traceback.format_exc())
-
-        else:
-            st.info("Analysis for this project type is coming soon...")
         
 
 # =============================================================================

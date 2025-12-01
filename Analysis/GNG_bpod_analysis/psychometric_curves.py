@@ -33,7 +33,14 @@ def single_sigmoid_fit(x, y, *, x_boundary: float = 1.0):
         popt, _ = curve_fit(sig, x, y, p0=p0, maxfev=20000)
     except (RuntimeError, ValueError) as e:
         # Handle both RuntimeError and ValueError (including insufficient data points)
-        return np.nan, np.nan, np.nan, np.nan, np.nan
+        # Return arrays with NaN values to maintain consistent return type
+        return (
+            np.array([np.nan]),
+            np.array([np.nan]),
+            np.array([np.nan]),
+            np.array([np.nan]),
+            np.array([np.nan])
+        )
     L, x0, k = popt
     slope_mid = (L * k) / 4.0
     slope_at_boundary = (L * k * np.exp(-k * (x_boundary - x0))) / ((1 + np.exp(-k * (x_boundary - x0))) ** 2)
@@ -130,10 +137,18 @@ def psychometric_fitting(unique_stims, data_points, *, N_Boundaries=1, log2_x=Tr
         # Fit sigmoid for high boundary
         model_boundaries_high, slopes_mid_high, slopes_at_model_boundaries_high, x_fit_high, y_fit_high = single_sigmoid_fit(x_high, y_high, x_boundary=high_bound)
         
+        # Safely extract values from arrays, handling NaN cases
+        low_boundary_val = model_boundaries_low[0] if isinstance(model_boundaries_low, np.ndarray) and len(model_boundaries_low) > 0 else np.nan
+        high_boundary_val = model_boundaries_high[0] if isinstance(model_boundaries_high, np.ndarray) and len(model_boundaries_high) > 0 else np.nan
+        low_slope_val = slopes_mid_low[0] if isinstance(slopes_mid_low, np.ndarray) and len(slopes_mid_low) > 0 else np.nan
+        high_slope_val = slopes_mid_high[0] if isinstance(slopes_mid_high, np.ndarray) and len(slopes_mid_high) > 0 else np.nan
+        low_slope_at_bnd_val = slopes_at_model_boundaries_low[0] if isinstance(slopes_at_model_boundaries_low, np.ndarray) and len(slopes_at_model_boundaries_low) > 0 else np.nan
+        high_slope_at_bnd_val = slopes_at_model_boundaries_high[0] if isinstance(slopes_at_model_boundaries_high, np.ndarray) and len(slopes_at_model_boundaries_high) > 0 else np.nan
+        
         # Combine results
-        model_boundaries = np.array([model_boundaries_low[0], model_boundaries_high[0]])
-        slopes_mid = np.array([slopes_mid_low[0], slopes_mid_high[0]])
-        slopes_at_model_boundaries = np.array([slopes_at_model_boundaries_low[0], slopes_at_model_boundaries_high[0]])
+        model_boundaries = np.array([low_boundary_val, high_boundary_val])
+        slopes_mid = np.array([low_slope_val, high_slope_val])
+        slopes_at_model_boundaries = np.array([low_slope_at_bnd_val, high_slope_at_bnd_val])
         x_fit = [x_fit_low, x_fit_high]
         y_fit = [y_fit_low, y_fit_high]
         
@@ -151,25 +166,12 @@ def psychometric_curve(selected_data, index, plot=True):
     """
     Processes psychometric data, fits a sigmoid curve, and plots the psychometric curve.
     """
-
-
-
     try:
         # Extract and preprocess data
-
         stimuli, outcomes = preprocess_stimuli_outcomes(selected_data, index)
-
-        # Get trialtypes to filter out 'Catch' trials
-        trials_val = selected_data.iloc[index]["TrialTypes"]
-        trialtypes = to_array(trials_val)
-
-        
-        # compute_lick_rate will handle filtering of 'Catch' trials and 'Early Response' outcomes
-        unique_stimuli, lick_rates, catch_stimuli, catch_lick_rates = compute_lick_rate(stimuli, outcomes, trialtypes=trialtypes)
-        
-        unique_stimuli = np.concatenate([unique_stimuli, catch_stimuli])
-        lick_rates = np.concatenate([lick_rates, catch_lick_rates])
-        
+        unique_stimuli, lick_rates, catch_stimuli, catch_lick_rates = compute_lick_rate(stimuli, outcomes)
+        unique_stimuli = np.concatenate((unique_stimuli, catch_stimuli))
+        lick_rates = np.concatenate((lick_rates, catch_lick_rates))
         n_b = selected_data.loc[index, 'N_Boundaries']
         session_type =  selected_data.at[index, "Notes"]
         if "TA" in session_type or "Discrimination" in session_type:
@@ -183,24 +185,38 @@ def psychometric_curve(selected_data, index, plot=True):
         model_boundaries, slopes_mid, slopes_at_model_boundaries, x_fit, y_fit = psychometric_fitting(unique_stimuli, lick_rates,
                                                    N_Boundaries = n_b,
                                                    log2_x = False)
+        
+        # Check if fitting failed (all NaN values)
+        if (isinstance(model_boundaries, np.ndarray) and np.all(np.isnan(model_boundaries))) or \
+           (isinstance(slopes_mid, np.ndarray) and np.all(np.isnan(slopes_mid))):
+            st.warning("Psychometric curve fitting failed. Returning None values.")
+            return None, None, None, None, None
+        
         # Plot the psychometric curve
         if plot:
             y_range_lim = [0, 110]
             if n_b == 2:
                 # Check if we have enough elements for double sigmoid
-                if len(model_boundaries) >= 2 and len(slopes_mid) >= 2:
+                if isinstance(model_boundaries, np.ndarray) and isinstance(slopes_mid, np.ndarray) and \
+                   len(model_boundaries) >= 2 and len(slopes_mid) >= 2:
+                    # Safely extract values, handling NaN
+                    low_x0 = model_boundaries[0] if not np.isnan(model_boundaries[0]) else np.nan
+                    low_slope = slopes_mid[0] if not np.isnan(slopes_mid[0]) else np.nan
+                    high_x0 = model_boundaries[1] if not np.isnan(model_boundaries[1]) else np.nan
+                    high_slope = slopes_mid[1] if not np.isnan(slopes_mid[1]) else np.nan
                     st.latex(
                         r"\text{Double sigmoid fit:}\\"
-                        r"\text{Low:}\ x_0 = " + f"{model_boundaries[0]:.4g}" +
-                        r",\quad \text{Slope at Boundary} = " + f"{slopes_mid[0]:.4g}" + r"\\"
-                        r"\text{High:}\ x_0 = " + f"{model_boundaries[1]:.4g}" +
-                        r",\quad \text{Slope at Boundary} = " + f"{slopes_mid[1]:.4g}"
+                        r"\text{Low:}\ x_0 = " + (f"{low_x0:.4g}" if not np.isnan(low_x0) else r"\mathrm{N/A}") +
+                        r",\quad \text{Slope at Boundary} = " + (f"{low_slope:.4g}" if not np.isnan(low_slope) else r"\mathrm{N/A}") + r"\\"
+                        r"\text{High:}\ x_0 = " + (f"{high_x0:.4g}" if not np.isnan(high_x0) else r"\mathrm{N/A}") +
+                        r",\quad \text{Slope at Boundary} = " + (f"{high_slope:.4g}" if not np.isnan(high_slope) else r"\mathrm{N/A}")
                     )
                     fig = go.Figure()
                     # Data points
                     fig.add_trace(go.Scatter(x=unique_stimuli, y=lick_rates, mode='markers', name='Data Points', marker=dict(color='black')))
                     # Overlay both fitted sigmoids
-                    if isinstance(x_fit, (list, tuple)) and len(x_fit) >= 2:
+                    if isinstance(x_fit, (list, tuple)) and len(x_fit) >= 2 and \
+                       isinstance(y_fit, (list, tuple)) and len(y_fit) >= 2:
                         x_fit_A, x_fit_B = x_fit[0], x_fit[1]
                         y_fit_A, y_fit_B = y_fit[0], y_fit[1]
                     else:
@@ -213,14 +229,18 @@ def psychometric_curve(selected_data, index, plot=True):
                     fig.add_trace(go.Scatter(x=[st.session_state.low_boundary, st.session_state.low_boundary], y=y_range_lim, mode='lines', name='Low Boundary', line=dict(dash='dash', color=colors.COLOR_GRAY)))
                     fig.add_trace(go.Scatter(x=[st.session_state.high_boundary, st.session_state.high_boundary], y=y_range_lim, mode='lines', name='High Boundary', line=dict(dash='dash', color=colors.COLOR_GRAY)))
                     fig.update_layout(title='Psychometric Curve (Double Sigmoid)', xaxis_title='Stimulus Intensity (log2)', xaxis_type='log', yaxis_title='Lick Rate (normalized)', yaxis_range=y_range_lim)
+                    colors.apply_standard_font_sizes(fig)
                     st.plotly_chart(fig,config=get_plotly_config())
                 else:
                     # Fallback to single sigmoid display for double boundary case
                     st.warning("Double sigmoid fitting not fully implemented. Showing single sigmoid fit.")
+                    # Safely extract values
+                    x0_val = model_boundaries[0] if isinstance(model_boundaries, np.ndarray) and len(model_boundaries) > 0 and not np.isnan(model_boundaries[0]) else np.nan
+                    slope_val = slopes_mid[0] if isinstance(slopes_mid, np.ndarray) and len(slopes_mid) > 0 and not np.isnan(slopes_mid[0]) else np.nan
                     st.latex(
                         r"\text{Single sigmoid fit:}\\"
-                        r"x_0 = " + (f"{model_boundaries[0]:.4g}" if len(model_boundaries) > 0 else r"\mathrm{N/A}") +
-                        r",\quad \text{Slope at Boundary} = " + (f"{slopes_mid[0]:.4g}" if len(slopes_mid) > 0 else r"\mathrm{N/A}")
+                        r"x_0 = " + (f"{x0_val:.4g}" if not np.isnan(x0_val) else r"\mathrm{N/A}") +
+                        r",\quad \text{Slope at Boundary} = " + (f"{slope_val:.4g}" if not np.isnan(slope_val) else r"\mathrm{N/A}")
                     )
                     
                     fig = go.Figure()
@@ -235,12 +255,16 @@ def psychometric_curve(selected_data, index, plot=True):
                         fig.update_layout(title="Psychometric Curve", xaxis_title="Stimulus Intensity (log2)", yaxis_title="Lick Rate", xaxis_type='log', yaxis_range=y_range_lim)
                     else:
                         fig.update_layout(title="Psychometric Curve", xaxis_title="Stimulus Intensity (log2)", yaxis_title="Lick Rate", yaxis_range=y_range_lim)
+                    colors.apply_standard_font_sizes(fig)
                     st.plotly_chart(fig, config=get_plotly_config('psychometric_curve', width=600*n_b))
             else:
+                # Safely extract values for single boundary case
+                x0_val = model_boundaries[0] if isinstance(model_boundaries, (list, tuple, np.ndarray)) and len(model_boundaries) > 0 and not np.isnan(model_boundaries[0]) else np.nan
+                slope_val = slopes_mid[0] if isinstance(slopes_mid, (list, tuple, np.ndarray)) and len(slopes_mid) > 0 and not np.isnan(slopes_mid[0]) else np.nan
                 st.latex(
                     r"\text{Single sigmoid fit:}\\" +
-                    r"x_0 = " + (f"{model_boundaries[0]:.4g}" if isinstance(model_boundaries, (list, tuple, np.ndarray)) and len(model_boundaries) > 0 else r"\mathrm{N/A}") +
-                    r",\quad \text{Slope at Boundary} = " + (f"{slopes_mid[0]:.4g}" if isinstance(slopes_mid, (list, tuple, np.ndarray)) and len(slopes_mid) > 0 else r"\mathrm{N/A}")
+                    r"x_0 = " + (f"{x0_val:.4g}" if not np.isnan(x0_val) else r"\mathrm{N/A}") +
+                    r",\quad \text{Slope at Boundary} = " + (f"{slope_val:.4g}" if not np.isnan(slope_val) else r"\mathrm{N/A}")
                 )
                 fig = go.Figure()
                 fig.add_trace(go.Scatter(x=unique_stimuli, y=lick_rates, mode='markers', name='Data Points'))
@@ -254,6 +278,7 @@ def psychometric_curve(selected_data, index, plot=True):
                     fig.update_layout(title="Psychometric Curve", xaxis_title="Stimulus Intensity (log2)", yaxis_title="Lick Rate", xaxis_type='log', yaxis_range=y_range_lim)
                 else:
                     fig.update_layout(title="Psychometric Curve", xaxis_title="Stimulus Intensity (log2)", yaxis_title="Lick Rate", yaxis_range=y_range_lim)
+                colors.apply_standard_font_sizes(fig)
                 st.plotly_chart(fig, config=get_plotly_config(width=600))
         return model_boundaries, slopes_mid, slopes_at_model_boundaries, x_fit, y_fit
     except ValueError as e:
@@ -494,6 +519,7 @@ def multi_animal_psychometric_slope_progression(selected_data, N_Boundaries=1):
         width=700
     )
     fig.update_yaxes(autorange=True)
+    colors.apply_standard_font_sizes(fig)
     st.plotly_chart(fig, use_container_width=True, config=get_plotly_config('psychometric_curve_multiple_sessions'))
 
     return long_df, avg_df

@@ -1,4 +1,5 @@
 # Removed imports to avoid circular dependency
+from typing import Any
 from Analysis.GNG_bpod_analysis.GNG_bpod_general import filter_valid_arrays, parse_stimuli, filter_out_catch_and_early_response
 import Analysis.GNG_bpod_analysis.colors as colors
 from Analysis.GNG_bpod_analysis.colors import COLOR_FA, OUTCOME_COLOR_MAP, COLOR_ACCENT, COLOR_GRAY, COLOR_GO, COLOR_NOGO, COLOR_BLUE, COLOR_D_PRIME, COLOR_HIT, COLOR_CR
@@ -107,34 +108,57 @@ def licking_rate(selected_data, index=0, t=10, plot=True):
 def compute_lick_rate(stimuli, outcomes, trialtypes=None):
     """
     Computes the lick rate (as a percentage) for each unique stimulus level.
+    Separates Catch trials and computes their response rate separately.
     
     Parameters:
     - stimuli: array of stimulus values
     - outcomes: array of trial outcomes
     - trialtypes: optional array of trial types (used to filter out 'Catch' trials)
+    
+    Returns:
+    - unique_stimuli: stimulus values for Go/NoGo trials
+    - lick_rates: lick rates for Go/NoGo trials
+    - catch_stimuli: stimulus values for Catch trials
+    - catch_lick_rates: response rates for Catch trials
     """
-    # Robustly compute catch trials and separate unique stimuli
-    if trialtypes is None:
-        catch_mask = np.zeros_like(stimuli, dtype=bool)
+
+    # Detect catch trials: either from trialtypes ('Catch') or from outcomes ('Catch - Response', 'Catch - No Response')
+    if trialtypes is not None:
+        catch_mask = np.array(['catch' in str(tt).lower() for tt in trialtypes], dtype=bool)
     else:
-        catch_mask = np.array([tt == 'Catch' for tt in trialtypes], dtype=bool)
+        # Detect catch trials from outcomes (for Educage data where outcomes contain 'Catch - Response' etc.)
+        catch_mask = np.array(['catch' in str(outcome).lower() for outcome in outcomes], dtype=bool)
+    
+    # Separate catch and non-catch trials
+    non_catch_mask = ~catch_mask
+    
+    # Get stimuli and outcomes for non-catch trials
+    non_catch_stimuli = stimuli[non_catch_mask]
+    non_catch_outcomes = outcomes[non_catch_mask]  
 
-    catch_stimuli = np.unique(stimuli[catch_mask])
-    all_unique_stimuli = np.unique(stimuli)
-    unique_stimuli = np.setdiff1d(all_unique_stimuli, catch_stimuli)
-
+    # Get stimuli and outcomes for catch trials
+    catch_trial_stimuli = stimuli[catch_mask]
+    catch_trial_outcomes = outcomes[catch_mask]
+    
+    # Compute lick rates for non-catch (Go/NoGo) trials
+    unique_stimuli = np.unique(non_catch_stimuli) if len(non_catch_stimuli) > 0 else np.array([])
     lick_rates = []
-    catch_lick_rates = []
     for stimulus in unique_stimuli:
-        mask = stimuli == stimulus
-        relevant_outcomes = outcomes[mask]
+        mask = non_catch_stimuli == stimulus
+        relevant_outcomes = non_catch_outcomes[mask]
         licks = sum(outcome in {"Hit", "False Alarm"} for outcome in relevant_outcomes)
         lick_rates.append((licks / len(relevant_outcomes) * 100) if len(relevant_outcomes) > 0 else 0)
+    
+    # Compute response rates for catch trials
+    catch_stimuli = np.unique(catch_trial_stimuli) if len(catch_trial_stimuli) > 0 else np.array([])
+    catch_lick_rates = []
     for stimulus in catch_stimuli:
-        mask = stimuli == stimulus
-        relevant_outcomes = outcomes[mask]
-        licks = sum(outcome in {"Catch - Response"} for outcome in relevant_outcomes)
-        catch_lick_rates.append((licks / len(relevant_outcomes) * 100) if len(relevant_outcomes) > 0 else 0)
+        mask = catch_trial_stimuli == stimulus
+        relevant_outcomes = catch_trial_outcomes[mask]
+        # Count responses: 'Catch - Response' means the animal responded
+        responses = sum('response' in str(outcome).lower() and 'no response' not in str(outcome).lower() 
+                       for outcome in relevant_outcomes)
+        catch_lick_rates.append((responses / len(relevant_outcomes) * 100) if len(relevant_outcomes) > 0 else 0)
 
     return unique_stimuli, np.array(lick_rates), catch_stimuli, np.array(catch_lick_rates)
 
@@ -215,8 +239,12 @@ def preprocess_stimuli_outcomes(selected_data, index=0):
     Extracts and processes stimuli and outcomes from the selected session.
     Converts them from string representations to NumPy arrays.
     """
-    stimuli = selected_data["Stimuli"].values[index].strip("[]\n").split()
-    stimuli = np.array([float(num) for num in stimuli])
+    
+    try:
+        stimuli = selected_data["Stimuli"].values[index].strip("[]\n").split()
+        stimuli = np.array([float(num) for num in stimuli])
+    except Exception:
+        stimuli = selected_data["Stimuli"].values[index]
 
     outcomes = np.array(ast.literal_eval(selected_data["Outcomes"].values[index]))
 
@@ -433,11 +461,9 @@ def process_and_plot_lick_data(project_data, index, plot=False):
                 row=1, col=1
             )
         # Add vertical reference line at Time = 0
-        fig.add_vline(x = 0.0, line = dict(color = COLOR_GRAY, width=2), opacity=0.4 , row=1, col=1)
-        fig.add_vline(x = reinforsment_delay_end, line = dict(color = COLOR_GRAY, width = 2), opacity=0.2, row = 1, col = 1)
-        fig.add_vline(x = response_window_end, line = dict(color = COLOR_GRAY, width = 2), opacity=0.4, row = 1, col = 1)
-
-
+        fig.add_vline(x=0.0, line=dict(color=COLOR_GRAY, width=2), opacity=0.4, row=1, col=1)
+        fig.add_vline(x=reinforsment_delay_end, line=dict(color=COLOR_GRAY, width=2), opacity=0.2, row=1, col=1)
+        fig.add_vline(x=response_window_end, line=dict(color=COLOR_GRAY, width=2), opacity=0.4, row=1, col=1)
     else:
         st.warning("No valid lick raster data to plot.")
 
@@ -502,6 +528,7 @@ def process_and_plot_lick_data(project_data, index, plot=False):
 
     # Display the subplot figure in Streamlit
     if plot:
+        colors.apply_standard_font_sizes(fig)
         st.plotly_chart(fig, use_container_width=False, key="raster_histogram_plot")
 
 
@@ -570,6 +597,19 @@ def process_and_plot_lick_data(project_data, index, plot=False):
 
     return df_go_first_licks, df_no_go_first_licks, outcome_df
 
+# Prepare raster plot data
+def prepare_raster_data(licks_list, trial_type, trial_stim, start_index=1):
+
+    """Formats raster data for Plotly scatter plot."""
+    data = []
+    for i, licks_in_trial in enumerate(licks_list):
+        if isinstance(licks_in_trial, np.ndarray) and licks_in_trial.size > 0:
+            trial_idx = start_index + i  # Assigns sequential index
+            for lick in licks_in_trial:
+                data.append({"Time": lick, "Trial Index": trial_idx, "Trial Type": trial_type, "Trial Stim": trial_stim[i]})
+    return pd.DataFrame(data)
+
+
 def plot_first_lick_by_stimulus(project_data, index, plot=True):
     """Plot first lick times by stimulus ID."""
     from Analysis.GNG_bpod_analysis.colors import COLOR_GO, COLOR_NOGO
@@ -590,7 +630,7 @@ def plot_first_lick_by_stimulus(project_data, index, plot=True):
         stim_data = ftl_df[ftl_df["Stimulus ID"] == stim]["First Lick Time (s)"]
         
         # Determine color based on stimulus type
-        if 1 <= stim <= 1.5:
+        if st.session_state.low_boundary < stim < st.session_state.high_boundary:
             color = COLOR_NOGO
             name_prefix = "NoGo"
         else:
@@ -616,20 +656,23 @@ def plot_first_lick_by_stimulus(project_data, index, plot=True):
             y=ftl_df["First Lick Time (s)"].min() - 0.1,  # slightly below the min y
             text=f"n={len(stim_data)}",
             showarrow=False,
-            font=dict(size=12, color="black"),
+            font=dict(
+                size=colors.LABEL_FONT_SIZE,
+                color="black"
+            ),
             xanchor="center",
             yanchor="top"
         )
     
 
     fig.add_vline(
-        x=1,
+        x=st.session_state.low_boundary,
         line_width=2,
         line_dash="dash",
         line_color=COLOR_GRAY,
     )
     fig.add_vline(
-        x=1.5,
+        x=st.session_state.high_boundary,
         line_width=2,
         line_dash="dash",
         line_color=COLOR_GRAY,
@@ -666,18 +709,156 @@ def plot_first_lick_by_stimulus(project_data, index, plot=True):
 
     if plot:
         st.plotly_chart(fig, use_container_width=True, config=get_plotly_config())
-        
-# Prepare raster plot data
-def prepare_raster_data(licks_list, trial_type, trial_stim, start_index=1):
 
-    """Formats raster data for Plotly scatter plot."""
-    data = []
-    for i, licks_in_trial in enumerate(licks_list):
-        if isinstance(licks_in_trial, np.ndarray) and licks_in_trial.size > 0:
-            trial_idx = start_index + i  # Assigns sequential index
-            for lick in licks_in_trial:
-                data.append({"Time": lick, "Trial Index": trial_idx, "Trial Type": trial_type, "Trial Stim": trial_stim[i]})
-    return pd.DataFrame(data)
+
+def plot_n_lick_by_stimulus(project_data, index, plot=True):
+
+    # Build per-trial lick counts and stimulus IDs
+    try:
+        licks_str = project_data.iloc[index]["Licks"]
+        stimuli_str = project_data.iloc[index]["Stimuli"]
+
+        if isinstance(licks_str, str):
+            licks_str = re.sub(r'array\(', 'np.array(', licks_str)
+            licks = eval(licks_str, {"np": np, "None": None, "nan": None})
+        else:
+            licks = licks_str
+
+        licks = np.array(licks, dtype=object)
+        licks = np.array([
+            np.array(l, dtype=float) if not isinstance(l, np.ndarray) and l is not None and l != [] else
+            (l if isinstance(l, np.ndarray) else np.array([]))
+            for l in licks
+        ], dtype=object)
+        
+        licks = np.array([_trim_on_decrease(trial) for trial in licks], dtype=object)
+    
+        if isinstance(stimuli_str, str):
+            stimuli = np.array([float(x) for x in stimuli_str.strip("[]").split()])
+        else:
+            stimuli = np.array(stimuli_str)
+
+        n_licks = np.array([len(l) if isinstance(l, np.ndarray) else 0 for l in licks])
+
+        per_trial_df = pd.DataFrame({
+            "Trial": np.arange(1, len(n_licks) + 1),
+            "Stimulus ID": stimuli,
+            "N Licks": n_licks
+        })
+
+        grouped = per_trial_df.groupby("Stimulus ID").agg(
+            N_Trials=("N Licks", "size"),
+            Mean_N_Licks=("N Licks", "mean"),
+            Median_N_Licks=("N Licks", "median"),
+            Std_N_Licks=("N Licks", "std"),
+            Sum_N_Licks=("N Licks", "sum")
+        ).reset_index()
+
+    except Exception:
+        per_trial_df = pd.DataFrame(columns=["Trial", "Stimulus ID", "N Licks"]) 
+        grouped = pd.DataFrame(columns=["Stimulus ID", "N_Trials", "Mean_N_Licks", "Median_N_Licks", "Std_N_Licks", "Sum_N_Licks"]) 
+
+    fig = go.Figure()
+    if not per_trial_df.empty:
+        
+        # Sort stimulus IDs for consistent x-axis ordering
+        stim_ids_sorted = sorted(per_trial_df["Stimulus ID"].unique())
+        
+        # Color by stimulus type (Go vs NoGo)
+        for stim_id in stim_ids_sorted:
+            stim_data = per_trial_df[per_trial_df["Stimulus ID"] == stim_id]
+            
+            # Determine color based on stimulus type
+            if  (st.session_state.low_boundary > stim_id) or (stim_id > st.session_state.high_boundary):
+                color = COLOR_GO
+                name = f"Go {stim_id}"
+                showlegend_stim = False
+            elif round(st.session_state.low_boundary,2) == round(stim_id, 2):
+                color = colors.COLOR_LOW_BD
+                name = f"Catch - Low Boundary"
+                showlegend_stim = True
+            elif round(st.session_state.high_boundary,2) == round(stim_id, 2):
+                color = colors.COLOR_HIGH_BD
+                name = f"Catch - High Boundary"
+                showlegend_stim = True
+            else:
+                color = COLOR_NOGO
+                name = f"NoGo {stim_id}"
+                showlegend_stim = False
+            fig.add_trace(
+                go.Violin(
+                    x=stim_data["Stimulus ID"].astype(str),
+                    y=stim_data["N Licks"],
+                    name=name,
+                    box_visible=False,
+                    meanline_visible=True,
+                    line_color=color,
+                    opacity=0.6,
+                    legendgroup=name,
+                    showlegend=showlegend_stim,
+
+                )
+            )
+            
+        # Add line connecting the means per stimulus
+        try:
+            grouped_sorted = grouped.sort_values("Stimulus ID")
+            fig.add_trace(
+                go.Scatter(
+                    x=grouped_sorted["Stimulus ID"].astype(str),
+                    y=grouped_sorted["Median_N_Licks"],
+                    mode='lines',
+                    name='Median',
+                    line=dict(color="black", width=3, shape='spline'),  # Use 'spline' for smoother interpolation
+                    showlegend=True,
+                )
+
+            )
+            # Add annotation under each tick with the count of trials
+            for i, (_, row) in enumerate(grouped_sorted.iterrows()):
+                fig.add_annotation(
+                    x=i,  # use index position on categorical axis
+                    y=-2,  # slightly below the min y
+                    text=f"n={int(row['N_Trials'])}",
+                    showarrow=False,
+                    font=dict(
+                        size=colors.LABEL_FONT_SIZE,
+                        color="black"
+                    ),
+                    xanchor="center",
+                    yanchor="top"
+                )
+
+        except Exception:
+            pass
+
+        fig.update_layout(
+            title="N Licks by Stimulus",
+            xaxis_title="Stimulus ID",
+            yaxis_title="N Licks",
+            template="simple_white",
+            showlegend=True,
+            xaxis=dict(
+                categoryorder='array',
+                categoryarray=[str(x) for x in stim_ids_sorted]
+            )
+        )
+        colors.apply_standard_font_sizes(fig)
+
+    if plot:
+        st.subheader("N Licks by Stimulus")
+        with st.expander("Licks", expanded=False):
+            st.dataframe(licks)
+
+        with st.expander("Per-trial counts", expanded=False):
+            st.dataframe(per_trial_df)
+
+        with st.expander("Grouped summary", expanded=False):
+            st.dataframe(grouped)
+        st.plotly_chart(fig, use_container_width=True, config=get_plotly_config())
+        return per_trial_df, grouped, fig
+    else:
+        return per_trial_df, grouped, fig
 
 # Function to create learning curve with interactivity
 def learning_curve(selected_data, index=0):
@@ -810,6 +991,7 @@ def plot_first_lick_latency(selected_data, index=0, df_go_first_licks=None, df_n
         st.write(f"- NoGo trials: n={len(no_go_latencies)}, mean={np.mean(no_go_latencies):.3f}s ± {np.std(no_go_latencies):.3f}s")
         st.write(f"- Mann-Whitney U test: p={p_value:.3g}")
     
+    colors.apply_standard_font_sizes(fig)
     st.plotly_chart(fig, use_container_width=True, config=get_plotly_config())
     
     # return df_first_licks
@@ -988,6 +1170,7 @@ def plot_first_lick_latency_multiple_sessions(selected_data, animal_name="None",
                 gridwidth=0.2
             )
         )
+        colors.apply_standard_font_sizes(fig)
         st.plotly_chart(fig, use_container_width=True, config=get_plotly_config())
         
     
@@ -1139,7 +1322,7 @@ def daily_activity_single_animal(project_data, index, plot=False):
             width=900,
             showlegend=False
         )
-        
+        colors.apply_standard_font_sizes(fig)
         st.plotly_chart(fig, use_container_width=True, config=get_plotly_config())
 
 def daily_activity_multi_animal(project_data):
@@ -1257,7 +1440,7 @@ def daily_activity_multi_animal(project_data):
         width=900,
         showlegend=True
     )
-    
+    colors.apply_standard_font_sizes(fig)
     st.plotly_chart(fig, use_container_width=True, config=get_plotly_config())
 
 def daily_multi_animal_lick_rate(project_data, t=15):
@@ -1334,6 +1517,7 @@ def daily_multi_animal_lick_rate(project_data, t=15):
         width=900,
         showlegend=True
     )
+    colors.apply_standard_font_sizes(fig)
     st.plotly_chart(fig, use_container_width=True, config=get_plotly_config())
 
 def cumulative_number_of_trials_vs_daily_dprime(project_data, t=15):
@@ -1457,169 +1641,9 @@ def cumulative_number_of_trials_vs_daily_dprime(project_data, t=15):
         legend_title_text="Legend"
     )
 
-    # Try interactive click capture: write details and set selected_session
-    try:
-        from streamlit_plotly_events import plotly_events
-        selected_points = plotly_events(
-            fig,
-            click_event=True,
-            hover_event=False,
-            select_event=False,
-            key=f"cum_trials_dprime_{len(mice)}"
-        )
-        if selected_points:
-            pt = selected_points[0]
-            x_val = pt.get('x')
-            y_val = pt.get('y')
-            curve_num = pt.get('curveNumber', 0)
-            point_num = pt.get('pointNumber', 0)
-            trace = fig.data[curve_num]
-            name = trace.name
-            cd = trace.customdata[point_num] if hasattr(trace, 'customdata') else None
-            orig_idx = int(cd[0]) if cd is not None else None
-            sess_date = cd[1] if cd is not None else None
-            tones = cd[2] if cd is not None else None
-            bounds = cd[3] if cd is not None else None
-            # Update session state for external panels
-            try:
-                st.session_state.selected_session = orig_idx
-            except Exception:
-                pass
-            st.write({
-                "Mouse": name,
-                "Original Index": orig_idx,
-                "Session Date": sess_date,
-                "Cumulative Trials": x_val,
-                "d'": y_val,
-                "Tones per class": tones,
-                "Boundaries": bounds,
-            })
-    except Exception:
-        st.plotly_chart(fig, use_container_width=True, config=get_plotly_config())
-
-def plot_n_lick_by_stimulus(project_data, index, plot=True):
-
-    # Build per-trial lick counts and stimulus IDs
-    try:
-        licks_str = project_data.iloc[index]["Licks"]
-        stimuli_str = project_data.iloc[index]["Stimuli"]
-
-        if isinstance(licks_str, str):
-            licks_str = re.sub(r'array\(', 'np.array(', licks_str)
-            licks = eval(licks_str, {"np": np, "None": None, "nan": None})
-        else:
-            licks = licks_str
-
-        licks = np.array(licks, dtype=object)
-        licks = np.array([
-            np.array(l, dtype=float) if not isinstance(l, np.ndarray) and l is not None and l != [] else
-            (l if isinstance(l, np.ndarray) else np.array([]))
-            for l in licks
-        ], dtype=object)
-        
-
-
-        licks = np.array([_trim_on_decrease(trial) for trial in licks], dtype=object)
+    colors.apply_standard_font_sizes(fig)
+    st.plotly_chart(fig, use_container_width=True, config=get_plotly_config())
     
-        if isinstance(stimuli_str, str):
-            stimuli = np.array([float(x) for x in stimuli_str.strip("[]").split()])
-        else:
-            stimuli = np.array(stimuli_str)
-
-        n_licks = np.array([len(l) if isinstance(l, np.ndarray) else 0 for l in licks])
-
-        per_trial_df = pd.DataFrame({
-            "Trial": np.arange(1, len(n_licks) + 1),
-            "Stimulus ID": stimuli,
-            "N Licks": n_licks
-        })
-
-        grouped = per_trial_df.groupby("Stimulus ID").agg(
-            N_Trials=("N Licks", "size"),
-            Mean_N_Licks=("N Licks", "mean"),
-            Median_N_Licks=("N Licks", "median"),
-            Std_N_Licks=("N Licks", "std"),
-            Sum_N_Licks=("N Licks", "sum")
-        ).reset_index()
-
-    except Exception:
-        per_trial_df = pd.DataFrame(columns=["Trial", "Stimulus ID", "N Licks"]) 
-        grouped = pd.DataFrame(columns=["Stimulus ID", "N_Trials", "Mean_N_Licks", "Median_N_Licks", "Std_N_Licks", "Sum_N_Licks"]) 
-
-    if plot:
-        st.subheader("N Licks by Stimulus")
-        with st.expander("Licks", expanded=False):
-            st.dataframe(licks)
-
-        with st.expander("Per-trial counts", expanded=False):
-            st.dataframe(per_trial_df)
-
-        with st.expander("Grouped summary", expanded=False):
-            st.dataframe(grouped)
-
-        if not per_trial_df.empty:
-            fig = go.Figure()
-            
-            # Sort stimulus IDs for consistent x-axis ordering
-            stim_ids_sorted = sorted(per_trial_df["Stimulus ID"].unique())
-            
-            # Color by stimulus type (Go vs NoGo)
-            for stim_id in stim_ids_sorted:
-                stim_data = per_trial_df[per_trial_df["Stimulus ID"] == stim_id]
-                
-                # Determine color based on stimulus type
-                if 1 <= stim_id <= 1.5:
-                    color = COLOR_NOGO
-                    name = f"NoGo {stim_id}"
-                else:
-                    color = COLOR_GO
-                    name = f"Go {stim_id}"
-                
-                fig.add_trace(
-                    go.Violin(
-                        x=stim_data["Stimulus ID"].astype(str),
-                        y=stim_data["N Licks"],
-                        name=name,
-                        box_visible=False,
-                        meanline_visible=True,
-                        line_color=color,
-                        opacity=0.6,
-                        legendgroup=name
-                    )
-                )
-
-            # Add line connecting the means per stimulus
-            try:
-                grouped_sorted = grouped.sort_values("Stimulus ID")
-                fig.add_trace(
-                    go.Scatter(
-                        x=grouped_sorted["Stimulus ID"].astype(str),
-                        y=grouped_sorted["Mean_N_Licks"],
-                        mode='lines+markers',
-                        name='Mean',
-                        line=dict(color=COLOR_GRAY, width=3),
-                        marker=dict(color=COLOR_GRAY, size=3),
-                        showlegend=False
-                    )
-                )
-            except Exception:
-                pass
-
-            fig.update_layout(
-                title="N Licks by Stimulus",
-                xaxis_title="Stimulus ID",
-                yaxis_title="N Licks",
-                template="simple_white",
-                showlegend=False,
-                xaxis=dict(
-                    categoryorder='array',
-                    categoryarray=[str(x) for x in stim_ids_sorted]
-                )
-            )
-            st.plotly_chart(fig, use_container_width=True, config=get_plotly_config())
-    else:
-        return per_trial_df, grouped
-        
 def _trim_on_decrease(sequence: np.ndarray) -> np.ndarray:
     if not isinstance(sequence, np.ndarray) or sequence.size == 0:
         return sequence if isinstance(sequence, np.ndarray) else np.array([])
@@ -1629,3 +1653,7 @@ def _trim_on_decrease(sequence: np.ndarray) -> np.ndarray:
         return sequence
     cut = int(dec_indices[0])
     return sequence[cut+1:]
+
+
+    
+    

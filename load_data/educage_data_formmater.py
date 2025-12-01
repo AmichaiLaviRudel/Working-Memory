@@ -3,18 +3,17 @@ import ast
 from pathlib import Path
 import numpy as np
 import re
+import json
+import sys
+from datetime import datetime
 
 # Source file path
 path1 = r"Z:\Shared\Noam\results\Educage1_09_11_2025\Educage1_09_11_2025.txt"
 # path2 = r"Z:\Shared\Noam\results\experiments\experiments.txt"
 
 out_csv = Path(r"Z:\\Shared\\Amichai\\Code\\DB\\users_data\\Amichai\\Educage1_experimental_data.csv")
-out_test = Path(r"Z:\\Shared\\Amichai\\Educage1_experimental_data_test.csv")
 # Read file
 df = pd.read_csv(path1)
-# df2 = pd.read_csv(path2)
-# df = pd.concat([df1, df2])
-df.to_csv(out_test, index=False)
 # Sort by datetime if possible and reindex
 datetime_cols = [col for col in ["datetime", "date", "start_time", "start_dt"] if col in df.columns]
 if "start_dt" in df.columns:
@@ -231,7 +230,6 @@ def _format_space_list(lst):
 _export_df = grouped_out.copy()
 if "Stimuli" in _export_df.columns:
     _export_df["Stimuli"] = _export_df["Stimuli"].apply(_format_space_list)
-out_csv = Path(r"Z:\\Shared\\Amichai\\Code\\DB\\users_data\\Amichai\\Educage1_experimental_data.csv")
 
 _export_df.to_csv(out_csv, index=False)
 print(f"Grouped summary saved to: {out_csv}")

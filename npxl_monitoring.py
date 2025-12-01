@@ -33,6 +33,31 @@ st_project_data = st.data_editor(
 )
 
 with st.expander("Utilities", expanded=False):
+    st.subheader("Date Calculator")
+    col1, col2 = st.columns(2)#אני ילד כאפותתתתתתתתת#
+    
+    with col1:
+        start_date = st.date_input("Start Date", value=None, key="date_calc_start")
+    
+    with col2:
+        end_date = st.date_input("End Date (leave empty for today)", value=None, key="date_calc_end")
+    
+    if start_date:
+        if end_date:
+            days_diff = (end_date - start_date).days
+            target_date = end_date
+        else:
+            from datetime import date
+            days_diff = (date.today() - start_date).days
+            target_date = date.today()
+        
+        if days_diff >= 0:
+            st.success(f"**{days_diff} days** from {start_date} to {target_date}")
+        else:
+            st.warning(f"**{abs(days_diff)} days** before {start_date} (negative difference)")
+    
+    st.divider()
+    
     if st.button("Auto-fill unit summaries from bombcell"):
         df = st_project_data.copy()
         updated_rows = 0

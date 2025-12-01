@@ -242,6 +242,7 @@ def plot_bias_analysis(selected_data, index, n_previous_trials=3, plot=False):
             height=400,
             width=700
         )
+        colors.apply_standard_font_sizes(fig_choice)
         st.markdown("**Choice bias measures the tendency to repeat (or avoid) licking based on recent responses.**")
         st.plotly_chart(fig_choice, use_container_width=True)
 
@@ -271,6 +272,7 @@ def plot_bias_analysis(selected_data, index, n_previous_trials=3, plot=False):
             height=400,
             width=700
         )
+        colors.apply_standard_font_sizes(fig_stimulus)
         st.markdown("**Stimulus bias measures the influence of previous stimuli on the current choice.**")
         st.plotly_chart(fig_stimulus, use_container_width=True)
 
@@ -425,7 +427,7 @@ def bias_multiple_sessions(selected_data, animal_name="None", n_previous_trials=
             height=400,
             width=700
         )
-        
+        colors.apply_standard_font_sizes(fig)
         st.plotly_chart(fig, use_container_width=True, config=get_plotly_config())
     
     return {

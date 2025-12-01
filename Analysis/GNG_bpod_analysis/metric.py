@@ -150,6 +150,7 @@ def d_prime(selected_data, index=0, t=10, plot=False, filter_fa_equal_hit=None):
             height=400,
             width=700
         )
+        colors.apply_standard_font_sizes(fig)
         st.plotly_chart(fig, use_container_width=True, config=get_plotly_config())
     return d
 
@@ -365,20 +366,40 @@ def d_prime_multiple_sessions(selected_data, t=10, animal_name='None', plot = Tr
             height=400,
             width=700
         )
+        colors.apply_standard_font_sizes(fig)
         st.plotly_chart(fig, use_container_width=True, config=get_plotly_config())
 
     return data
 
-def multi_animal_d_prime_progression(selected_data, N_Boundaries = None):
-
-    if N_Boundaries != None:
-        st.title(f"Multi-Animal Progress {N_Boundaries} boudaries")
-        selected_data = selected_data[selected_data["N_Boundaries"] == N_Boundaries].reset_index(drop = True)
+def multi_animal_d_prime_progression(selected_data, N_Boundaries=None):
+    """
+    Plot d' progression across animals, optionally filtered by number of boundaries.
+    This is robust to empty selections, missing keys and NaNs.
+    """
+    # Optional filtering by number of boundaries
+    if N_Boundaries is not None:
+        st.title(f"Multi-Animal Progress ({N_Boundaries} boundaries)")
+        # Guard against NaN comparison issues
+        if pd.isna(N_Boundaries):
+            filtered = selected_data[selected_data["N_Boundaries"].isna()]
+        else:
+            filtered = selected_data[selected_data["N_Boundaries"] == N_Boundaries]
+        if filtered.empty:
+            st.warning("No sessions match the selected number of boundaries.")
+            return
+        selected_data = filtered.reset_index(drop=True)
     else:
         st.title("Multi-Animal Progress")
 
+    if selected_data.empty:
+        st.warning("No data available for multi-animal d' progression.")
+        return
+
     # Get unique subject names
     subjects = selected_data["MouseName"].unique()
+    if len(subjects) == 0:
+        st.warning("No animals found in the selected data.")
+        return
 
     # Initialize arrays to store d' values
     d_prime_data = []
@@ -391,35 +412,59 @@ def multi_animal_d_prime_progression(selected_data, N_Boundaries = None):
     for subject in subjects:
         # Compute d' for each subject
         d_prime_result = d_prime_multiple_sessions(selected_data, animal_name=subject, plot=False)
-        d_prime_values = d_prime_result["d_prime"]
+        d_prime_values = np.asarray(d_prime_result.get("d_prime", []), dtype=float)
+        if d_prime_values.size == 0:
+            continue  # skip animals with no valid data
         d_prime_data.append(d_prime_values)
         session_counts.append(len(d_prime_values))
+
         # Collect tones per class and boundaries for marker encoding
         try:
-            tones_per_class_list.append(np.array(d_prime_result['tones_per_class'], dtype=float))
+            tones = np.asarray(d_prime_result.get("tones_per_class", []), dtype=float)
+            if tones.size == 0:
+                raise ValueError
+            tones_per_class_list.append(tones)
         except Exception:
             tones_per_class_list.append(np.array([np.nan] * len(d_prime_values), dtype=float))
+
         try:
-            boundaries_list.append(np.array(d_prime_result['Boundaries'], dtype=float))
+            bounds = np.asarray(d_prime_result.get("Boundaries", []), dtype=float)
+            if bounds.size == 0:
+                raise ValueError
+            boundaries_list.append(bounds)
         except Exception:
             boundaries_list.append(np.array([np.nan] * len(d_prime_values), dtype=float))
-        # If N_Boundaries == 2, collect low/high boundary d' as well
-        if N_Boundaries == 2:
-            low_vals = d_prime_result['Low Boundary d_prime']
-            high_vals = d_prime_result['High Boundary d_prime']
-            low_boundary_data.append(np.array(low_vals))
-            high_boundary_data.append(np.array(high_vals))
+
+        # Collect low/high boundary d' as well (always attempt; fall back to NaNs)
+        low_vals = np.asarray(d_prime_result.get("Low Boundary d_prime", []), dtype=float)
+        high_vals = np.asarray(d_prime_result.get("High Boundary d_prime", []), dtype=float)
+        # Fallback to NaNs if shapes don't match expected session length
+        if low_vals.size != len(d_prime_values):
+            low_vals = np.full(len(d_prime_values), np.nan)
+        if high_vals.size != len(d_prime_values):
+            high_vals = np.full(len(d_prime_values), np.nan)
+        low_boundary_data.append(low_vals)
+        high_boundary_data.append(high_vals)
+
+    # If no valid animals after filtering / cleaning, exit gracefully
+    if not d_prime_data:
+        st.warning("No valid d' data found for the selected animals.")
+        return
 
     # Determine max number of sessions for alignment
     max_sessions = max(session_counts)
 
     # Convert list of arrays to DataFrame (aligned by padding with NaN)
     d_prime_df = pd.DataFrame([np.pad(d, (0, max_sessions - len(d)), constant_values=np.nan) for d in d_prime_data])
+    low_boundary_df = pd.DataFrame([np.pad(d, (0, max_sessions - len(d)), constant_values=np.nan) for d in low_boundary_data])
+    high_boundary_df = pd.DataFrame([np.pad(d, (0, max_sessions - len(d)), constant_values=np.nan) for d in high_boundary_data])
     tones_df = pd.DataFrame([np.pad(arr, (0, max_sessions - len(arr)), constant_values=np.nan) for arr in tones_per_class_list])
     bounds_df = pd.DataFrame([np.pad(arr, (0, max_sessions - len(arr)), constant_values=np.nan) for arr in boundaries_list])
 
-    # Compute average d' across subjects
+    # Compute average d' across subjects (and std across animals for error bands)
     avg_d_prime = d_prime_df.mean(axis=0, skipna=True)
+    std_d_prime = d_prime_df.std(axis=0, skipna=True)
+
     # Compute representative tones and boundaries per session position
     avg_tones = tones_df.mean(axis=0, skipna=True)
     # Mode for boundaries per session; fallback to nearest non-NaN
@@ -435,46 +480,61 @@ def multi_animal_d_prime_progression(selected_data, N_Boundaries = None):
             except Exception:
                 rep_bounds.append(float(s.iloc[0]))
 
-    # Prepare DataFrame for Altair
-    data_list = []
-    for i, subject in enumerate(subjects):
-        for session, d_prime in enumerate(d_prime_df.iloc[i]):
-            if not np.isnan(d_prime):
-                data_list.append({"Session": session + 1, "d_prime": d_prime, "Mouse": subject})
-
-    # Add average line data
-    avg_list = []
-    for session, d_prime in enumerate(np.asarray(avg_d_prime)):
-        if not np.isnan(d_prime):
-            avg_list.append({"Session": session + 1, "d_prime": d_prime, "Mouse": "Average"})
-
-    df_altair = pd.DataFrame(data_list)
-    df_avg = pd.DataFrame(avg_list)
-
-    # If N_Boundaries == 2, compute average low/high boundary d' across animals
-    if N_Boundaries == 2 and low_boundary_data and high_boundary_data:
-        low_df = pd.DataFrame([np.pad(d, (0, max_sessions - len(d)), constant_values=np.nan) for d in low_boundary_data])
-        high_df = pd.DataFrame([np.pad(d, (0, max_sessions - len(d)), constant_values=np.nan) for d in high_boundary_data])
-        avg_low = low_df.mean(axis=0, skipna=True)
-        avg_high = high_df.mean(axis=0, skipna=True)
+    # Compute average low/high boundary d' across animals (and std across animals for error bands)
+    low_df = pd.DataFrame([np.pad(d, (0, max_sessions - len(d)), constant_values=np.nan) for d in low_boundary_data])
+    high_df = pd.DataFrame([np.pad(d, (0, max_sessions - len(d)), constant_values=np.nan) for d in high_boundary_data])
+    avg_low_boundary = low_df.mean(axis=0, skipna=True)
+    avg_high_boundary = high_df.mean(axis=0, skipna=True)
+    std_low_boundary = low_df.std(axis=0, skipna=True)
+    std_high_boundary = high_df.std(axis=0, skipna=True)
 
     import plotly.graph_objects as go
     fig = go.Figure()
-    # Build a deterministic color map for subjects
-    try:
-        subject_color_map = colors.get_subject_color_map(subjects)
-    except Exception:
-        subject_color_map = {}
-    # Plot all animals (gray lines)
-    for i, subject in enumerate(subjects):
-        fig.add_trace(go.Scatter(
-            x=np.arange(1, max_sessions + 1),
-            y=d_prime_df.iloc[i],
-            mode='lines',
-            line=dict(color=subject_color_map.get(str(subject), colors.COLOR_SUBTLE), width=1),
-            name=f'{subject}',
-            showlegend=False
-        ))
+
+    # Helper to add segmented error bands without bridging gaps
+    def _add_error_band(center_series, error_series, x_series, fillcolor, upper_name, lower_name):
+        try:
+            c = np.asarray(center_series, dtype=float)
+            e = np.asarray(error_series, dtype=float)
+            x = np.asarray(x_series, dtype=float)
+        except Exception:
+            return
+        if not np.isfinite(e).any():
+            return
+        valid = np.isfinite(c) & np.isfinite(e)
+        if not valid.any():
+            return
+        indices = np.where(valid)[0]
+        if indices.size == 0:
+            return
+        splits = np.where(np.diff(indices) > 1)[0] + 1
+        segments = np.split(indices, splits)
+        for seg in segments:
+            if seg.size == 0:
+                continue
+            xs = x[seg]
+            upper = c[seg] + e[seg]
+            lower = c[seg] - e[seg]
+            fig.add_trace(go.Scatter(
+                x=xs,
+                y=upper,
+                mode='lines',
+                line=dict(width=0),
+                showlegend=False,
+                hoverinfo='skip',
+                name=upper_name
+            ))
+            fig.add_trace(go.Scatter(
+                x=xs,
+                y=lower,
+                mode='lines',
+                line=dict(width=0),
+                fill='tonexty',
+                fillcolor=fillcolor,
+                showlegend=False,
+                hoverinfo='skip',
+                name=lower_name
+            ))
     # Plot average overall d' with markers slightly above the line
     try:
         marker_sizes = colors.marker_sizes_from_tones(avg_tones, scale=5.0, default_size=6.0)
@@ -501,44 +561,57 @@ def multi_animal_d_prime_progression(selected_data, N_Boundaries = None):
         marker=dict(symbol=marker_symbols, size=marker_sizes, color=colors.COLOR_GRAY),
         showlegend=False
     ))
+    # Overall d' error band (segmented)
+    _add_error_band(
+        avg_d_prime,
+        std_d_prime,
+        np.arange(1, max_sessions + 1),
+        colors.COLOR_ACCENT_TRANSPARENT,
+        "+1 Std Overall",
+        "-1 Std Overall"
+    )
     # Add legends for marker shapes and sizes
     colors.add_marker_legends(fig, rep_bounds, avg_tones, scale=5.0)
-    # Plot average low/high boundary d' if N_Boundaries == 2
-    if N_Boundaries == 2 and low_boundary_data and high_boundary_data:
-        fig.add_trace(go.Scatter(
-            x=np.arange(1, max_sessions + 1),
-            y=avg_low,
-            mode='lines',
-            name="Average Low Boundary d'",
-            line=dict(color=colors.COLOR_LOW_BD, width=2, dash='solid')
-        ))
-        low_vals = np.asarray(avg_low, dtype=float)
-        low_level = (np.nanmin(low_vals) if np.isfinite(low_vals).any() else 0.0) - 1.5
-        fig.add_trace(go.Scatter(
-            x=np.arange(1, max_sessions + 1),
-            y=[low_level] * len(avg_low),
-            mode='markers',
-            name="Average Low Boundary d'",
-            marker=dict(symbol='triangle-up', size=marker_sizes, color=colors.COLOR_GRAY),
-            showlegend=False
-        ))
-        fig.add_trace(go.Scatter(
-            x=np.arange(1, max_sessions + 1),
-            y=avg_high,
-            mode='lines',
-            name="Average High Boundary d'",
-            line=dict(color=colors.COLOR_HIGH_BD, width=2, dash='solid')
-        ))
-        high_vals = np.asarray(avg_high, dtype=float)
-        high_level = (np.nanmin(high_vals) if np.isfinite(high_vals).any() else 0.0) - 1.5
-        fig.add_trace(go.Scatter(
-            x=np.arange(1, max_sessions + 1),
-            y=[high_level] * len(avg_high),
-            mode='markers',
-            name="Average High Boundary d'",
-            marker=dict(symbol='triangle-down', size=marker_sizes, color=colors.COLOR_GRAY),
-            showlegend=False
-        ))
+    # Plot average low/high boundary d'
+    fig.add_trace(go.Scatter(
+        x=np.arange(1, max_sessions + 1),
+        y=avg_low_boundary,
+        mode='lines',
+        name="Average Low Boundary d'",
+        line=dict(color=colors.COLOR_LOW_BD, width=2, dash='solid')
+    ))
+    low_vals = np.asarray(avg_low_boundary, dtype=float)
+    low_level = (np.nanmin(low_vals) if np.isfinite(low_vals).any() else 0.0) - 1.5
+
+    # Low boundary error band
+    _add_error_band(
+        avg_low_boundary,
+        std_low_boundary,
+        np.arange(1, max_sessions + 1),
+        colors.COLOR_LOW_BD_TRANSPARENT,
+        "+1 Std Low",
+        "-1 Std Low"
+    )
+
+    fig.add_trace(go.Scatter(
+        x=np.arange(1, max_sessions + 1),
+        y=avg_high_boundary,
+        mode='lines',
+        name="Average High Boundary d'",
+        line=dict(color=colors.COLOR_HIGH_BD, width=2, dash='solid')
+    ))
+    high_vals = np.asarray(avg_high_boundary, dtype=float)
+    high_level = (np.nanmin(high_vals) if np.isfinite(high_vals).any() else 0.0) - 1.5
+
+    # High boundary error band
+    _add_error_band(
+        avg_high_boundary,
+        std_high_boundary,
+        np.arange(1, max_sessions + 1),
+        colors.COLOR_HIGH_BD_TRANSPARENT,
+        "+1 Std High",
+        "-1 Std High"
+    )
     # Learning threshold
     fig.add_trace(go.Scatter(
         x=[1, max_sessions], y=[1, 1],
@@ -554,7 +627,9 @@ def multi_animal_d_prime_progression(selected_data, N_Boundaries = None):
         height=400,
         width=700
     )
+    colors.apply_standard_font_sizes(fig)
     st.plotly_chart(fig, use_container_width=True, config=get_plotly_config())
+    return avg_d_prime, avg_low_boundary, avg_high_boundary
 
 def classifier_metric(project_data, index):
     from Analysis.GNG_bpod_analysis.licking_and_outcome import responses, licking_rate
@@ -717,38 +792,6 @@ def classifier_metric(project_data, index):
 
     return class_metric_df
 
-def d_prime_multiple_sessions_divde_oneNtwo(selected_data, t=10, animal_name='None', plot = True):
-    if animal_name == "None":
-        # Step 1: Let the user choose an animal from the data, assign a unique key
-        animal_name = st.selectbox("Choose an Animal", selected_data["MouseName"].unique(), key="d_prime_animal_select")
-    data = []
-    # Step 2: Automatically select all sessions for the chosen animal
-    session_indices, session_dates = get_sessions_for_animal(selected_data, animal_name)
-
-    ds = np.zeros([len(session_indices), 3])  # mean, std, max for each session
-    tones_per_class = []
-    boundaries = []
-
-
-    # Compute d' statistics and collect metadata
-    for idx, sess_idx in enumerate(session_indices):
-        stimuli = parse_stimuli(selected_data.loc[sess_idx, 'Stimuli'])
-        stimuli_mask = stimuli < st.session_state.high_boundary
-
-        # Filter relevant columns using the same mask
-        filtered_trials = selected_data.loc[sess_idx, 'TrialTypes'][stimuli_mask]
-        filtered_outcomes = selected_data.loc[sess_idx, 'Outcomes'][stimuli_mask]
-        selected_data_filtered = selected_data.copy()
-        selected_data_filtered.at[sess_idx, 'TrialTypes'] = filtered_trials
-        selected_data_filtered.at[sess_idx, 'Outcomes'] = filtered_outcomes
-
-        d = d_prime(selected_data, index=sess_idx, t=t)
-
-    st.table(selected_data)
-
-
-    return data
-
 def to_array(val):
     if isinstance(val, str):
         try:
@@ -786,19 +829,6 @@ def d_prime_low_high_boundary_sessions(selected_data, idx, t=10, plot=True):
 
     trialtypes = np.array(trialtypes)
     outcomes = np.array(outcomes)
-
-    # Ensure arrays are aligned to the same length first
-    min_len = min(len(stimuli), len(trialtypes), len(outcomes))
-    stimuli = stimuli[:min_len]
-    trialtypes = trialtypes[:min_len]
-    outcomes = outcomes[:min_len]
-
-    # Filter out 'Catch' trials
-    catch_mask = np.array([tt != 'Catch' for tt in trialtypes])
-    if not np.all(catch_mask):
-        stimuli = stimuli[catch_mask]
-        trialtypes = trialtypes[catch_mask]
-        outcomes = outcomes[catch_mask]
 
     # Now mask
     filtered_trials_low = trialtypes[low_mask]
@@ -882,6 +912,7 @@ def d_prime_low_high_boundary_sessions(selected_data, idx, t=10, plot=True):
             xanchor='left',
             yanchor='top'
         )
+        colors.apply_standard_font_sizes(fig)
         st.plotly_chart(fig, use_container_width=True, config=get_plotly_config())
 
 
@@ -952,6 +983,7 @@ def daily_multi_animal_dprime(project_data, t=10):
         width=900,
         showlegend=True
     )
+    colors.apply_standard_font_sizes(fig)
     st.plotly_chart(fig, use_container_width=True, config=get_plotly_config())
 
 def d_prime_for_stim_pairs(selected_data, index=0, stim_pairs=None, t=10, plot=True, atol=1e-6):
@@ -986,19 +1018,6 @@ def d_prime_for_stim_pairs(selected_data, index=0, stim_pairs=None, t=10, plot=T
     outcomes_val = selected_data.iloc[index]["Outcomes"]
     trialtypes = to_array(trials_val)
     outcomes = to_array(outcomes_val)
-
-    # Ensure arrays are aligned to the same length first
-    min_len = min(len(stimuli), len(trialtypes), len(outcomes))
-    stimuli = stimuli[:min_len]
-    trialtypes = trialtypes[:min_len]
-    outcomes = outcomes[:min_len]
-
-    # Filter out 'Catch' trials
-    catch_mask = np.array([tt != 'Catch' for tt in trialtypes])
-    if not np.all(catch_mask):
-        stimuli = stimuli[catch_mask]
-        trialtypes = trialtypes[catch_mask]
-        outcomes = outcomes[catch_mask]
 
     # Determine default pairs if not provided
     if stim_pairs is None:
@@ -1238,264 +1257,3 @@ def d_prime_for_stim_pairs(selected_data, index=0, stim_pairs=None, t=10, plot=T
 
     return out_df
 
-def daily_dprime_by_hour_multi_animal(project_data, t=10):
-    """
-    Plot d' by hour of day for multiple animals on a selected date.
-    Groups trials by hour based on StartTime and calculates d' for each hour.
-    """
-    if project_data is None or project_data.empty:
-        st.info("No data loaded.")
-        return
-    
-    if "StartTime" not in project_data.columns:
-        st.info("No StartTime data available for hourly d' analysis.")
-        return
-    
-    # Get unique dates
-    dates = sorted(project_data["SessionDate"].astype(str).unique())
-    if len(dates) == 0:
-        st.info("No dates found in data.")
-        return
-    
-    # Select date
-    selected_date = st.selectbox("Select a date", options=dates,
-                                index=max(0, len(dates) - 1),
-                                key=f"daily_dprime_hour_date_{len(project_data)}")
-    
-    # Filter data for selected date
-    date_data = project_data[project_data["SessionDate"].astype(str) == str(selected_date)]
-    
-    if date_data.empty:
-        st.info(f"No data found for date {selected_date}")
-        return
-    
-    # Get unique mice for this date
-    mice = sorted(date_data["MouseName"].unique())
-    if len(mice) == 0:
-        st.info("No animals found for selected date.")
-        return
-    
-    # Import helper functions from licking_and_outcome
-    from Analysis.GNG_bpod_analysis.licking_and_outcome import _parse_start_times
-    
-    # Determine per-mouse colors
-    try:
-        color_map = st.session_state.get('mouse_color_map', {})
-        if not color_map:
-            from Analysis.GNG_bpod_analysis.colors import get_subject_color_map
-            color_map = get_subject_color_map(date_data['MouseName'])
-    except Exception:
-        color_map = {}
-    
-    fig = go.Figure()
-    
-    # Store all hourly d' values for average calculation
-    all_hourly_dprimes = []
-    
-    # Process each mouse
-    for mouse in mice:
-        mouse_data = date_data[date_data["MouseName"] == mouse]
-        if len(mouse_data) == 0:
-            continue
-        
-        # Get the row index for this mouse
-        row_idx = mouse_data.index[0]
-        
-        # Get start times, trial types, and outcomes
-        start_times = mouse_data.iloc[0]["StartTime"]
-        trialtypes = to_array(mouse_data.iloc[0]["TrialTypes"])
-        outcomes = to_array(mouse_data.iloc[0]["Outcomes"])
-        
-        # Filter out 'Catch' trials
-        catch_mask = np.array([tt != 'Catch' for tt in trialtypes])
-        if not np.all(catch_mask):
-            trialtypes = trialtypes[catch_mask]
-            outcomes = outcomes[catch_mask]
-        
-        # Parse start times
-        times = _parse_start_times(start_times)
-        if not times or len(times) == 0:
-            continue
-        
-        # Filter times array to match filtered trialtypes/outcomes
-        if not np.all(catch_mask):
-            times = np.array(times)[catch_mask] if len(times) == len(catch_mask) else times
-        
-        # Ensure arrays are same length
-        min_len = min(len(times), len(trialtypes), len(outcomes))
-        times = times[:min_len]
-        trialtypes = trialtypes[:min_len]
-        outcomes = outcomes[:min_len]
-        
-        # Group trials by hour (0-23)
-        hourly_dprimes = []
-        hourly_hours = []
-        
-        for hour in range(24):
-            # Create hour range
-            hour_start = pd.Timestamp(f"2024-01-01 {hour:02d}:00:00").time()
-            hour_end = pd.Timestamp(f"2024-01-01 {(hour+1)%24:02d}:00:00").time()
-            
-            # Find trials in this hour
-            hour_mask = []
-            for time_obj in times:
-                if hour == 23:
-                    # Special case for hour 23 (includes up to 24:00, which wraps to 00:00)
-                    hour_mask.append(time_obj >= hour_start)
-                else:
-                    hour_mask.append(hour_start <= time_obj < hour_end)
-            
-            hour_mask = np.array(hour_mask)
-            
-            if hour_mask.sum() == 0:
-                hourly_dprimes.append(np.nan)
-                hourly_hours.append(hour)
-                continue
-            
-            # Filter trials for this hour
-            hour_trialtypes = trialtypes[hour_mask]
-            hour_outcomes = outcomes[hour_mask]
-            
-            if len(hour_trialtypes) == 0 or len(hour_outcomes) == 0:
-                hourly_dprimes.append(np.nan)
-                hourly_hours.append(hour)
-                continue
-            
-            # Create a one-row DataFrame for d' calculation
-            df_one = mouse_data.loc[[row_idx]].copy()
-            df_one.iloc[0, df_one.columns.get_loc('TrialTypes')] = str(np.asarray(hour_trialtypes).tolist())
-            df_one.iloc[0, df_one.columns.get_loc('Outcomes')] = str(np.asarray(hour_outcomes).tolist())
-            
-            # Calculate d' for this hour
-            try:
-                d_vals = d_prime(df_one, index=0, t=t, plot=False)
-                if d_vals is None or len(d_vals) == 0:
-                    mean_dp = np.nan
-                else:
-                    d_vals = np.asarray(d_vals, dtype=float)
-                    d_vals = d_vals[~np.isnan(d_vals)]
-                    mean_dp = float(np.nanmean(d_vals)) if d_vals.size > 0 else np.nan
-            except Exception:
-                mean_dp = np.nan
-            
-            hourly_dprimes.append(mean_dp)
-            hourly_hours.append(hour)
-        
-        # Normalize d' values for this mouse (0 = worst, 1 = best)
-        hourly_dprimes_array = np.array(hourly_dprimes)
-        valid_dprimes_for_norm = hourly_dprimes_array[~np.isnan(hourly_dprimes_array)]
-        
-        if len(valid_dprimes_for_norm) > 0:
-            min_dp = np.nanmin(valid_dprimes_for_norm)
-            max_dp = np.nanmax(valid_dprimes_for_norm)
-            
-            # Normalize: (value - min) / (max - min)
-            if max_dp != min_dp:
-                normalized_dprimes = (hourly_dprimes_array - min_dp) / (max_dp - min_dp)
-            else:
-                # All values are the same, set to 0.5 (middle)
-                normalized_dprimes = np.full_like(hourly_dprimes_array, 0.5)
-                # Keep NaN as NaN
-                normalized_dprimes[np.isnan(hourly_dprimes_array)] = np.nan
-        else:
-            # No valid values, keep as is
-            normalized_dprimes = hourly_dprimes_array
-        
-        all_hourly_dprimes.append(normalized_dprimes.tolist())
-        
-        # Separate valid and invalid points
-        valid_mask = ~np.isnan(normalized_dprimes)
-        valid_hours = np.array(hourly_hours)[valid_mask]
-        valid_dprimes = np.array(normalized_dprimes)[valid_mask]
-        
-        # Add main trace with lines and markers for valid points
-        fig.add_trace(go.Scatter(
-            x=valid_hours,
-            y=valid_dprimes,
-            mode='lines+markers',
-            name=str(mouse),
-            line=dict(width=2, color=color_map.get(str(mouse), colors.COLOR_SUBTLE)),
-            marker=dict(size=4, color=color_map.get(str(mouse), colors.COLOR_SUBTLE)),
-            opacity=0.7,
-            showlegend=True
-        ))
-        
-        # Add dashed connecting lines across gaps
-        if len(valid_hours) > 1:
-            for i in range(len(valid_hours) - 1):
-                if valid_hours[i+1] - valid_hours[i] > 1:
-                    # There's a gap, add a dashed connecting line
-                    fig.add_trace(go.Scatter(
-                        x=[valid_hours[i], valid_hours[i+1]],
-                        y=[valid_dprimes[i], valid_dprimes[i+1]],
-                        mode='lines',
-                        line=dict(
-                            width=1,
-                            color=color_map.get(str(mouse), colors.COLOR_SUBTLE),
-                            dash='dash'
-                        ),
-                        opacity=0.4,
-                        showlegend=False,
-                        hoverinfo='skip'
-                    ))
-    
-    if len(fig.data) == 0:
-        st.info("No d' data found for any animals on selected date.")
-        return
-    
-    # Calculate and add average line across all animals
-    if all_hourly_dprimes:
-        avg_hourly_dprimes = np.nanmean(all_hourly_dprimes, axis=0)
-        hours = np.array(list(range(24)))
-        
-        # Separate valid and invalid points for average
-        valid_mask_avg = ~np.isnan(avg_hourly_dprimes)
-        valid_hours_avg = hours[valid_mask_avg]
-        valid_avg_dprimes = np.array(avg_hourly_dprimes)[valid_mask_avg]
-        
-        # Add main average line
-        fig.add_trace(go.Scatter(
-            x=valid_hours_avg,
-            y=valid_avg_dprimes,
-            mode='lines+markers',
-            name='Average',
-            line=dict(color='black', width=4),
-            marker=dict(size=6, color='black'),
-            opacity=0.9
-        ))
-        
-        # Add dashed connecting lines across gaps for average
-        if len(valid_hours_avg) > 1:
-            for i in range(len(valid_hours_avg) - 1):
-                if valid_hours_avg[i+1] - valid_hours_avg[i] > 1:
-                    # There's a gap, add a dashed connecting line
-                    fig.add_trace(go.Scatter(
-                        x=[valid_hours_avg[i], valid_hours_avg[i+1]],
-                        y=[valid_avg_dprimes[i], valid_avg_dprimes[i+1]],
-                        mode='lines',
-                        line=dict(color='black', width=2, dash='dash'),
-                        opacity=0.6,
-                        showlegend=False,
-                        hoverinfo='skip'
-                    ))
-    
-    # Update layout
-    fig.update_layout(
-        title=f"Normalized d' by Hour of Day — {selected_date}",
-        xaxis_title="Hour of Day",
-        yaxis_title="Normalized d' (0=worst, 1=best)",
-        xaxis=dict(
-            tickmode='linear',
-            tick0=0,
-            dtick=2,
-            range=[-0.5, 23.5]
-        ),
-        yaxis=dict(
-            range=[-0.05, 1.05]
-        ),
-        height=500,
-        width=900,
-        showlegend=True
-    )
-    
-    st.plotly_chart(fig, use_container_width=True, config=get_plotly_config())

@@ -132,6 +132,43 @@ LINE_WIDTH_MEDIUM  = 1.0
 LINE_WIDTH_THICK    = 5
 LINE_WIDTH_VERY_THICK = 7
 
+# ─── Global Font Sizes  ────────────────────────────────────
+# Use these in all figures for consistent typography.
+TITLE_FONT_SIZE = 24
+LABEL_FONT_SIZE = 20
+LEGEND_FONT_SIZE = 16
+TICK_FONT_SIZE = 16
+
+
+def apply_standard_font_sizes(fig):
+    """
+    Apply global font sizes to a Plotly figure:
+    - Title
+    - Axis labels
+    - Legend
+    - Tick labels
+    """
+    try:
+        # Base font for general text (axis labels, annotations without explicit font, etc.)
+        fig.update_layout(
+            font=dict(size=LABEL_FONT_SIZE),
+            title=dict(font=dict(size=TITLE_FONT_SIZE)),
+            legend=dict(font=dict(size=LEGEND_FONT_SIZE)),
+        )
+        # Axes: labels and ticks
+        fig.update_xaxes(
+            title_font=dict(size=LABEL_FONT_SIZE),
+            tickfont=dict(size=TICK_FONT_SIZE),
+        )
+        fig.update_yaxes(
+            title_font=dict(size=LABEL_FONT_SIZE),
+            tickfont=dict(size=TICK_FONT_SIZE),
+        )
+    except Exception:
+        # Silently ignore if figure doesn't support some properties
+        pass
+    return fig
+
 
 def marker_symbols_from_boundaries(boundaries):
     """
