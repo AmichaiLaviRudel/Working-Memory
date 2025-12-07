@@ -2,16 +2,34 @@ import plotly.graph_objects as go
 import numpy as np
 from scipy import stats
 from sklearn.metrics import roc_auc_score, roc_curve
-from sklearn.linear_model import PoissonRegressor
-from sklearn.preprocessing import StandardScaler
 import pandas as pd
 import os
 import streamlit as st
-import hashlib
+import streamlit.components.v1 as components
 from functools import lru_cache
             
+# Import single unit metrics functions from single_unit_offline_analysis
+from Analysis.NPXL_analysis.single_unit_offline_analysis.single_unit_metrics import (
+    compute_stimulus_selectivity,
+    compute_go_nogo_coding,
+    compute_outcome_modulation,
+    compute_choice_probability,
+    compute_d_prime,
+    compute_peri_event_rate,
+    compute_peri_event_rate_from_event_windows,
+    fit_glm_single_unit,
+    calculate_psth_metrics,
+    compute_psth_pvalues_from_event_windows,
+    compute_psth_pvalues_from_event_windows_cached,
+    compute_all_unit_metrics_cached,
+)
 
-# Add color imports
+# Import load_event_windows_data from NPXL_Preprocessing
+from Analysis.NPXL_analysis.NPXL_Preprocessing import load_event_windows_data as load_event_windows_data_base
+from Analysis.NPXL_analysis.single_unit_offline_analysis.visualization import (
+    plot_unit_heatmap,
+    get_trial_statistics,
+)
 from Analysis.GNG_bpod_analysis.colors import COLOR_GO, COLOR_GRAY, COLOR_NOGO, COLOR_HIT, COLOR_FA, COLOR_CR, COLOR_MISS, COLOR_BLUE, COLOR_BLUE_TRANSPARENT, COLOR_ACCENT, COLOR_ACCENT_TRANSPARENT
 
 def save_pvalues_to_folder(pvals, selected_folder, window=(-1, 2), bin_size=0.01):
@@ -181,402 +199,50 @@ def save_all_psth_metrics(event_windows_data, selected_folder, display_window, p
         print(f"Error saving PSTH metrics: {e}")
         return False
 
-def compute_stimulus_selectivity(event_windows_data, stimuli_outcome_df, unit_idx, window=(-0.2, 0.5)):
+# All computation functions have been moved to Analysis.NPXL_analysis.NPXL_offline_analysis.single_unit_metrics
+
+
+def plot_unit_psth(
+    event_windows_data,
+    display_window,
+    unit_idx,
+    sorted_pvals,
+    unit_rank,
+    bin_size=0.005,
+    analysis_output_dir=None,
+):
+    """Plot a single-unit PSTH aligned to events and compute significance metrics.
+
+    If analysis_output_dir is provided, attempts to load a precomputed PSTH HTML
+    from the offline analysis output (plots folder). Falls back to computing from
+    event_windows_data if no saved plot is found.
     """
-    Compute stimulus selectivity for a single unit.
-    Returns frequency tuning curve, SEM, and best frequency.
-    """
-    if 'stimulus' not in stimuli_outcome_df.columns:
-        return None, None, None, None
+   
     
-    unique_stimuli = np.unique(stimuli_outcome_df['stimulus'])
-    tuning_curve = []
-    tuning_sem = []
-    
-    # Extract data from event_windows_data
+    # Try to load precomputed PSTH from analysis output (HTML)
+    if analysis_output_dir:
+        import glob
+        plot_type = "raw_psth"
+        plots_dir = os.path.join(analysis_output_dir, "plots")
+        html_path = None
+        if os.path.isdir(plots_dir):
+            patterns = [
+                os.path.join(plots_dir, plot_type, f"*unit_{unit_idx}_{plot_type}.html"),
+                os.path.join(plots_dir, f"*unit_{unit_idx}_{plot_type}.html"),
+                os.path.join(plots_dir, f"*unit_{unit_idx}_*.html"),
+            ]
+            for pattern in patterns:
+                matches = glob.glob(pattern)
+                if matches:
+                    html_path = matches[0]
+                    break
+        if html_path and os.path.exists(html_path):
+            with open(html_path, "r", encoding="utf-8") as f:
+                html_content = f.read()
+            return html_content, None, True
+
+    # Fallback: compute PSTH from matrices
     event_windows_matrix, time_axis, valid_event_indices, event_stimuli_outcome_df, metadata = event_windows_data
-    
-    for stim in unique_stimuli:
-        # Get trials with this stimulus
-        stim_mask = (stimuli_outcome_df['stimulus'] == stim).values
-        if np.sum(stim_mask) == 0:
-            tuning_curve.append(0)
-            tuning_sem.append(0)
-            continue
-
-        # Get the unit's data for trials with this stimulus
-        stim_trials = np.where(stim_mask)[0]
-        if len(stim_trials) == 0:
-            tuning_curve.append(0)
-            tuning_sem.append(0)
-            continue
-            
-        # Find the time indices corresponding to the window
-        start_time, end_time = window
-        start_idx = np.argmin(np.abs(time_axis - start_time))
-        end_idx = np.argmin(np.abs(time_axis - end_time))
-        
-        # Get the unit's data for the specified window and stimulus trials
-        unit_data = event_windows_matrix[unit_idx, start_idx:end_idx, stim_trials]  # [time × trials]
-        
-        # Average across time bins for each trial
-        trial_rates = np.mean(unit_data, axis=0)  # Average across time for each trial
-        
-        if len(trial_rates) > 0:
-            avg_rate = np.mean(trial_rates)
-            sem = np.std(trial_rates) / np.sqrt(len(trial_rates))
-        else:
-            avg_rate = 0
-            sem = 0
-        
-        tuning_curve.append(avg_rate)
-        tuning_sem.append(sem)
-    
-    # Find best frequency (stimulus that elicits highest response)
-    if len(tuning_curve) > 0 and np.any(np.array(tuning_curve) > 0):
-        best_stim_idx = np.argmax(tuning_curve)
-        best_stimulus = unique_stimuli[best_stim_idx]
-    else:
-        best_stimulus = unique_stimuli[0] if len(unique_stimuli) > 0 else None
-    
-    return unique_stimuli, tuning_curve, tuning_sem, best_stimulus
-
-def compute_go_nogo_coding(event_windows_data, stimuli_outcome_df, unit_idx, window=(-0.1, 0.5)):
-    """
-    Compute d' and ROC AUC for Go vs NoGo discrimination.
-    """
-    # Extract data from event_windows_data
-    event_windows_matrix, time_axis, valid_event_indices, event_stimuli_outcome_df, metadata = event_windows_data
-    
-    # Separate Go and NoGo trials
-    go_mask = np.isin(stimuli_outcome_df['outcome'], ['Hit', 'Miss'])
-    nogo_mask = np.isin(stimuli_outcome_df['outcome'], ['False Alarm', 'CR'])
-    
-    if np.sum(go_mask) == 0 or np.sum(nogo_mask) == 0:
-        return None, None, None
-    
-    # Find the time indices corresponding to the window
-    start_time, end_time = window
-    start_idx = np.argmin(np.abs(time_axis - start_time))
-    end_idx = np.argmin(np.abs(time_axis - end_time))
-    
-    # Get the unit's data for the specified window
-    unit_data = event_windows_matrix[unit_idx, start_idx:end_idx, :]  # [time × trials]
-    
-    # Average across time bins for each trial
-    trial_rates = np.mean(unit_data, axis=0)  # Average across time for each trial
-    
-    # Get rates for Go and NoGo trials
-    go_rates = trial_rates[go_mask]
-    nogo_rates = trial_rates[nogo_mask]
-    
-    # Compute d'
-    go_mean, go_std = np.mean(go_rates), np.std(go_rates)
-    nogo_mean, nogo_std = np.mean(nogo_rates), np.std(nogo_rates)
-    
-    # Pooled standard deviation
-    pooled_std = np.sqrt((go_std**2 + nogo_std**2) / 2)
-    d_prime = (go_mean - nogo_mean) / pooled_std if pooled_std > 0 else 0
-    
-    # Compute ROC AUC
-    try:
-        # Create labels: 1 for Go, 0 for NoGo
-        labels = np.concatenate([np.ones(len(go_rates)), np.zeros(len(nogo_rates))])
-        scores = np.concatenate([go_rates, nogo_rates])
-        roc_auc = roc_auc_score(labels, scores)
-    except:
-        roc_auc = 0.5
-    
-    return d_prime, roc_auc, (go_rates, nogo_rates)
-
-def compute_outcome_modulation(event_windows_data, stimuli_outcome_df, unit_idx, window=(-0.1, 0.5)):
-    """
-    Compare responses between rewarded (Hit) and non-rewarded (Miss/FA) trials.
-    """
-    # Extract data from event_windows_data
-    event_windows_matrix, time_axis, valid_event_indices, event_stimuli_outcome_df, metadata = event_windows_data
-    
-    # Separate rewarded and non-rewarded trials
-    rewarded_mask = stimuli_outcome_df['outcome'] == 'Hit'
-    non_rewarded_mask = np.isin(stimuli_outcome_df['outcome'], ['Miss', 'False Alarm'])
-    
-    if np.sum(rewarded_mask) == 0 or np.sum(non_rewarded_mask) == 0:
-        return None, None, None
-    
-    # Find the time indices corresponding to the window
-    start_time, end_time = window
-    start_idx = np.argmin(np.abs(time_axis - start_time))
-    end_idx = np.argmin(np.abs(time_axis - end_time))
-    
-    # Get the unit's data for the specified window
-    unit_data = event_windows_matrix[unit_idx, start_idx:end_idx, :]  # [time × trials]
-    
-    # Average across time bins for each trial
-    trial_rates = np.mean(unit_data, axis=0)  # Average across time for each trial
-    
-    # Get rates for rewarded and non-rewarded trials
-    rewarded_rates = trial_rates[rewarded_mask]
-    non_rewarded_rates = trial_rates[non_rewarded_mask]
-    
-    # Statistical test
-    try:
-        stat, p_value = stats.mannwhitneyu(rewarded_rates, non_rewarded_rates, alternative='two-sided')
-    except:
-        stat, p_value = 0, 1
-    
-    return p_value, (rewarded_rates, non_rewarded_rates), (np.mean(rewarded_rates), np.mean(non_rewarded_rates))
-
-def compute_choice_probability(event_windows_data, stimuli_outcome_df, unit_idx, window=(-0.1, 0.5)):
-    """
-    Calculate choice probability (CP) - trial-by-trial correlation between spike counts and Go/NoGo choice.
-    """
-    # Extract data from event_windows_data
-    event_windows_matrix, time_axis, valid_event_indices, event_stimuli_outcome_df, metadata = event_windows_data
-    
-    # Get Go trials only (where choice is relevant)
-    go_mask = np.isin(stimuli_outcome_df['outcome'], ['Hit', 'Miss'])
-    
-    if np.sum(go_mask) == 0:
-        return None, None
-    
-    # Find the time indices corresponding to the window
-    start_time, end_time = window
-    start_idx = np.argmin(np.abs(time_axis - start_time))
-    end_idx = np.argmin(np.abs(time_axis - end_time))
-    
-    # Get the unit's data for the specified window
-    unit_data = event_windows_matrix[unit_idx, start_idx:end_idx, :]  # [time × trials]
-    
-    # Average across time bins for each trial
-    trial_rates = np.mean(unit_data, axis=0)  # Average across time for each trial
-    
-    # Get firing rates for Go trials only
-    firing_rates = trial_rates[go_mask]
-    
-    # Create choice labels: 1 for Hit (correct Go), 0 for Miss (incorrect Go)
-    go_data = stimuli_outcome_df.loc[go_mask]
-    choices = (go_data['outcome'] == 'Hit').astype(int).values
-    
-    # Compute choice probability using ROC
-    try:
-        cp = roc_auc_score(choices, firing_rates)
-        # Convert to correlation-like measure (-1 to 1)
-        cp_corr = 2 * (cp - 0.5)
-    except:
-        cp = 0.5
-        cp_corr = 0
-    
-    return cp, cp_corr
-
-def compute_d_prime(event_windows_data, stimuli_outcome_df, unit_idx, condition1, condition2, window=(-0.1, 0.5)):
-    """
-    Compute d' between two conditions.
-    """
-    # Extract data from event_windows_data
-    event_windows_matrix, time_axis, valid_event_indices, event_stimuli_outcome_df, metadata = event_windows_data
-    
-    # Get trials for each condition
-    mask1 = stimuli_outcome_df['outcome'] == condition1
-    mask2 = stimuli_outcome_df['outcome'] == condition2
-    
-    if np.sum(mask1) == 0 or np.sum(mask2) == 0:
-        return None
-    
-    # Find the time indices corresponding to the window
-    start_time, end_time = window
-    start_idx = np.argmin(np.abs(time_axis - start_time))
-    end_idx = np.argmin(np.abs(time_axis - end_time))
-    
-    # Get the unit's data for the specified window
-    unit_data = event_windows_matrix[unit_idx, start_idx:end_idx, :]  # [time × trials]
-    
-    # Average across time bins for each trial
-    trial_rates = np.mean(unit_data, axis=0)  # Average across time for each trial
-    
-    # Get rates for each condition
-    rates1 = trial_rates[mask1]
-    rates2 = trial_rates[mask2]
-    
-    # Compute d'
-    mean1, std1 = np.mean(rates1), np.std(rates1)
-    mean2, std2 = np.mean(rates2), np.std(rates2)
-    
-    pooled_std = np.sqrt((std1**2 + std2**2) / 2)
-    d_prime = (mean1 - mean2) / pooled_std if pooled_std > 0 else 0
-    
-    return d_prime
-
-def compute_peri_event_rate(spike_matrix, event_times, unit_idx, window=(-0.1, 0.5), bin_size=0.01):
-    """
-    Compute average firing rate around event times for a single unit.
-    """
-    if len(event_times) == 0:
-        return 0
-    
-    n_bins = spike_matrix.shape[1]
-    total_rate = 0
-    valid_events = 0
-    
-    for t in event_times:
-        event_bin = int(t / bin_size)
-        start_bin = event_bin + int(window[0] / bin_size)
-        end_bin = event_bin + int(window[1] / bin_size)
-        
-        if start_bin < 0 or end_bin > n_bins:
-            continue
-            
-        segment = spike_matrix[unit_idx, start_bin:end_bin]
-        if len(segment) > 0:
-            total_rate += np.mean(segment)
-            valid_events += 1
-    
-    return total_rate / valid_events if valid_events > 0 else 0
-
-def compute_peri_event_rate_from_event_windows(event_windows_data, unit_idx, window=(-0.1, 0.5), bin_size=0.01):
-    """
-    Compute average firing rate around event times for a single unit using event windows data.
-    """
-    # Extract data from event_windows_data
-    event_windows_matrix, time_axis, valid_event_indices, event_stimuli_outcome_df, metadata = event_windows_data
-    
-    # Find the time indices corresponding to the window
-    start_time, end_time = window
-    start_idx = np.argmin(np.abs(time_axis - start_time))
-    end_idx = np.argmin(np.abs(time_axis - end_time))
-    
-    # Get the unit's data for the specified window
-    unit_data = event_windows_matrix[unit_idx, start_idx:end_idx, :]  # [time × trials]
-    # Average across time bins and trials
-    if unit_data.size > 0:
-        return np.mean(unit_data)
-    else:
-        return 0
-
-def fit_glm_single_unit(event_windows_data, stimuli_outcome_df, unit_idx, window=(-0.1, 0.5)):
-    """
-    Fit Generalized Linear Model (Poisson regression) to single neuron spike trains.
-    """
-    # Extract data from event_windows_data
-    event_windows_matrix, time_axis, valid_event_indices, event_stimuli_outcome_df, metadata = event_windows_data
-    
-    # Find the time indices corresponding to the window
-    start_time, end_time = window
-    start_idx = np.argmin(np.abs(time_axis - start_time))
-    end_idx = np.argmin(np.abs(time_axis - end_time))
-    
-    # Get the unit's data for the specified window
-    unit_data = event_windows_matrix[unit_idx, start_idx:end_idx, :]  # [time × trials]
-    
-    # Average across time bins for each trial
-    trial_rates = np.mean(unit_data, axis=0)  # Average across time for each trial
-    
-    # Create design matrix
-    design_matrix = []
-    spike_counts = []
-    
-    for idx, row in stimuli_outcome_df.iterrows():
-        # Get firing rate for this trial
-        trial_idx = idx  # Assuming the DataFrame index corresponds to trial order
-        if trial_idx < len(trial_rates):
-            rate = trial_rates[trial_idx]
-        else:
-            rate = 0
-        spike_counts.append(rate)
-        
-        # Create feature vector
-        features = []
-        
-        # Stimulus identity (one-hot encoding)
-        if 'stimulus' in row:
-            features.append(row['stimulus'])
-        
-        # Trial type (Go=1, NoGo=0)
-        trial_type = 1 if row['outcome'] in ['Hit', 'Miss'] else 0
-        features.append(trial_type)
-        
-        # Outcome (Hit=1, others=0)
-        outcome = 1 if row['outcome'] == 'Hit' else 0
-        features.append(outcome)
-        
-        design_matrix.append(features)
-    
-    if len(design_matrix) == 0:
-        return None, None
-    
-    # Convert to numpy arrays
-    X = np.array(design_matrix)
-    y = np.array(spike_counts)
-    
-    # Standardize features
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
-
-    # Fit Poisson regression
-    try:
-        model = PoissonRegressor(alpha=0.1, max_iter=1000)
-        model.fit(X_scaled, y)
-        
-        # Get coefficients
-        coefficients = model.coef_
-        intercept = model.intercept_
-        
-        # Compute R-squared
-        y_pred = model.predict(X_scaled)
-        ss_res = np.sum((y - y_pred) ** 2)
-        ss_tot = np.sum((y - np.mean(y)) ** 2)
-        r_squared = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
-        
-        return coefficients, (intercept, r_squared), y_pred, y
-    except:
-        return None, None
-
-def plot_advanced_unit_analysis(event_windows_data, stimuli_outcome_df, unit_idx, bin_size=0.01):
-#     """
-#     Create comprehensive plots for advanced single unit analysis.
-#     """
-#     # Create subplots
-#     fig = go.Figure()
-    pass
-    
-#     # 1. Stimulus selectivity
-#     stimuli, tuning_curve, tuning_sem, best_stim = compute_stimulus_selectivity(event_windows_data, stimuli_outcome_df, unit_idx)
-#     if stimuli is not None:
-#         fig.add_trace(go.Scatter(
-#             x=stimuli, y=tuning_curve, mode='lines+markers',
-#             name=f'Stimulus Tuning (Best: {best_stim:.2f})',
-#             line=dict(color='blue')
-#         ))
-    
-#     # 2. Go/NoGo coding
-#     d_prime, roc_auc, (go_rates, nogo_rates) = compute_go_nogo_coding(event_windows_data, stimuli_outcome_df, unit_idx)
-    
-#     # 3. Outcome modulation
-#     outcome_p, (rewarded_rates, non_rewarded_rates), (rewarded_mean, non_rewarded_mean) = compute_outcome_modulation(
-#         event_windows_data, stimuli_outcome_df, unit_idx
-#     )
-    
-#     # 4. Choice probability
-#     cp, cp_corr = compute_choice_probability(event_windows_data, stimuli_outcome_df, unit_idx)
-    
-#     # Update layout
-#     fig.update_layout(
-#         title=f'Advanced Analysis - Unit {unit_idx}<br>' +
-#               f'd\' = {d_prime:.3f}, ROC AUC = {roc_auc:.3f}, CP = {cp:.3f}<br>' +
-#               f'Outcome p = {outcome_p:.3g}, Reward modulation = {rewarded_mean:.2f} vs {non_rewarded_mean:.2f}',
-#         xaxis_title='Stimulus',
-#         yaxis_title='Firing Rate (spikes/s)',
-#         height=600
-#     )
-    
-#     return fig
-
-def plot_unit_psth(event_windows_data, display_window, unit_idx, sorted_pvals, unit_rank, outcome_filter="All", bin_size=0.005):
-    """Plot a single-unit PSTH aligned to events and compute significance metrics."""
-    # Ensure the function has a valid initial statement even if edits above change structure
-    # This avoids "Expected indented block" syntax errors.
-    pass
-    event_windows_matrix, time_axis, valid_event_indices, event_stimuli_outcome_df, metadata = event_windows_data
-    import streamlit as st
     # Get the unit's data
     unit_data = event_windows_matrix[unit_idx, :, :]  # Shape: [time × events]
     n_time_bins = event_windows_matrix.shape[1]
@@ -588,43 +254,7 @@ def plot_unit_psth(event_windows_data, display_window, unit_idx, sorted_pvals, u
     sec2bin = 1/bin_size
     unit_data = unit_data[zero_idx+int(display_window[0]*sec2bin):zero_idx+int(display_window[1]*sec2bin),:]
 
-    event_outcomes = None
-    if 'outcome' in event_stimuli_outcome_df.columns:
-        event_outcomes = event_stimuli_outcome_df['outcome'].values
-    
-    # Filter data by outcome if specified
-    if outcome_filter != "All" and event_outcomes is not None:
-        if outcome_filter == "Go":
-            hit_mask = event_outcomes == "Hit"
-            miss_mask = event_outcomes == "Miss"
-            outcome_mask = hit_mask | miss_mask
-        elif outcome_filter == "NoGo":
-            false_alarm_mask = event_outcomes == "False Alarm"
-            correct_rejection_mask = event_outcomes == "CR"
-            outcome_mask = false_alarm_mask | correct_rejection_mask
-        else:
-            outcome_mask = event_outcomes == outcome_filter
-        
-        if np.sum(outcome_mask) > 0:
-            unit_data = unit_data[:, outcome_mask]
-            filtered_outcomes = event_outcomes[outcome_mask]
-        else:
-            # If no events match the filter, return empty plot
-            psth_fig = go.Figure()
-            psth_fig.update_layout(
-                title=f"PSTH - Unit {unit_idx} ({outcome_filter}) - No data available",
-                xaxis_title="Time (s)",
-                yaxis_title="Firing Rate (spikes/s)",
-                xaxis=dict(constrain='domain'),
-                margin=dict(r=80),
-                plot_bgcolor='white',
-                paper_bgcolor='white'
-            )
-            return psth_fig
-    else:
-        filtered_outcomes = event_outcomes
-    
-    # Calculate PSTH statistics
+    # Calculate PSTH statistics (fallback to computing from matrices)
     if unit_data.shape[1] > 0:
         psth_mean = np.mean(unit_data, axis=1)  # Average across events
         psth_sem = np.std(unit_data, axis=1) / np.sqrt(unit_data.shape[1])  # SEM across events
@@ -723,1178 +353,668 @@ def plot_unit_psth(event_windows_data, display_window, unit_idx, sorted_pvals, u
         plot_bgcolor='white',
         paper_bgcolor='white'
     )
-    return psth_fig, psth_metrics
+    return psth_fig, psth_metrics, False
 
-def calculate_psth_metrics(unit_data, time_axis, baseline_window=(-0.5, 0)):
+
+def check_analysis_output_exists(selected_folder):
     """
-    Calculate comprehensive PSTH metrics for a single unit.
+    Check if analysis_output folder exists and contains data.
     
     Args:
-        unit_data: 2D array [time × events] for the unit
-        time_axis: 1D array of time points
-        baseline_window: tuple of (start, end) time for baseline calculation
+        selected_folder: Path to the analysis_output folder (or parent directory)
         
     Returns:
-        dict: Dictionary containing all PSTH metrics
+        tuple: (exists: bool, analysis_output_dir: str, parent_dir: str)
     """
-    # Calculate PSTH
-    psth_mean = np.mean(unit_data, axis=1)  # Average across events
-    psth_sem = np.std(unit_data, axis=1) / np.sqrt(unit_data.shape[1])  # SEM across events
+    if selected_folder is None:
+        return False, None, None
     
-    # Find baseline period
-    baseline_mask = (time_axis >= baseline_window[0]) & (time_axis < baseline_window[1])
-    if np.sum(baseline_mask) == 0:
-        baseline_mask = time_axis < 0  # Fallback to pre-stimulus period
-    
-    baseline_mean = np.mean(psth_mean[baseline_mask])
-    baseline_std = np.std(psth_mean[baseline_mask])
-    
-    # Find response period (post-stimulus)
-    response_mask = time_axis >= 0
-    response_data = psth_mean[response_mask]
-    response_times = time_axis[response_mask]
-    
-    if len(response_data) == 0:
-        return {
-            'onset_latency': np.nan,
-            'peak_latency': np.nan,
-            'response_magnitude': np.nan,
-            'fwhm': np.nan,
-            'rise_time': np.nan,
-            'decay_time': np.nan,
-            'suppression_metrics': np.nan,
-            'trial_variability': np.nan,
-            'signal_to_noise': np.nan,
-            'baseline_rate': baseline_mean,
-            'peak_rate': np.nan
-        }
-    
-    # 1. Determine response type (excitation vs suppression)
-    max_response = np.max(response_data)
-    min_response = np.min(response_data)
-    max_deviation_from_baseline = max_response - baseline_mean
-    min_deviation_from_baseline = baseline_mean - min_response
-    
-    if max_deviation_from_baseline >= min_deviation_from_baseline:
-        # Excitatory response (or no clear preference)
-        peak_idx = np.argmax(response_data)
-        peak_latency = response_times[peak_idx]
-        peak_rate = response_data[peak_idx]
-        response_magnitude = peak_rate - baseline_mean
-        response_type = "excitation"
+    # If selected_folder is already analysis_output, use it
+    if os.path.basename(selected_folder) == "analysis_output":
+        analysis_output_dir = selected_folder
+        parent_dir = os.path.dirname(selected_folder)
     else:
-        # Suppressive response
-        peak_idx = np.argmin(response_data)
-        peak_latency = response_times[peak_idx]
-        peak_rate = response_data[peak_idx]
-        response_magnitude = baseline_mean - peak_rate  # Positive value for suppression
-        response_type = "suppression"
+        # Otherwise, look for analysis_output in parent directory
+        parent_dir = selected_folder
+        analysis_output_dir = os.path.join(parent_dir, "analysis_output")
     
-    # 2. Onset latency (first time point where response deviates significantly from baseline)
-    if response_type == "excitation":
-        threshold = baseline_mean + 2 * baseline_std
-        onset_indices = np.where(response_data > threshold)[0]
-    else:  # suppression
-        threshold = baseline_mean - 2 * baseline_std
-        onset_indices = np.where(response_data < threshold)[0]
+    if not os.path.exists(analysis_output_dir):
+        return False, analysis_output_dir, parent_dir
     
-    onset_latency = response_times[onset_indices[0]] if len(onset_indices) > 0 else np.nan
+    # Check if it has data (tables or plots folders with files)
+    tables_dir = os.path.join(analysis_output_dir, "tables")
+    plots_dir = os.path.join(analysis_output_dir, "plots")
     
-    # 3. Full-width at half-maximum (FWHM)
-    if response_type == "excitation":
-        half_max = baseline_mean + (peak_rate - baseline_mean) / 2
-        above_half_max = response_data >= half_max
-    else:  # suppression
-        half_max = baseline_mean - (baseline_mean - peak_rate) / 2
-        above_half_max = response_data <= half_max
+    has_data = False
+    if os.path.exists(tables_dir):
+        has_data = len([f for f in os.listdir(tables_dir) if f.endswith('.csv')]) > 0
+    if not has_data and os.path.exists(plots_dir):
+        has_data = len([f for f in os.listdir(plots_dir) if f.endswith('.html')]) > 0
     
-    if np.sum(above_half_max) > 0:
-        first_half_max = np.where(above_half_max)[0][0]
-        last_half_max = np.where(above_half_max)[0][-1]
-        fwhm = response_times[last_half_max] - response_times[first_half_max]
-    else:
-        fwhm = np.nan
-    
-    # 4. Rise time (time from onset to peak)
-    if not np.isnan(onset_latency):
-        rise_time = peak_latency - onset_latency
-    else:
-        rise_time = np.nan
-    
-    # 5. Decay time (time from peak to return to baseline)
-    if response_type == "excitation":
-        decay_threshold = baseline_mean + baseline_std
-        decay_indices = np.where((response_data <= decay_threshold) & (response_times > peak_latency))[0]
-    else:  # suppression
-        decay_threshold = baseline_mean - baseline_std
-        decay_indices = np.where((response_data >= decay_threshold) & (response_times > peak_latency))[0]
-    
-    decay_time = response_times[decay_indices[0]] - peak_latency if len(decay_indices) > 0 else np.nan
-    
-    # 6. Suppression metrics (general response characteristics)
-    if response_type == "suppression":
-        # For suppressive responses, calculate suppression characteristics
-        suppression_mask = response_data < baseline_mean
-        suppression_magnitude = baseline_mean - np.min(response_data)
-        suppression_duration = np.sum(suppression_mask) * (time_axis[1] - time_axis[0]) if len(time_axis) > 1 else 0
-        suppression_metrics = {
-            'magnitude': suppression_magnitude,
-            'duration': suppression_duration,
-            'fraction_suppressed': np.sum(suppression_mask) / len(response_data)
-        }
-    else:
-        # For excitatory responses, calculate any suppression periods
-        suppression_mask = response_data < baseline_mean
-        if np.sum(suppression_mask) > 0:
-            suppression_magnitude = baseline_mean - np.min(response_data[suppression_mask])
-            suppression_duration = np.sum(suppression_mask) * (time_axis[1] - time_axis[0]) if len(time_axis) > 1 else 0
-            suppression_metrics = {
-                'magnitude': suppression_magnitude,
-                'duration': suppression_duration,
-                'fraction_suppressed': np.sum(suppression_mask) / len(response_data)
-            }
-        else:
-            suppression_metrics = {
-                'magnitude': 0,
-                'duration': 0,
-                'fraction_suppressed': 0
-            }
-    
-    # 7. Trial-to-trial variability (coefficient of variation)
-    trial_variability = np.std(unit_data, axis=1) / (np.mean(unit_data, axis=1) + 1e-10)  # Add small constant to avoid division by zero
-    mean_variability = np.mean(trial_variability[response_mask])
-    
-    # 8. Signal-to-noise ratio
-    signal = response_magnitude
-    noise = baseline_std
-    signal_to_noise = signal / (noise + 1e-10)  # Add small constant to avoid division by zero
-    
-    return {
-        'onset_latency': onset_latency,
-        'peak_latency': peak_latency,
-        'response_magnitude': response_magnitude,
-        'response_type': response_type,
-        'fwhm': fwhm,
-        'rise_time': rise_time,
-        'decay_time': decay_time,
-        'suppression_metrics': suppression_metrics,
-        'trial_variability': mean_variability,
-        'signal_to_noise': signal_to_noise,
-        'baseline_rate': baseline_mean,
-        'peak_rate': peak_rate
-    }
+    return has_data, analysis_output_dir, parent_dir
 
-def _create_matrix_hash(matrix, additional_params=None):
+def run_offline_analysis(parent_dir):
     """
-    Create a hash for caching based on matrix content and parameters.
-    """
-    # Use a subset of the matrix for hashing to improve performance
-    sample_data = matrix[::max(1, matrix.shape[0]//100), ::max(1, matrix.shape[1]//100), ::max(1, matrix.shape[2]//100)]
-    hash_input = f"{sample_data.shape}_{np.mean(sample_data):.6f}_{np.std(sample_data):.6f}"
-    
-    if additional_params:
-        hash_input += f"_{additional_params}"
-    
-    return hashlib.md5(hash_input.encode()).hexdigest()
-
-@st.cache_data(show_spinner="Computing p-values...")
-def compute_psth_pvalues_from_event_windows_cached(matrix_hash, event_windows_matrix, event_times, bin_size=0.005, window=(-0.1, 0.2)):
-    """
-    Cached version of p-values computation.
+    Run the offline analysis pipeline.
     
     Args:
-        matrix_hash: Hash of the matrix for cache invalidation
-        event_windows_matrix: 3D array [units × time × events]
-        event_times: 1D array of event times
-        bin_size: float, bin size in seconds
-        window: tuple, time window around event (start, end) in seconds
-        
-    Returns:
-        numpy array of p-values for each unit
-    """
-    
-    n_units = event_windows_matrix.shape[0]
-    n_time_bins = event_windows_matrix.shape[1]
-    n_events = event_windows_matrix.shape[2]
-    sec2bin = 1/bin_size
-    # Create time axis for the window
-    peri_event_window = np.linspace(window[0]*sec2bin, window[1]*sec2bin, n_time_bins)
-    pvals = []
-    
-    for unit_idx in range(n_units):
-        # Get the unit's data: [time × events]
-        unit_data = event_windows_matrix[unit_idx, :, :]
-        
-        # Calculate PSTH by averaging across events
-        psth_mean = np.mean(unit_data, axis=1)  # Shape: [time]
-        
-        # Find the index corresponding to time 0
-        zero_idx = np.argmin(np.abs(peri_event_window))
-        
-        # Split into pre and post event periods
-        pre = psth_mean[:zero_idx]
-        post = psth_mean[zero_idx:]
-        
-        # Perform Mann-Whitney U test
-        try:
-            stat, p = stats.mannwhitneyu(pre, post, alternative='two-sided')
-        except:
-            p = 1.0  # Default p-value if test fails
-        
-        pvals.append(p)
-    
-    return np.array(pvals)
-
-@st.cache_data(show_spinner="Computing unit metrics...")
-def compute_all_unit_metrics_cached(event_windows_data, stimuli_outcome_df, available_units_tuple, window):
-    """
-    Compute all metrics for available units and cache the results.
-    """
-    available_units = np.array(available_units_tuple)
-    
-    metrics = {
-        'cp_values': {},
-        'outcome_p_values': {},
-        'dprime_values': {}
-    }
-    
-    for unit_idx in available_units:
-        try:
-            cp_val, _ = compute_choice_probability(event_windows_data, stimuli_outcome_df, unit_idx, window)
-            metrics['cp_values'][unit_idx] = float(cp_val) if cp_val is not None else np.nan
-        except Exception:
-            metrics['cp_values'][unit_idx] = np.nan
-        
-        try:
-            p_val, *_ = compute_outcome_modulation(event_windows_data, stimuli_outcome_df, unit_idx, window)
-            metrics['outcome_p_values'][unit_idx] = float(p_val) if p_val is not None else np.nan
-        except Exception:
-            metrics['outcome_p_values'][unit_idx] = np.nan
-        
-        try:
-            d_val, _, _ = compute_go_nogo_coding(event_windows_data, stimuli_outcome_df, unit_idx, window)
-            metrics['dprime_values'][unit_idx] = float(d_val) if d_val is not None else np.nan
-        except Exception:
-            metrics['dprime_values'][unit_idx] = np.nan
-    
-    return metrics
-
-def compute_psth_pvalues_from_event_windows(event_windows_matrix, event_times, bin_size=0.005, window=(-1, 2)):
-    """
-    Compute p-values using event windows data for more accurate statistical analysis.
-    
-    Args:
-        event_windows_matrix: 3D array [units × time × events]
-        event_times: 1D array of event times
-        bin_size: float, bin size in seconds
-        window: tuple, time window around event (start, end) in seconds
-        
-    Returns:
-        numpy array of p-values for each unit
-    """
-    # Create hash for caching
-    matrix_hash = _create_matrix_hash(event_windows_matrix, f"{bin_size}_{window[0]}_{window[1]}")
-    
-    return compute_psth_pvalues_from_event_windows_cached(
-        matrix_hash, event_windows_matrix, event_times, bin_size, window
-    )
-
-@st.cache_data(show_spinner="Loading event windows data...")
-def load_event_windows_data_cached(folder, folder_mtime):
-    """
-    Cached version of event windows data loading with reduced memory precision (float32).
-    
-    Args:
-        folder (str): Directory containing the saved data
-        folder_mtime (float): Modification time of folder for cache invalidation
-        
-    Returns:
-        tuple: (event_windows_matrix, time_axis, valid_event_indices, stimuli_outcome_df, metadata) or None if not found
+        parent_dir: Path to the parent directory (catgt folder)
     """
     try:
-        # Load the 3D event windows matrix with float32 precision to save memory
-        event_windows_matrix = np.load(os.path.join(folder, "event_windows_matrix.npy")).astype(np.float32)
-        
-        # Load the time axis with float32 precision
-        time_axis = np.load(os.path.join(folder, "event_window_time_axis.npy")).astype(np.float32)
-        
-        # Load the valid event indices (keep as original dtype, typically int)
-        valid_event_indices = np.load(os.path.join(folder, "valid_event_indices.npy"))
-        
-        # Load the filtered stimuli_outcome DataFrame
-        stimuli_outcome_df = pd.read_csv(os.path.join(folder, "event_windows_stimuli_outcome.csv"))
-        
-        # Load metadata
-        metadata = {}
-        metadata_file = os.path.join(folder, "event_windows_metadata.txt")
-        if os.path.exists(metadata_file):
-            with open(metadata_file, 'r') as f:
-                for line in f:
-                    if ': ' in line:  # Add safety check
-                        key, value = line.strip().split(': ', 1)  # Split only on first occurrence
-                        metadata[key] = value
-        
-        return event_windows_matrix, time_axis, valid_event_indices, stimuli_outcome_df, metadata
+        import streamlit as st
+    except Exception:
+        st = None
+
+    progress_bar = None
+    status_placeholder = None
+    if st is not None:
+        progress_bar = st.progress(0, text="Starting offline analysis...")
+        status_placeholder = st.empty()
+        status_placeholder.info(f"Preparing to run analysis in: {parent_dir}")
+
+    def progress_fn(pct: int, msg: str = ""):
+        if progress_bar is not None:
+            progress_bar.progress(pct, text=msg or "Running offline analysis...")
+
+    def status_fn(msg: str):
+        if status_placeholder is not None:
+            status_placeholder.info(msg)
+
+    try:
+        from Analysis.NPXL_analysis.single_unit_offline_analysis.main import main
+        main(parent_dir=parent_dir, progress_fn=progress_fn, status_fn=status_fn)
+        if progress_bar:
+            progress_bar.progress(100, text="Offline analysis completed")
+            status_placeholder.success("Offline analysis completed successfully.")
+        return True, None
     except Exception as e:
-        print(f"Could not load event windows data: {e}")
-        return None
+        if progress_bar:
+            progress_bar.progress(100, text="Offline analysis failed")
+            status_placeholder.error(f"Offline analysis failed: {e}")
+        return False, str(e)
 
-def load_event_windows_data(folder):
-    """
-    Loads the event windows data and associated metadata.
-    
-    Args:
-        folder (str): Directory containing the saved data
-        
-    Returns:
-        tuple: (event_windows_matrix, time_axis, valid_event_indices, stimuli_outcome_df, metadata) or None if not found
-    """
-    if not folder or not os.path.exists(folder):
-        return None
-    
-    # Get folder modification time for cache invalidation
-    try:
-        folder_mtime = os.path.getmtime(folder)
-    except:
-        folder_mtime = 0
-    
-    return load_event_windows_data_cached(folder, folder_mtime)
-
-def plot_unit_heatmap(event_windows_data, display_window, unit_idx):
-    """
-    Create a heatmap visualization for a single unit from event windows data.
-    
-    Args:
-        event_windows_data: Tuple containing (event_windows_matrix, time_axis, valid_event_indices, event_stimuli_outcome_df, metadata)
-        display_window: Tuple of (start_time, end_time) for the display window
-        unit_idx: Index of the unit to plot
-        
-    Returns:
-        plotly.graph_objects.Figure: The heatmap figure
-    """
-    event_windows_matrix, time_axis, valid_event_indices, event_stimuli_outcome_df, metadata = event_windows_data
-    
-    # Create a new time axis that matches the current display_window
-    num_time_bins = event_windows_matrix.shape[1]
-    new_time_axis = np.linspace(display_window[0], display_window[1], num_time_bins)
-    
-    # Get the unit's data
-    unit_data = event_windows_matrix[unit_idx, :, :]  # Shape: [time × events]
-
-    # Get outcomes for the valid events
-    event_outcomes_for_raster = None
-    if 'outcome' in event_stimuli_outcome_df.columns:
-        event_outcomes_for_raster = event_stimuli_outcome_df['outcome'].values
-    
-    # Filter data by trial type
-    hit_mask = event_outcomes_for_raster == 'Hit'
-    miss_mask = event_outcomes_for_raster == "Miss"
-    false_alarm_mask = event_outcomes_for_raster == "False Alarm"
-    correct_rejection_mask = event_outcomes_for_raster == "CR"
-    
-    hit_data = unit_data[:, hit_mask]
-    miss_data = unit_data[:, miss_mask]
-    false_alarm_data = unit_data[:, false_alarm_mask]
-    correct_rejection_data = unit_data[:, correct_rejection_mask]
-    
-    # Order data: CR, FA, Miss, Hit
-    ordered_data = np.concatenate([correct_rejection_data, false_alarm_data, miss_data, hit_data], axis=1).T
-
-    def rgba_from_hex(hex_color, alpha=0.3):
-        """Convert hex color to rgba string with given alpha."""
-        hex_color = hex_color.lstrip('#')
-        lv = len(hex_color)
-        rgb = tuple(int(hex_color[i:i + lv // 3], 16) for i in range(0, lv, lv // 3))
-        return f"rgba({rgb[0]},{rgb[1]},{rgb[2]},{alpha})"
-
-    trial_type_colors = {
-        "CR": rgba_from_hex(COLOR_CR, 0.3),
-        "False Alarm": rgba_from_hex(COLOR_FA, 0.3),
-        "Miss": rgba_from_hex(COLOR_MISS, 0.3),
-        "Hit": rgba_from_hex(COLOR_HIT, 0.3)
-    }
-
-    # Build a list of trial types in the order of the rows in ordered_data
-    trial_types_ordered = (
-        ["CR"] * correct_rejection_data.shape[1] +
-        ["False Alarm"] * false_alarm_data.shape[1] +
-        ["Miss"] * miss_data.shape[1] +
-        ["Hit"] * hit_data.shape[1]
-    )
-
-    # Create the heatmap
-    fig = go.Figure()
-
-    fig.add_trace(go.Heatmap(
-        z=ordered_data,
-        x=new_time_axis,
-        y=np.arange(ordered_data.shape[1]),
-        colorbar=dict(title="Firing Rate", len=0.8)
-    ))
-
-    # Add colored rectangles for trial type indicators
-    for i, trial_type in enumerate(trial_types_ordered):
-        color = trial_type_colors.get(trial_type, "rgba(200,200,200,0.2)")
-        fig.add_shape(
-            type="rect",
-            xref="paper", yref="y",
-            x0=-0.02, x1=0,  # Just outside the heatmap
-            y0=i-0.5, y1=i+0.5,
-            fillcolor=color,
-            line=dict(width=0),
-            layer="above"
-        )
-
-    # Add legend for trial types
-    legend_items = []
-    for trial_type, color in trial_type_colors.items():
-        legend_items.append(
-            go.Scatter(
-                x=[None], y=[None],
-                mode='markers',
-                marker=dict(size=10, color=color),
-                legendgroup=trial_type,
-                showlegend=True,
-                name=trial_type
-            )
-        )
-    
-    # Add vertical line at x = 0
-    fig.add_vline(
-        x=0, 
-        line_dash="dash", 
-        line_color=COLOR_GRAY, 
-        line_width=2,
-        annotation_text="Event Onset",
-        annotation_position="top right"
-    )
-    
-    fig.update_layout(
-        title=f"Heatmap - Unit {unit_idx}",
-        xaxis_title="Time (s)",
-        yaxis_title="Trial",
-        xaxis=dict(constrain='domain'),
-        legend=dict(
-            orientation='h',
-            x=0.5,
-            y=1.1,
-            xanchor='center',
-            yanchor='top'
-        ),
-        margin=dict(r=80, t=100)
-    )
-    
-    for item in legend_items:
-        fig.add_trace(item)
-    
-    return fig
-
-def get_trial_statistics(event_windows_data, unit_idx):
-    """
-    Get trial statistics for a specific unit from event windows data.
-    
-    Args:
-        event_windows_data: Tuple containing (event_windows_matrix, time_axis, valid_event_indices, event_stimuli_outcome_df, metadata)
-        unit_idx: Index of the unit to analyze
-        
-    Returns:
-        dict: Dictionary containing trial counts for each outcome type
-    """
-    event_windows_matrix, time_axis, valid_event_indices, event_stimuli_outcome_df, metadata = event_windows_data
-    
-    # Get the unit's data
-    unit_data = event_windows_matrix[unit_idx, :, :]  # Shape: [time × events]
-
-    # Get outcomes for the valid events
-    event_outcomes_for_raster = None
-    if 'outcome' in event_stimuli_outcome_df.columns:
-        event_outcomes_for_raster = event_stimuli_outcome_df['outcome'].values
-    
-    # Filter data by trial type
-    hit_mask = event_outcomes_for_raster == 'Hit'
-    miss_mask = event_outcomes_for_raster == "Miss"
-    false_alarm_mask = event_outcomes_for_raster == "False Alarm"
-    correct_rejection_mask = event_outcomes_for_raster == "CR"
-    
-    hit_data = unit_data[:, hit_mask]
-    miss_data = unit_data[:, miss_mask]
-    false_alarm_data = unit_data[:, false_alarm_mask]
-    correct_rejection_data = unit_data[:, correct_rejection_mask]
-    
-    return {
-        'CR': correct_rejection_data.shape[1],
-        'FA': false_alarm_data.shape[1],
-        'Miss': miss_data.shape[1],
-        'Hit': hit_data.shape[1]
-    }
-
-def single_unit_analysis_panel(
-    event_windows_data, stimuli_outcome_df, selected_folder=None, bin_size=0.005, default_window=1.0):
+def single_unit_analysis_panel(selected_recording_dir=None, selected_area=None, raw_folder=None):
     import streamlit as st
     import numpy as np
-    from .npxl_single_unit_analysis import plot_unit_psth
+    # plot_unit_psth is defined in this same file, no need to import
     from Analysis.NPXL_analysis.population_analysis import plot_population_heatmap
 
-    event_times = stimuli_outcome_df['time'].values 
-    event_outcomes = stimuli_outcome_df['outcome'].values if 'outcome' in stimuli_outcome_df.columns else None
-    
-    
+    # Check if analysis output exists
+    has_analysis_data, analysis_output_dir, parent_dir = check_analysis_output_exists(selected_recording_dir)
+    if parent_dir is not None:
+        if st.button("🚀 Run single Unit Analysis", type="primary", key="run_analysis_btn"):
+            with st.spinner("Running offline analysis... This may take several minutes."):
+                success, error = run_offline_analysis(parent_dir)
+                if success:
+                    st.success("✅ Analysis completed successfully! Please refresh the page to see results.")
+                    st.rerun()
+                else:
+                    st.error(f"❌ Analysis failed: {error}")
     # Create tabs for different analysis types
-    tab1, tab2, tab3, qa_tab = st.tabs(["Basic PSTH", "Advanced Analysis", "GLM Analysis", "QA"])
+    tab1, tab2, tab3, qa_tab = st.tabs(["Basic PSTH", "Selectivity Analysis", "GLM Analysis", "QA"])
+    
+    # Show analysis status and run button if needed
+
     
     with tab1:
         st.header("Basic Analysis")
-        
-        # Control Panel Section
-        st.subheader("Analysis Controls")
-        control_col1, control_col2 = st.columns(2)
-        
-        
-        with control_col1:
-            peri_event = st.slider(
-                "PSTH Window Size", 
-                0.1, 3.0, default_window, step=0.10,
-                help="Time window around event onset (seconds)"
-            )
-            display_window = (-peri_event/2, peri_event/2)
-        
-        with control_col2:
-            bin_size_display = st.number_input(
-                "Bin Size (s)", 
-                min_value=0.001, max_value=0.1, value=bin_size, step=0.001,
-                help="Time bin size for PSTH calculation (read from metadata file)"
-            )
-
-        # P-value Analysis Section
-        st.subheader("Statistical Analysis")
-        
-        # Load event windows data for accurate p-value calculation (cached)
-        event_windows_data = None
-        if selected_folder is not None:
-            event_windows_data = load_event_windows_data(selected_folder)
-        
-        # Recompute p-values with current window (cached)
-        if event_windows_data is not None:
-            # Use event windows data for more accurate p-value calculation
-            event_windows_matrix, time_axis, valid_event_indices, event_stimuli_outcome_df, metadata = event_windows_data
-            # Calculate p-values using the full event windows data (cached)
-            pvals = compute_psth_pvalues_from_event_windows(event_windows_matrix, event_times, bin_size=bin_size_display, window=[-0.1, 0.3])
-
-        
-        sorted_indices = np.argsort(pvals)
-        sorted_pvals = pvals[sorted_indices]
-        
-        # Display statistics
-        stats_col1, stats_col2, stats_col3 = st.columns(3)
-        with stats_col1:
-            st.metric("Total Units", len(pvals))
-        with stats_col2:
-            significant_units = np.sum(pvals < 0.05)
-            st.metric("Significant Units", f"{significant_units}/{len(pvals)}")
-        with stats_col3:
-            significance_rate = (significant_units / len(pvals)) * 100 if len(pvals) > 0 else 0
-            st.metric("Significance Rate", f"{significance_rate:.1f}%")
+        units_metrics_df = None
+        units_metrics_df_sorted = None
+        pvals = None
+        sorted_indices = None
+        sorted_pvals = None
 
 
-        # # Save p-values and metrics with caching awareness
-        # if selected_folder is not None:
-        #     # Add buttons for saving data
-        #     save_col1, save_col2 = st.columns(2)
-        #     with save_col1:
-        #         if st.button("💾 Save P-values Only"):
-        #             try:
-        #                 save_pvalues_to_folder(pvals, selected_folder, window=[-0.1, 0.3], bin_size=bin_size_display)
-        #                 st.toast("P-values saved successfully")
-        #             except Exception as e:
-        #                 st.error(f"Error saving p-values: {e}")
+        # Load analysis output data if available
+        if has_analysis_data and analysis_output_dir is not None:
+            # Try to load unit metrics from analysis output (preferred)
+
+            if "OFC" in selected_area:
+                primary = "ofc_all_units_metrics.csv"
+            else:
+                primary = "acx_all_units_metrics.csv"
+
+            units_metrics_path = os.path.join(analysis_output_dir, "tables", primary)
+           
             
-        #     with save_col2:
-        #         if st.button("📊 Save PSTH Metrics"):
-        #             try:
-        #                 save_all_psth_metrics(event_windows_data, selected_folder, display_window, pvals)
-        #                 st.toast("PSTH metrics saved successfully")
-        #             except Exception as e:
-        #                 st.error(f"Error saving PSTH metrics: {e}")
-            
-            # Add cache management
-            cache_col1, cache_col2 = st.columns(2)
-            with cache_col1:
-                if st.button("🗑️ Clear Analysis Cache"):
-                    st.cache_data.clear()
-                    st.toast("Analysis cache cleared - next computation will be fresh")
-            with cache_col2:
-                st.caption("💡 Metrics are cached for faster performance")
+            if os.path.exists(units_metrics_path):
+                units_metrics_df = pd.read_csv(units_metrics_path)
+                st.info(f"📊 Loaded {len(units_metrics_df)} units from analysis output")
+                
+                # If p-values are present, use them instead of recomputing
+                if 'tone_active_p_val' in units_metrics_df.columns:
+                    pvals = units_metrics_df['tone_active_p_val'].values
+                    sorted_indices = np.argsort(pvals)
+                    sorted_pvals = pvals[sorted_indices]
+                    # sort dataframe by p-value order for consistent UI
+                    units_metrics_df_sorted = units_metrics_df.iloc[sorted_indices].reset_index(drop=True)
+                else:
+                    units_metrics_df_sorted = units_metrics_df.copy()
+        
+        # Display summary statistics
+        st.subheader("Analysis Summary")
+        summary_col1, summary_col2, summary_col3, summary_col4 = st.columns(4)
+        with summary_col1:
+            st.metric("Total Units", len(units_metrics_df))
+        if 'tone_active_p_val' in units_metrics_df.columns:
+            significant = units_metrics_df['tone_active_p_val'] < 0.05
+            with summary_col2:
+                st.metric("Tone Active Units", f"{significant.sum()}/{len(units_metrics_df)}")
+            with summary_col3:
+                significance_rate = (significant.sum() / len(units_metrics_df)) * 100 if len(units_metrics_df) > 0 else 0
+                st.metric("Tone Active Rate", f"{significance_rate:.1f}%")
+        if 'psth_response_type' in units_metrics_df.columns:
+            with summary_col4:
+                exc_count = (units_metrics_df['psth_response_type'] == 'excitation').sum()
+                st.metric("Excitatory Units", exc_count)
+
+
+        # # Load event windows data for accurate p-value calculation (cached)
+        # if event_windows_data is None:
+        #     data_folder = analysis_output_dir if analysis_output_dir is not None else selected_folder
+        #     if data_folder is not None:
+        #         event_windows_data = load_event_windows_data_base(data_folder)
+        
+        # # Recompute p-values only if not loaded from metrics table
+        # if pvals is None and event_windows_data is not None:
+        #     event_windows_matrix, time_axis, valid_event_indices, event_stimuli_outcome_df, metadata = event_windows_data
+        #     pvals = compute_psth_pvalues_from_event_windows(
+        #         event_windows_matrix,
+        #         event_times,
+        #         bin_size=bin_size_display,
+        #         window=[-0.1, 0.3],
+        #     )
+        #     sorted_indices = np.argsort(pvals)
+        #     sorted_pvals = pvals[sorted_indices]
+        
+        # # Display statistics
+        # stats_col1, stats_col2, stats_col3 = st.columns(3)
+        # with stats_col1:
+        #     st.metric("Total Units", len(pvals))
+        # with stats_col2:
+        #     significant_units = np.sum(pvals < 0.05)
+        #     st.metric("Significant Units", f"{significant_units}/{len(pvals)}")
+        # with stats_col3:
+        #     significance_rate = (significant_units / len(pvals)) * 100 if len(pvals) > 0 else 0
+        #     st.metric("Significance Rate", f"{significance_rate:.1f}%")
+
+
+        # # Cache management
+        #     cache_col1, cache_col2 = st.columns(2)
+        #     with cache_col1:
+        #         if st.button("🗑️ Clear Analysis Cache"):
+        #             st.cache_data.clear()
+        #             st.toast("Analysis cache cleared - next computation will be fresh")
+        #     with cache_col2:
+        #         st.caption("💡 Metrics are cached for faster performance")
 
 
         # Unit Selection Section
         st.subheader("Unit Selection")
-                # Unit selection controls
         unit_col1, unit_col2 = st.columns(2)
         
         with unit_col1:
-            unit_rank = st.slider(
-                "Unit Rank (by p-value)", 
-                0, len(sorted_pvals) - 1, 0,
-                help="Select unit by statistical significance rank"
-            )
-            unit_idx = sorted_indices[unit_rank]
+            if units_metrics_df_sorted is not None and sorted_pvals is not None:
+                unit_rank = st.slider(
+                    "Unit Rank (by p-value)", 
+                    0, len(sorted_pvals) - 1, 0,
+                    help="Select unit by statistical significance rank"
+                )
+                row = units_metrics_df_sorted.iloc[unit_rank]
+                unit_idx = int(row["unit_idx"]) if "unit_idx" in row else unit_rank
+                current_pval = sorted_pvals[unit_rank]
+            else:
+                unit_rank = 0
+                unit_idx = 0
+                current_pval = np.nan
         
         with unit_col2:
             st.metric("Selected Unit", unit_idx)
-            st.metric("P-value", f"{sorted_pvals[unit_rank]:.3g}")
-        
+            st.metric("P-value", f"{current_pval:.3g}" if not np.isnan(current_pval) else "N/A")
         # Visualization Section
         st.subheader("Visualizations")
         
-        if event_windows_data is not None:
-            # Create two columns for PSTH and raster plot
+        if units_metrics_df is not None:
+            # Create two columns: PSTH plot (from saved HTML) and metrics table from units_metrics_df
             viz_col1, viz_col2 = st.columns(2)
             
+            # --- Column 1: PSTH plot from saved HTML path ---
             with viz_col1:
-
-                outcome_filter = st.selectbox(
-                "Outcome Filter",
-                options=["All", "Go", "NoGo", "Hit", "Miss", "False Alarm", "CR"],
-                index=0,
-                help="Filter PSTH by specific outcome type")
-                psth_fig, psth_metrics = plot_unit_psth(event_windows_data, display_window, unit_idx, sorted_pvals, unit_rank, outcome_filter)
-                st.plotly_chart(psth_fig, use_container_width=True)
-                
-                # Display PSTH Metrics
-                st.subheader("PSTH Metrics")
-                metrics_col1, metrics_col2 = st.columns(2)
-                
-                # with metrics_col1:
-                #     st.metric("Onset Latency", f"{psth_metrics['onset_latency']:.3f}s" if not np.isnan(psth_metrics['onset_latency']) else "N/A")
-                #     st.metric("Peak Latency", f"{psth_metrics['peak_latency']:.3f}s" if not np.isnan(psth_metrics['peak_latency']) else "N/A")
-                #     st.metric("Response Magnitude", f"{psth_metrics['response_magnitude']:.2f} spikes/s" if not np.isnan(psth_metrics['response_magnitude']) else "N/A")
-                #     st.metric("FWHM", f"{psth_metrics['fwhm']:.3f}s" if not np.isnan(psth_metrics['fwhm']) else "N/A")
-                #     st.metric("Rise Time", f"{psth_metrics['rise_time']:.3f}s" if not np.isnan(psth_metrics['rise_time']) else "N/A")
-                
-                # with metrics_col2:
-                #     st.metric("Decay Time", f"{psth_metrics['decay_time']:.3f}s" if not np.isnan(psth_metrics['decay_time']) else "N/A")
-                #     st.metric("Trial Variability", f"{psth_metrics['trial_variability']:.3f}" if not np.isnan(psth_metrics['trial_variability']) else "N/A")
-                #     st.metric("Signal-to-Noise", f"{psth_metrics['signal_to_noise']:.2f}" if not np.isnan(psth_metrics['signal_to_noise']) else "N/A")
-                #     st.metric("Baseline Rate", f"{psth_metrics['baseline_rate']:.2f} spikes/s")
-                #     st.metric("Peak Rate", f"{psth_metrics['peak_rate']:.2f} spikes/s" if not np.isnan(psth_metrics['peak_rate']) else "N/A")
-                
-                # # Suppression metrics (if applicable)
-                # if psth_metrics['suppression_metrics']['magnitude'] > 0:
-                #     st.subheader("Suppression Metrics")
-                #     supp_col1, supp_col2, supp_col3 = st.columns(3)
-                #     with supp_col1:
-                #         st.metric("Suppression Magnitude", f"{psth_metrics['suppression_metrics']['magnitude']:.2f} spikes/s")
-                #     with supp_col2:
-                #         st.metric("Suppression Duration", f"{psth_metrics['suppression_metrics']['duration']:.3f}s")
-                #     with supp_col3:
-                #         st.metric("Fraction Suppressed", f"{psth_metrics['suppression_metrics']['fraction_suppressed']:.2f}")
+                html_path = None
+                if "plot_path_raw_psth" in units_metrics_df_sorted.columns:
+                    if pd.notna(row.get("plot_path_raw_psth", None)):
+                        html_path = row["plot_path_raw_psth"]
+                if html_path and os.path.exists(html_path):
+                    try:
+                        with open(html_path, "r", encoding="utf-8") as f:
+                            psth_render = f.read()
+                        components.html(psth_render, height=500, scrolling=False)
+                    except Exception as e:
+                        st.warning(f"Error loading PSTH plot: {e}")
+                else:
+                    st.info("No saved PSTH plot found for this unit.")
             
-            # with viz_col2:
-            #     # Create heatmap using the new function
-            #     heatmap_fig = plot_unit_heatmap(event_windows_data, display_window, unit_idx)
-            #     st.plotly_chart(heatmap_fig, use_container_width=True)
+                psth_cols = [
+                    ("psth_onset_latency", "Onset Latency", "s"),
+                    ("psth_peak_latency", "Peak Latency", "s"),
+                    ("psth_response_magnitude", "Response Magnitude", "spikes/s"),
+                    ("psth_response_type", "Response Type", ""),
+                    ("psth_fwhm", "FWHM", "s"),
+                    ("psth_rise_time", "Rise Time", "s"),
+                    ("psth_decay_time", "Decay Time", "s"),
+                    ("psth_trial_variability", "Trial Variability", ""),
+                    ("psth_signal_to_noise", "Signal-to-Noise", ""),
+                    ("psth_baseline_rate", "Baseline Rate", "spikes/s"),
+                    ("psth_peak_rate", "Peak Rate", "spikes/s"),
+                    ("psth_suppression_magnitude", "Suppression Magnitude", "spikes/s"),
+                    ("psth_suppression_duration", "Suppression Duration", "s"),
+                    ("psth_fraction_suppressed", "Fraction Suppressed", ""),
+                ]
+                mcol1, mcol2, mcol3 = st.columns(3)
+                cols_cycle = [mcol1, mcol2, mcol3]
+                for idx, (key, label, unit) in enumerate(psth_cols):
+                    if key in row and pd.notna(row[key]):
+                        col = cols_cycle[idx % 3]
+                        val = row[key]
+                        suffix = f" {unit}".strip()
+                        col.metric(label, f"{val:.3f}{(' ' + unit) if unit else ''}" if isinstance(val, (int, float, float)) else str(val))
+
+            with viz_col2:
+                heatmap_html_path = None
+                if "plot_path_heatmap" in units_metrics_df.columns:
+                    # Locate row by unit_idx column if exists
+                    if pd.notna(row.get("plot_path_heatmap", None)):
+                        heatmap_html_path = row["plot_path_heatmap"]
+                if heatmap_html_path and os.path.exists(heatmap_html_path):
+                    try:
+                        with open(heatmap_html_path, "r", encoding="utf-8") as f:
+                            heatmap_render = f.read()
+                        components.html(heatmap_render, height=500, scrolling=False)
+                    except Exception as e:
+                        st.warning(f"Error loading heatmap plot: {e}")
+                else:
+                    st.info("No saved heatmap plot found for this unit.")
+    #             # Create heatmap using the new function
+    #             heatmap_fig = plot_unit_heatmap(event_windows_data, display_window, unit_idx)
+    #             st.plotly_chart(heatmap_fig, use_container_width=True)
                 
-            #     # Heatmap statistics
-            #     trial_stats = get_trial_statistics(event_windows_data, unit_idx)
-            #     heatmap_stats_col1, heatmap_stats_col2, heatmap_stats_col3, heatmap_stats_col4 = st.columns(4)
-            #     with heatmap_stats_col1:
-            #         st.metric("CR", trial_stats['CR'])
-            #     with heatmap_stats_col2:
-            #         st.metric("FA", trial_stats['FA'])
-            #     with heatmap_stats_col3:
-            #         st.metric("Miss", trial_stats['Miss'])
-            #     with heatmap_stats_col4:
-            #         st.metric("Hit", trial_stats['Hit'])
+                # Heatmap statistics
+                heatmap_stats_col1, heatmap_stats_col2, heatmap_stats_col3, heatmap_stats_col4 = st.columns(4)
+                
+                # Prefer metrics from units_metrics_df if available for this unit
+                cr_val = row["trial_count_cr"] 
+                fa_val = row["trial_count_fa"] 
+                miss_val = row["trial_count_miss"] 
+                hit_val = row["trial_count_hit"] 
+                with heatmap_stats_col1:
+                    st.metric("CR", f"{cr_val:.0f}" if not pd.isna(cr_val) else "N/A")
+                with heatmap_stats_col2:
+                    st.metric("FA", f"{fa_val:.0f}" if not pd.isna(fa_val) else "N/A")
+                with heatmap_stats_col3:
+                    st.metric("Miss", f"{miss_val:.0f}" if not pd.isna(miss_val) else "N/A")
+                with heatmap_stats_col4:
+                    st.metric("Hit", f"{hit_val:.0f}" if not pd.isna(hit_val) else "N/A")
         else:
             st.warning("No event windows data available. Please ensure data is loaded.")
             
-            # Fallback to basic PSTH if no event windows data
-            st.subheader("Basic PSTH (Fallback)")
-            # Note: Fallback PSTH doesn't support metrics yet
-            st.warning("PSTH metrics not available in fallback mode")
-            psth_fig = plot_unit_psth(
-                event_windows_data, event_times, unit_idx,
-                bin_size=bin_size_display, window=display_window,
-                event_outcomes=event_outcomes
-            )
-            if isinstance(psth_fig, tuple):
-                psth_fig = psth_fig[0]  # Extract just the figure
-            st.plotly_chart(psth_fig, use_container_width=True)
     
-    # with tab2:
-    #     st.header("Advanced Single Unit Analysis")
+    with tab2:
+        st.header("Advanced Single Unit Analysis")
         
-    #     # Performance info
-    #     with st.expander("ℹ️ Performance Info"):
-    #         st.info("🚀 Metrics are cached for faster performance. Change parameters to trigger recomputation.")
-    #         st.caption(f"📊 Dataset: {event_windows_matrix.shape[0]} units × {event_windows_matrix.shape[2]} trials")
-        
-    #     # Filter for significant units
-    #     show_only_significant = st.checkbox("Show only significant units (p < 0.05)", value=False)
-        
-    #     # Get available units based on significance filter
-    #     if show_only_significant:
-    #         significant_mask = pvals < 0.05
-    #         available_units = np.where(significant_mask)[0]
-    #         if len(available_units) == 0:
-    #             st.warning("No significant units found. Showing all units.")
-    #             available_units = range(event_windows_matrix.shape[0])
-    #         else:
-    #             st.info(f"Showing {len(available_units)} significant units out of {len(pvals)} total units")
-    #     else:
-    #         available_units = range(event_windows_matrix.shape[0])
-        
-    #     # Analysis window (define before sorting so metrics reflect current window)
-    #     analysis_window = st.slider("Analysis window", 0.1, 2.0, 1.0, step=0.1, help="⚡ Cached - only recomputes when changed")
-    #     window = (-0.1, analysis_window)
-
-    #     # Unit sorting/selection
-    #     st.subheader("Unit Selection")
-    #     sort_by = st.selectbox(
-    #         "Sort units by",
-    #         ["Unit Index", "Choice Probability (CP)", "Outcome Modulation p-value", "Go/NoGo d'"] ,
-    #         index=0,
-    #         help="⚡ Cached metrics - fast sorting after first computation"
-    #     )
-
-    #     def _safe_cp(uidx):
-    #         try:
-    #             cp_val, _ = compute_choice_probability(event_windows_data, stimuli_outcome_df, uidx, window)
-    #             return float(cp_val) if cp_val is not None else np.nan
-    #         except Exception:
-    #             return np.nan
-
-    #     def _safe_outcome_p(uidx):
-    #         try:
-    #             p_val, *_ = compute_outcome_modulation(event_windows_data, stimuli_outcome_df, uidx, window)
-    #             return float(p_val) if p_val is not None else np.nan
-    #         except Exception:
-    #             return np.nan
-
-    #     def _safe_dprime(uidx):
-    #         try:
-    #             d_val, _, _ = compute_go_nogo_coding(event_windows_data, stimuli_outcome_df, uidx, window)
-    #             return float(d_val) if d_val is not None else np.nan
-    #         except Exception:
-    #             return np.nan
-
-    #     if len(available_units) > 0:
-    #         available_units = np.array(list(available_units), dtype=int)
+        if not has_analysis_data:
+            st.warning("⚠️ Analysis output not found. Please run the offline analysis first.")
+        else:
             
-    #         # Use cached metrics computation
-    #         cached_metrics = compute_all_unit_metrics_cached(
-    #             event_windows_data, stimuli_outcome_df, tuple(available_units), window
-    #         )
-            
-    #         cp_values = np.array([cached_metrics['cp_values'].get(u, np.nan) for u in available_units])
-    #         outcome_p_values = np.array([cached_metrics['outcome_p_values'].get(u, np.nan) for u in available_units])
-    #         dprime_values = np.array([cached_metrics['dprime_values'].get(u, np.nan) for u in available_units])
+            if "OFC" in selected_area:
+                area_selectivity = "ofc_selectivity_metrics.csv"
+            else:
+                area_selectivity = "acx_selectivity_metrics.csv"
+            # Load selectivity metrics
+            selectivity_path = os.path.join(analysis_output_dir, "tables", area_selectivity)
 
-    #         if sort_by == "Choice Probability (CP)":
-    #             # Descending CP (higher first), NaNs go to the end
-    #             order = np.argsort(np.where(np.isnan(cp_values), -np.inf, cp_values))
-    #             order = order[::-1]
-    #         elif sort_by == "Outcome Modulation p-value":
-    #             # Ascending p-value (smaller first), NaNs go to the end
-    #             order = np.argsort(np.where(np.isnan(outcome_p_values), np.inf, outcome_p_values))
-    #         elif sort_by == "Go/NoGo d'":
-    #             # Descending d' (higher first), NaNs go to the end
-    #             order = np.argsort(np.where(np.isnan(dprime_values), -np.inf, dprime_values))
-    #             order = order[::-1]
-    #         else:
-    #             # Natural order by unit index
-    #             order = np.argsort(available_units)
-
-    #         sorted_units = available_units[order]
-    #         sorted_cp_values = cp_values[order]
-    #         sorted_outcome_p_values = outcome_p_values[order]
-    #         sorted_dprime_values = dprime_values[order]
-
-    #         # Build labels with metrics for convenience
-    #         labels = []
-    #         for rank, u in enumerate(sorted_units):
-    #             cp_txt = f"{sorted_cp_values[rank]:.3f}" if np.isfinite(sorted_cp_values[rank]) else "NA"
-    #             p_txt = f"{sorted_outcome_p_values[rank]:.3g}" if np.isfinite(sorted_outcome_p_values[rank]) else "NA"
-    #             d_txt = f"{sorted_dprime_values[rank]:.3f}" if np.isfinite(sorted_dprime_values[rank]) else "NA"
-    #             labels.append(f"#{rank+1} • Unit {u} • d'={d_txt} • CP={cp_txt} • p={p_txt}")
-
-    #         default_index = 0
-    #         selection = st.selectbox("Select unit (sorted)", options=list(range(len(sorted_units))), format_func=lambda i: labels[i], index=default_index)
-    #         unit_idx_adv = int(sorted_units[selection])
-    #     else:
-    #         unit_idx_adv = 0
-    #     st.subheader("Stimulus Selectivity")
-    #     stimuli, tuning_curve, tuning_sem, best_stim = compute_stimulus_selectivity(
-    #         event_windows_data, stimuli_outcome_df, unit_idx_adv, window
-    #     )
-    #     if stimuli is not None:
-    #         fig_tuning = go.Figure()
-            
-    #         # Convert to numpy arrays for arithmetic operations
-    #         tuning_curve_array = np.array(tuning_curve)
-    #         tuning_sem_array = np.array(tuning_sem)
-            
-    #         # Add shaded area for error bars
-    #         fig_tuning.add_trace(go.Scatter(
-    #             x=np.concatenate([stimuli, stimuli[::-1]]),
-    #             y=np.concatenate([tuning_curve_array + tuning_sem_array, (tuning_curve_array - tuning_sem_array)[::-1]]),
-    #             fill='toself',
-    #             fillcolor=COLOR_BLUE_TRANSPARENT,
-    #             line=dict(color='rgba(255,255,255,0)'),
-    #             showlegend=False,
-    #             name='Error'
-    #         ))
-            
-    #         # Add main line
-    #         fig_tuning.add_trace(go.Scatter(
-    #             x=stimuli, y=tuning_curve, mode='lines+markers',
-    #             name=f'Best stimulus: {best_stim:.2f}',
-    #             line=dict(color=COLOR_BLUE, width=2),
-    #             marker=dict(color=COLOR_BLUE, size=6)
-    #         ))
-            
-    #         fig_tuning.update_layout(
-    #             title="Stimulus Tuning Curve",
-    #             xaxis_title="Stimulus",
-    #             yaxis_title="Firing Rate (spikes/s)",
-    #             plot_bgcolor='white',
-    #             paper_bgcolor='white'
-    #         )
-    #         st.plotly_chart(fig_tuning, use_container_width=True)
-    #         st.metric("Best stimulus", f"{best_stim:.2f}")
-    #     else:
-    #         st.write("No stimulus data available")
-    #     col1, col2 = st.columns(2)
-        
-    #     with col1:
-    #         st.subheader("Outcome Modulation")
-    #         outcome_p, (rewarded_rates, non_rewarded_rates), (rewarded_mean, non_rewarded_mean) = compute_outcome_modulation(
-    #             event_windows_data, stimuli_outcome_df, unit_idx_adv, window
-    #         )
-    #         if outcome_p is not None:
-    #             fig_outcome = go.Figure()
-    #             center_label_out = 'Reward Outcome'
-    #             fig_outcome.add_trace(
-    #                 go.Violin(
-    #                     x=[center_label_out] * len(rewarded_rates),
-    #                     y=rewarded_rates,
-    #                     name="Rewarded",
-    #                     side='negative',
-    #                     line_color=COLOR_HIT,
-    #                     fillcolor=COLOR_HIT,
-    #                     opacity=0.5,
-    #                     points='all',
-    #                     meanline_visible=True,
-    #                     scalegroup='outcome',
-    #                     alignmentgroup='outcome'
-    #                 )
-    #             )
-    #             fig_outcome.add_trace(
-    #                 go.Violin(
-    #                     x=[center_label_out] * len(non_rewarded_rates),
-    #                     y=non_rewarded_rates,
-    #                     name="Non-rewarded",
-    #                     side='positive',
-    #                     line_color=COLOR_FA,
-    #                     fillcolor=COLOR_FA,
-    #                     opacity=0.5,
-    #                     points='all',
-    #                     meanline_visible=True,
-    #                     scalegroup='outcome',
-    #                     alignmentgroup='outcome'
-    #                 )
-    #             )
-    #             fig_outcome.update_layout(
-    #                 title="Rewarded vs Non-rewarded Firing Rates",
-    #                 xaxis_title="",
-    #                 yaxis_title="Firing Rate (spikes/s)",
-    #                 violingap=0,
-    #                 violingroupgap=0,
-    #                 violinmode='overlay'
-    #             )
-    #             st.plotly_chart(fig_outcome, use_container_width=True)
-    #             st.metric("p-value", f"{outcome_p:.3g}")
-    #             st.metric("Rewarded mean", f"{rewarded_mean:.2f}")
-    #             st.metric("Non-rewarded mean", f"{non_rewarded_mean:.2f}")
-    #         else:
-    #             st.write("Insufficient data for outcome analysis")
-        
-    #     with col2:
-    #         st.subheader("Go/NoGo Coding")
-    #         d_prime, roc_auc, (go_rates, nogo_rates) = compute_go_nogo_coding(
-    #             event_windows_data, stimuli_outcome_df, unit_idx_adv, window
-    #         )
-    #         if d_prime is not None:
-    #             # Plot Go vs NoGo as split half-violin plots
-    #             fig_gng = go.Figure()
-    #             center_label = 'Go vs NoGo'
-    #             fig_gng.add_trace(
-    #                 go.Violin(
-    #                     x=[center_label] * len(go_rates),
-    #                     y=go_rates,
-    #                     name="Go",
-    #                     side='negative',
-    #                     line_color=COLOR_GO,
-    #                     fillcolor=COLOR_GO,
-    #                     opacity=0.5,
-    #                     points='all',
-    #                     meanline_visible=True,
-    #                     scalegroup='gng',
-    #                     alignmentgroup='gng'
-    #                 )
-    #             )
-    #             fig_gng.add_trace(
-    #                 go.Violin(
-    #                     x=[center_label] * len(nogo_rates),
-    #                     y=nogo_rates,
-    #                     name="NoGo",
-    #                     side='positive',
-    #                     line_color=COLOR_NOGO,
-    #                     fillcolor=COLOR_NOGO,
-    #                     opacity=0.5,
-    #                     points='all',
-    #                     meanline_visible=True,
-    #                     scalegroup='gng',
-    #                     alignmentgroup='gng'
-    #                 )
-    #             )
-    #             fig_gng.update_layout(
-    #                 title="Go vs NoGo Firing Rates",
-    #                 xaxis_title="",
-    #                 yaxis_title="Firing Rate (spikes/s)",
-    #                 violingap=0,
-    #                 violingroupgap=0,
-    #                 violinmode='overlay'
-    #             )
-    #             st.plotly_chart(fig_gng, use_container_width=True)
-    #             st.metric("d'", f"{d_prime:.3f}")
-    #             st.metric("ROC AUC", f"{roc_auc:.3f}")
-    #         else:
-    #             st.write("Insufficient data for Go/NoGo analysis")
-        
-    #     col3, col4 = st.columns(2)
-    #     with col3:
-    #         st.subheader("🦄🦜🦩🦥🦚")
-
-    #     with col4:
-    #         st.subheader("Choice Probability")
-    #         cp, cp_corr = compute_choice_probability(
-    #             event_windows_data, stimuli_outcome_df, unit_idx_adv, window
-    #         )
-    #         if cp is not None:
-    #             st.metric("Choice Probability", f"{cp:.3f}")
-    #             st.metric("CP Correlation", f"{cp_corr:.3f}")
+            if os.path.exists(selectivity_path):
+                selectivity_df = pd.read_csv(selectivity_path)
+                st.success(f"✅ Loaded selectivity metrics for {len(selectivity_df)} units")
                 
-    #             # Additional d' calculations
-    #             d_hit_miss = compute_d_prime(event_windows_data, stimuli_outcome_df, unit_idx_adv, "Hit", "Miss", window)
-    #             d_fa_cr = compute_d_prime(event_windows_data, stimuli_outcome_df, unit_idx_adv, "False Alarm", "CR", window)
-                
-    #             if d_hit_miss is not None:
-    #                 st.metric("d' (Hit vs Miss)", f"{d_hit_miss:.3f}")
-    #             if d_fa_cr is not None:
-    #                 st.metric("d' (FA vs CR)", f"{d_fa_cr:.3f}")
-    #         else:
-    #             st.write("Insufficient data for choice probability analysis")
-    
+                # Display summary
+                st.subheader("Selectivity Summary")
+                if len(selectivity_df) > 0:
+                    summary_cols = st.columns(4)
+                    with summary_cols[0]:
+                        if 'stimulus_selective' in selectivity_df.columns:
+                            st.metric("Stimulus Selective", selectivity_df['stimulus_selective'].sum())
+                    with summary_cols[1]:
+                        if 'outcome_modulated' in selectivity_df.columns:
+                            st.metric("Outcome Modulated", selectivity_df['outcome_modulated'].sum())
+                    with summary_cols[2]:
+                        if 'go_nogo_selective' in selectivity_df.columns:
+                            st.metric("Go/NoGo Selective", selectivity_df['go_nogo_selective'].sum())
+                    with summary_cols[3]:
+                        if 'choice_coding' in selectivity_df.columns:
+                            st.metric("Choice Coding", selectivity_df['choice_coding'].sum())
+                    
+                    # Unit selection
+                    st.subheader("Unit Selection")
+                    if 'unit_idx' in selectivity_df.columns:
+                        unit_options = selectivity_df['unit_idx'].tolist()
+                        selected_unit_idx = st.selectbox("Select Unit", unit_options, key="adv_unit_select")
+                        
+                        # Display metrics for selected unit
+                        unit_data = selectivity_df[selectivity_df['unit_idx'] == selected_unit_idx].iloc[0]
+                        
+                        st.subheader(f"Metrics for Unit {selected_unit_idx}")
+                        metrics_col1, metrics_col2 = st.columns(2)
+                        
+                        with metrics_col1:
+                            if 'go_nogo_dprime' in unit_data:
+                                st.metric("d' (Go/NoGo)", f"{unit_data['go_nogo_dprime']:.3f}")
+                            if 'go_nogo_roc_auc' in unit_data:
+                                st.metric("ROC AUC", f"{unit_data['go_nogo_roc_auc']:.3f}")
+                            if 'choice_probability' in unit_data:
+                                st.metric("Choice Probability", f"{unit_data['choice_probability']:.3f}")
+                        
+                        with metrics_col2:
+                            if 'outcome_p_value' in unit_data:
+                                st.metric("Outcome p-value", f"{unit_data['outcome_p_value']:.3g}")
+                            if 'best_stimulus' in unit_data:
+                                st.metric("Best Stimulus", f"{unit_data['best_stimulus']:.2f}")
+                        
+                        # Load and display plots if available
+                        plots_dir = os.path.join(analysis_output_dir, "plots")
+                        if os.path.exists(plots_dir):
+                            st.subheader("Saved Plots")
+                            # Check if tuning curve data exists
+                            if 'tuning_curve_stimuli' in unit_data and 'tuning_curve' in unit_data:
+                                try:
+                                    from Analysis.NPXL_analysis.NPXL_offline_analysis.visualization import plot_tuning_curve
+                                    
+                                    # Plot tuning curve (boundaries are read from session state inside the function)
+                                    region_name = selected_area if selected_area else "Unit"
+                                    fig = plot_tuning_curve(
+                                        tuning_curve_stimuli=unit_data['tuning_curve_stimuli'],
+                                        tuning_curve=unit_data['tuning_curve'],
+                                        tuning_curve_sem=unit_data.get('tuning_curve_sem'),
+                                        unit_idx=int(selected_unit_idx),
+                                        region_name=region_name,
+                                        use_log_scale=True
+                                    )
+                                    
+                                    st.plotly_chart(fig, use_container_width=True)
+                                except Exception as e:
+                                    st.warning(f"Could not display tuning curve: {e}")
+                            
+                            # Check for PSTH by stimulus plot
+                            stim_plot_path = os.path.join(plots_dir, "psth_by_stimulus", f"acx_unit_{selected_unit_idx}_psth_by_stimulus.html")
+                            if not os.path.exists(stim_plot_path):
+                                stim_plot_path = os.path.join(plots_dir, "psth_by_stimulus", f"ofc_unit_{selected_unit_idx}_psth_by_stimulus.html")
+                            
+                            if os.path.exists(stim_plot_path):
+                                with open(stim_plot_path, 'r', encoding='utf-8') as f:
+                                    st.components.v1.html(f.read(), height=600)
+                            
+                            # Check for PSTH by outcome plot
+                            outcome_plot_path = os.path.join(plots_dir, "psth_by_outcome", f"acx_unit_{selected_unit_idx}_psth_by_outcome.html")
+                            if not os.path.exists(outcome_plot_path):
+                                outcome_plot_path = os.path.join(plots_dir, "psth_by_outcome", f"ofc_unit_{selected_unit_idx}_psth_by_outcome.html")
+                            
+                            if os.path.exists(outcome_plot_path):
+                                with open(outcome_plot_path, 'r', encoding='utf-8') as f:
+                                    st.components.v1.html(f.read(), height=600)
+            else:
+                st.warning("Selectivity metrics file not found in analysis output.")
+        
     # with tab3:
     #     st.header("Generalized Linear Model Analysis")
         
-    #     # Performance info for GLM
-    #     st.info("🔬 GLM analysis uses cached p-values for unit filtering")
-        
-    #     # Filter for significant units (same as tab2)
-    #     show_only_significant_glm = st.checkbox("Show only significant units (p < 0.05)", value=False, key="glm_significant")
-        
-    #     # Get available units based on significance filter
-    #     if show_only_significant_glm:
-    #         significant_mask_glm = pvals < 0.05
-    #         available_units_glm = np.where(significant_mask_glm)[0]
-    #         if len(available_units_glm) == 0:
-    #             st.warning("No significant units found. Showing all units.")
-    #             available_units_glm = range(event_windows_matrix.shape[0])
+    #     if not has_analysis_data:
+    #         st.warning("⚠️ Analysis output not found. Please run the offline analysis first.")
+    #     else:
+    #         # Load comprehensive unit metrics
+    #         units_metrics_path = os.path.join(analysis_output_dir, "tables", "acx_all_units_metrics.csv")
+    #         if not os.path.exists(units_metrics_path):
+    #             units_metrics_path = os.path.join(analysis_output_dir, "tables", "ofc_all_units_metrics.csv")
+            
+    #         if os.path.exists(units_metrics_path):
+    #             units_metrics_df = pd.read_csv(units_metrics_path)
+    #             st.success(f"✅ Loaded comprehensive metrics for {len(units_metrics_df)} units")
+                
+    #             # Unit selection
+    #             st.subheader("Unit Selection")
+    #             if 'unit_idx' in units_metrics_df.columns:
+    #                 unit_options = units_metrics_df['unit_idx'].tolist()
+    #                 selected_unit_idx = st.selectbox("Select Unit", unit_options, key="glm_unit_select")
+                    
+    #                 # Display comprehensive metrics for selected unit
+    #                 unit_data = units_metrics_df[units_metrics_df['unit_idx'] == selected_unit_idx].iloc[0]
+                    
+    #                 st.subheader(f"Comprehensive Metrics for Unit {selected_unit_idx}")
+                    
+    #                 # Display key metrics in columns
+    #                 metrics_col1, metrics_col2, metrics_col3 = st.columns(3)
+                    
+    #                 with metrics_col1:
+    #                     st.write("**Response Properties**")
+    #                     if 'response_type' in unit_data:
+    #                         st.metric("Response Type", str(unit_data['response_type']))
+    #                     if 'onset_latency' in unit_data and not pd.isna(unit_data['onset_latency']):
+    #                         st.metric("Onset Latency", f"{unit_data['onset_latency']:.3f}s")
+    #                     if 'peak_latency' in unit_data and not pd.isna(unit_data['peak_latency']):
+    #                         st.metric("Peak Latency", f"{unit_data['peak_latency']:.3f}s")
+    #                     if 'response_magnitude' in unit_data and not pd.isna(unit_data['response_magnitude']):
+    #                         st.metric("Response Magnitude", f"{unit_data['response_magnitude']:.2f} spikes/s")
+                    
+    #                 with metrics_col2:
+    #                     st.write("**Selectivity Metrics**")
+    #                     if 'd_prime' in unit_data and not pd.isna(unit_data['d_prime']):
+    #                         st.metric("d' (Go/NoGo)", f"{unit_data['d_prime']:.3f}")
+    #                     if 'choice_probability' in unit_data and not pd.isna(unit_data['choice_probability']):
+    #                         st.metric("Choice Probability", f"{unit_data['choice_probability']:.3f}")
+    #                     if 'outcome_p_value' in unit_data and not pd.isna(unit_data['outcome_p_value']):
+    #                         st.metric("Outcome p-value", f"{unit_data['outcome_p_value']:.3g}")
+                    
+    #                 with metrics_col3:
+    #                     st.write("**PSTH Metrics**")
+    #                     if 'baseline_rate' in unit_data and not pd.isna(unit_data['baseline_rate']):
+    #                         st.metric("Baseline Rate", f"{unit_data['baseline_rate']:.2f} spikes/s")
+    #                     if 'peak_rate' in unit_data and not pd.isna(unit_data['peak_rate']):
+    #                         st.metric("Peak Rate", f"{unit_data['peak_rate']:.2f} spikes/s")
+    #                     if 'signal_to_noise' in unit_data and not pd.isna(unit_data['signal_to_noise']):
+    #                         st.metric("Signal-to-Noise", f"{unit_data['signal_to_noise']:.2f}")
+                    
+    #                 # Display full metrics table
+    #                 st.subheader("All Metrics")
+    #                 st.dataframe(unit_data.to_frame().T, use_container_width=True)
+                    
+    #                 # Load and display saved plots
+    #                 plots_dir = os.path.join(analysis_output_dir, "plots")
+    #                 if os.path.exists(plots_dir):
+    #                     # Check for heatmap
+    #                     heatmap_plot_path = os.path.join(plots_dir, "raw_psth", f"acx_unit_{selected_unit_idx}_heatmap.html")
+    #                     if not os.path.exists(heatmap_plot_path):
+    #                         heatmap_plot_path = os.path.join(plots_dir, "raw_psth", f"ofc_unit_{selected_unit_idx}_heatmap.html")
+                        
+    #                     if os.path.exists(heatmap_plot_path):
+    #                         st.subheader("Unit Heatmap")
+    #                         with open(heatmap_plot_path, 'r', encoding='utf-8') as f:
+    #                             st.components.v1.html(f.read(), height=600)
     #         else:
-    #             st.info(f"Showing {len(available_units_glm)} significant units out of {len(pvals)} total units")
-    #     else:
-    #         available_units_glm = range(event_windows_matrix.shape[0])
+    #             st.warning("Comprehensive unit metrics file not found in analysis output.")
         
-    #     unit_idx_glm = st.slider(
-    #         "Select Unit for GLM",
-    #         min_value=int(min(available_units_glm)),
-    #         max_value=int(max(available_units_glm)),
-    #         value=int(min(available_units_glm)),
-    #         step=1,
-    #         key="glm_unit"
-    #     )
-        
-    #     # GLM window
-    #     glm_window = st.slider("GLM analysis window", 0.1, 1.0, 0.5, step=0.1, key="glm_window", help="⚡ GLM computation is fast")
-    #     window_glm = (-glm_window/2, glm_window/2)
-        
-    #     # Fit GLM
-    #     coefficients, (intercept, r_squared), y_pred, y = fit_glm_single_unit(
-    #         event_windows_data, stimuli_outcome_df, unit_idx_glm, window_glm
-    #     )
-    #     # Plot predicted vs actual firing rates for GLM
-    #     if y_pred is not None and y is not None:
-    #         fig_glm_pred = go.Figure()
-    #         fig_glm_pred.add_trace(go.Scatter(
-    #             x=list(range(len(y))),
-    #             y=y,
-    #             mode='markers+lines',
-    #             name='Actual',
-    #             marker=dict(color='blue')
-    #         ))
-    #         fig_glm_pred.add_trace(go.Scatter(
-    #             x=list(range(len(y_pred))),
-    #             y=y_pred,
-    #             mode='markers+lines',
-    #             name='Predicted',
-    #             marker=dict(color='orange')
-    #         ))
-    #         fig_glm_pred.update_layout(
-    #             title="GLM: Actual vs Predicted Firing Rates",
-    #             xaxis_title="Trial",
-    #             yaxis_title="Firing Rate (spikes/s)",
-    #             legend=dict(x=0.01, y=0.99)
-    #         )
-    #         st.plotly_chart(fig_glm_pred, use_container_width=True)
-    #     if coefficients is not None:
-    #         st.metric("R²", f"{r_squared:.3f}")
-    #         st.metric("Intercept", f"{intercept:.3f}")
-            
-    #         # Display coefficients
-    #         st.subheader("GLM Coefficients")
-    #         feature_names = ["Stimulus", "Trial Type (Go=1)", "Outcome (Hit=1)"]
-    #         for i, (name, coef) in enumerate(zip(feature_names, coefficients)):
-    #             st.metric(name, f"{coef:.3f}")
-            
-    #         # Plot coefficient importance
-    #         fig_coef = go.Figure()
-    #         fig_coef.add_trace(go.Bar(
-    #             x=feature_names,
-    #             y=coefficients,
-    #             marker_color=['blue', 'green', 'red']
-    #         ))
-    #         fig_coef.update_layout(
-    #             title="GLM Coefficient Importance",
-    #             yaxis_title="Coefficient Value",
-    #             showlegend=False
-    #         )
-    #         st.plotly_chart(fig_coef, use_container_width=True)
-    #     else:
-    #         st.write("Could not fit GLM - insufficient data or convergence issues")
+  
     
     # with qa_tab:
-        import PIL.Image
-        import base64
-        from io import BytesIO
+    #     st.header("Quality Assurance")
+    #     import PIL.Image
+    #     import base64
+    #     from io import BytesIO
 
-        if selected_folder is not None:
-            parent_dir = os.path.dirname(selected_folder)
-            qa_folder = os.path.join(parent_dir, "bombcell")
-            st.write("QA folder:", qa_folder)
-            # Try the first path; if not found, try the second path
-            distribution_img_path = os.path.join(qa_folder, "quality_metrics_histograms.png")
-            classification_img_path = os.path.join(qa_folder, "waveforms_overlay.png")
-            if not (os.path.exists(distribution_img_path) and os.path.exists(classification_img_path)):
-                distribution_img_path = os.path.join(qa_folder, "quality_metrics_distribution.png")
-                classification_img_path = os.path.join(qa_folder, "waveform_classification.png")
-
-            def pil_image_to_data_uri(image):
-                """Convert a PIL Image to a data URI for plotly."""
-                buffered = BytesIO()
-                image.save(buffered, format="PNG")
-                img_bytes = buffered.getvalue()
-                img_b64 = base64.b64encode(img_bytes).decode()
-                return f"data:image/png;base64,{img_b64}"
-
-            def plot_image(img_path, title="Image"):
-                if os.path.exists(img_path):
-                    image = PIL.Image.open(img_path)
-                    data_uri = pil_image_to_data_uri(image)
-                    width, height = image.size
-                    fig_img = go.Figure()
-                    fig_img.add_layout_image(
-                        dict(
-                            source=data_uri,
-                            xref="x",
-                            yref="y",
-                            x=0,
-                            y=0,
-                            sizex=width,
-                            sizey=height,
-                            layer="below"
-                        )
-                    )
-                    fig_img.update_xaxes(visible=False, range=[0, width])
-                    fig_img.update_yaxes(visible=False, range=[height, 0])
-                    fig_img.update_layout(
-                        title=title,
-                        margin=dict(l=0, r=0, t=40, b=0),
-                        width=width,
-                        height=height
-                    )
-                    st.plotly_chart(fig_img, use_container_width=True)
-                else:
-                    st.warning(f"Image not found: {img_path}")
-            col1, col2 = st.columns(2)
-            with col1:      
-                plot_image(distribution_img_path, title="Quality Metrics Distribution")
-            with col2:
-                plot_image(classification_img_path, title="Waveform Classification")
-
+    #     if selected_folder is not None:
+    #         # Determine parent directory
+    #         if os.path.basename(selected_folder) == "analysis_output":
+    #             parent_dir = os.path.dirname(selected_folder)
+    #         else:
+    #             parent_dir = selected_folder
             
-            # Load TSV file as a numpy array of unit labels
-            units_labels_file =os.path.join(qa_folder, "unit_labels.tsv")
-            good_units = pd.read_csv(units_labels_file, sep="\t")
+    #         # Check for bombcell folder
+    #         qa_folder = os.path.join(parent_dir, "bombcell")
+    #         has_bombcell = os.path.exists(qa_folder)
+            
+    #         # Check for analysis output summary plots
+    #         if has_analysis_data and analysis_output_dir is not None:
+    #             st.subheader("Analysis Output Summary")
+    #             plots_dir = os.path.join(analysis_output_dir, "plots")
+                
+    #             # Try to load summary plots
+    #             summary_plots = []
+    #             if os.path.exists(plots_dir):
+    #                 # Check for ACx summary plots
+    #                 acx_dir = os.path.join(plots_dir, "acx")
+    #                 if os.path.exists(acx_dir):
+    #                     acx_metrics_plot = os.path.join(acx_dir, "acx_selectivity_metrics_summary.html")
+    #                     acx_class_plot = os.path.join(acx_dir, "acx_unit_classification_summary.html")
+    #                     if os.path.exists(acx_metrics_plot):
+    #                         st.write("**ACx Selectivity Metrics Summary**")
+    #                         with open(acx_metrics_plot, 'r', encoding='utf-8') as f:
+    #                             st.components.v1.html(f.read(), height=500)
+    #                     if os.path.exists(acx_class_plot):
+    #                         st.write("**ACx Unit Classification Summary**")
+    #                         with open(acx_class_plot, 'r', encoding='utf-8') as f:
+    #                             st.components.v1.html(f.read(), height=500)
+                    
+    #                 # Check for OFC summary plots
+    #                 ofc_dir = os.path.join(plots_dir, "ofc")
+    #                 if os.path.exists(ofc_dir):
+    #                     ofc_metrics_plot = os.path.join(ofc_dir, "ofc_selectivity_metrics_summary.html")
+    #                     ofc_class_plot = os.path.join(ofc_dir, "ofc_unit_classification_summary.html")
+    #                     if os.path.exists(ofc_metrics_plot):
+    #                         st.write("**OFC Selectivity Metrics Summary**")
+    #                         with open(ofc_metrics_plot, 'r', encoding='utf-8') as f:
+    #                             st.components.v1.html(f.read(), height=500)
+    #                     if os.path.exists(ofc_class_plot):
+    #                         st.write("**OFC Unit Classification Summary**")
+    #                         with open(ofc_class_plot, 'r', encoding='utf-8') as f:
+    #                             st.components.v1.html(f.read(), height=500)
+                    
+    #                 # Check for comparison plots
+    #                 comparison_dir = os.path.join(plots_dir, "comparison")
+    #                 if os.path.exists(comparison_dir):
+    #                     comparison_plot = os.path.join(comparison_dir, "ofc_vs_acx_selectivity_comparison.html")
+    #                     if os.path.exists(comparison_plot):
+    #                         st.write("**OFC vs ACx Comparison**")
+    #                         with open(comparison_plot, 'r', encoding='utf-8') as f:
+    #                             st.components.v1.html(f.read(), height=500)
+            
+    #         # Bombcell QA section
+    #         if has_bombcell:
+    #             st.subheader("Bombcell Quality Metrics")
+    #             st.write(f"QA folder: {qa_folder}")
+                
+    #         # Try the first path; if not found, try the second path
+    #         distribution_img_path = os.path.join(qa_folder, "quality_metrics_histograms.png")
+    #         classification_img_path = os.path.join(qa_folder, "waveforms_overlay.png")
+    #         if not (os.path.exists(distribution_img_path) and os.path.exists(classification_img_path)):
+    #             distribution_img_path = os.path.join(qa_folder, "quality_metrics_distribution.png")
+    #             classification_img_path = os.path.join(qa_folder, "waveform_classification.png")
 
-            good_units = good_units[good_units["UnitType"] == 1]
-            st.write("Indices of units with UnitType == 1:", good_units.index.tolist())
-            good_idxs = good_units.index.tolist()
+    #         def pil_image_to_data_uri(image):
+    #             """Convert a PIL Image to a data URI for plotly."""
+    #             buffered = BytesIO()
+    #             image.save(buffered, format="PNG")
+    #             img_bytes = buffered.getvalue()
+    #             img_b64 = base64.b64encode(img_bytes).decode()
+    #             return f"data:image/png;base64,{img_b64}"
 
-            waveforms = np.load(os.path.join(qa_folder, "templates._bc_rawWaveforms.npy"))
+    #         def plot_image(img_path, title="Image"):
+    #             if os.path.exists(img_path):
+    #                 image = PIL.Image.open(img_path)
+    #                 data_uri = pil_image_to_data_uri(image)
+    #                 width, height = image.size
+    #                 fig_img = go.Figure()
+    #                 fig_img.add_layout_image(
+    #                     dict(
+    #                         source=data_uri,
+    #                         xref="x",
+    #                         yref="y",
+    #                         x=0,
+    #                         y=0,
+    #                         sizex=width,
+    #                         sizey=height,
+    #                         layer="below"
+    #                     )
+    #                 )
+    #                 fig_img.update_xaxes(visible=False, range=[0, width])
+    #                 fig_img.update_yaxes(visible=False, range=[height, 0])
+    #                 fig_img.update_layout(
+    #                     title=title,
+    #                     margin=dict(l=0, r=0, t=40, b=0),
+    #                     width=width,
+    #                     height=height
+    #                 )
+    #                 st.plotly_chart(fig_img, use_container_width=True)
+    #             else:
+    #                 st.warning(f"Image not found: {img_path}")
+                
+    #         col1, col2 = st.columns(2)
+    #         with col1:      
+    #             plot_image(distribution_img_path, title="Quality Metrics Distribution")
+    #         with col2:
+    #             plot_image(classification_img_path, title="Waveform Classification")
 
+    #         # Load TSV file as a numpy array of unit labels
+    #         units_labels_file = os.path.join(qa_folder, "unit_labels.tsv")
+    #         if os.path.exists(units_labels_file):
+    #             good_units = pd.read_csv(units_labels_file, sep="\t")
+    #             good_units = good_units[good_units["UnitType"] == 1]
+    #             st.write("Indices of units with UnitType == 1:", good_units.index.tolist())
+    #             good_idxs = good_units.index.tolist()
 
-            def plot_waveforms(waveforms, idxs):
-                # Plot the waveforms[:,0,:] as a line plot using plotly.graph_objects
-                if waveforms.ndim == 3:
-                    # waveforms shape: (n_units, n_channels, n_samples)
-                    # waveforms[:,0,:] shape: (n_units, n_samples)
-                    n_units, n_samples = waveforms[idxs,:,:].shape
-                    fig_wave = go.Figure()
-                    # Plot each unit's waveform in transparent gray
-                    for i in range(n_units):
-                        fig_wave.add_trace(
-                            go.Scatter(
-                                y=waveforms[idxs, i, :],
-                                mode='lines',
-                                line=dict(color='rgba(100,100,100,0.2)', width=1),
-                                name=f'Unit {i}',
-                                showlegend=False
-                            )
-                        )
-                    # Add black average line
-                    avg_waveform = np.mean(waveforms[idxs, :, :], axis=0)
-                    fig_wave.add_trace(
-                        go.Scatter(
-                            y=avg_waveform,
-                            mode='lines',
-                            line=dict(color='black', width=2),
-                            name='Average',
-                            showlegend=True
-                        )
-                    )
-                    fig_wave.update_layout(
-                        title=f"Raw Waveforms (Channel {idxs})",
-                        xaxis_title="Sample",
-                        yaxis_title="Amplitude",
-                        showlegend=True,
-                        margin=dict(l=40, r=20, t=40, b=40)
-                    )
-                    st.plotly_chart(fig_wave, use_container_width=True)
-                else:
-                    st.warning("Waveforms array does not have expected 3D shape.")
+    #             waveforms_file = os.path.join(qa_folder, "templates._bc_rawWaveforms.npy")
+    #             if os.path.exists(waveforms_file):
+    #                 waveforms = np.load(waveforms_file)
+
+    #                 def plot_waveforms(waveforms, idxs):
+    #                     # Plot the waveforms[:,0,:] as a line plot using plotly.graph_objects
+    #                     if waveforms.ndim == 3:
+    #                         # waveforms shape: (n_units, n_channels, n_samples)
+    #                         # waveforms[:,0,:] shape: (n_units, n_samples)
+    #                         n_units, n_samples = waveforms[idxs,:,:].shape
+    #                         fig_wave = go.Figure()
+    #                         # Plot each unit's waveform in transparent gray
+    #                         for i in range(n_units):
+    #                             fig_wave.add_trace(
+    #                                 go.Scatter(
+    #                                     y=waveforms[idxs, i, :],
+    #                                     mode='lines',
+    #                                     line=dict(color='rgba(100,100,100,0.2)', width=1),
+    #                                     name=f'Unit {i}',
+    #                                     showlegend=False
+    #                                 )
+    #                             )
+    #                         # Add black average line
+    #                         avg_waveform = np.mean(waveforms[idxs, :, :], axis=0)
+    #                         fig_wave.add_trace(
+    #                             go.Scatter(
+    #                                 y=avg_waveform,
+    #                                 mode='lines',
+    #                                 line=dict(color='black', width=2),
+    #                                 name='Average',
+    #                                 showlegend=True
+    #                             )
+    #                         )
+    #                         fig_wave.update_layout(
+    #                             title=f"Raw Waveforms (Channel {idxs})",
+    #                             xaxis_title="Sample",
+    #                             yaxis_title="Amplitude",
+    #                             showlegend=True,
+    #                             margin=dict(l=40, r=20, t=40, b=40)
+    #                         )
+    #                         st.plotly_chart(fig_wave, use_container_width=True)
+    #                     else:
+    #                         st.warning("Waveforms array does not have expected 3D shape.")
        
-       
-        for idx in good_idxs[:10]:
-            plot_waveforms(waveforms, idx)
+    #                 for idx in good_idxs[:10]:
+    #                     plot_waveforms(waveforms, idx)
+    #         else:
+    #             st.info("Bombcell folder not found. Only analysis output summary is available.")
+    #     else:
+    #         st.warning("No folder selected. Please select an analysis output folder.")

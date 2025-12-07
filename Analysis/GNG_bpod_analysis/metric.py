@@ -16,7 +16,43 @@ from Analysis.GNG_bpod_analysis.GNG_bpod_general import get_plotly_config
 # Function to calculate the d prime
 def d_prime(selected_data, index=0, t=10, plot=False, filter_fa_equal_hit=None):
     from Analysis.GNG_bpod_analysis.licking_and_outcome import licking_rate
-    rates, frac = licking_rate(selected_data, index, t=t, plot=False)
+
+    # Decide whether to filter Early Response trials at the trial level
+    filter_early = get_global_early_response_filter()
+
+    data_for_rates = selected_data
+    rate_index = index
+
+    if filter_early:
+        try:
+            # Work on a single-session copy so we don't mutate the original DataFrame
+            session_df = selected_data.loc[[index]].copy().reset_index(drop=True)
+
+            trials_val = session_df.at[0, "TrialTypes"]
+            outcomes_val = session_df.at[0, "Outcomes"]
+
+            trialtypes = to_array(trials_val)
+            outcomes = to_array(outcomes_val)
+
+            if len(trialtypes) == len(outcomes) and len(outcomes) > 0:
+                early_mask = np.array(
+                    ['Early Response' not in str(o) for o in outcomes],
+                    dtype=bool,
+                )
+                # Apply mask only if it matches length
+                if early_mask.size == len(trialtypes):
+                    trialtypes = trialtypes[early_mask]
+                    outcomes = outcomes[early_mask]
+                    session_df.at[0, "TrialTypes"] = str(trialtypes.tolist())
+                    session_df.at[0, "Outcomes"] = str(outcomes.tolist())
+                    data_for_rates = session_df
+                    rate_index = 0
+        except Exception:
+            # On any issue, fall back to unfiltered data
+            data_for_rates = selected_data
+            rate_index = index
+
+    rates, frac = licking_rate(data_for_rates, index=rate_index, t=t, plot=False)
     
 
     # Ensure the DataFrame has valid numeric data

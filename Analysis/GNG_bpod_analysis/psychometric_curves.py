@@ -1,8 +1,11 @@
 from Analysis.GNG_bpod_analysis.licking_and_outcome import preprocess_stimuli_outcomes, compute_lick_rate
 from Analysis.GNG_bpod_analysis.metric import *
 # Removed wildcard import to avoid circular dependency
-from Analysis.GNG_bpod_analysis.GNG_bpod_general import get_plotly_config
-from Analysis.GNG_bpod_analysis.GNG_bpod_general import get_sessions_for_animal
+from Analysis.GNG_bpod_analysis.GNG_bpod_general import (
+    get_plotly_config,
+    get_sessions_for_animal,
+    get_global_early_response_filter,
+)
 import Analysis.GNG_bpod_analysis.colors as colors
 import plotly.graph_objects as go
 import numpy as np
@@ -10,10 +13,6 @@ import streamlit as st
 import pandas as pd
 import altair as alt
 from scipy.optimize import curve_fit
-
-# -------------------------------------------------------------------
-# LOW-LEVEL HELPERS
-# -------------------------------------------------------------------
 def single_sigmoid_fit(x, y, *, x_boundary: float = 1.0):
     """
     Classic monotone psychometric.  Returns:
@@ -167,8 +166,26 @@ def psychometric_curve(selected_data, index, plot=True):
     Processes psychometric data, fits a sigmoid curve, and plots the psychometric curve.
     """
     try:
+        # Decide whether to filter Early Response trials (shared with multi-session calls)
+        filter_early = get_global_early_response_filter()
+
         # Extract and preprocess data
         stimuli, outcomes = preprocess_stimuli_outcomes(selected_data, index)
+
+        # Optionally filter out 'Early Response' trials before computing lick rates
+        if filter_early:
+            try:
+                early_mask = np.array(
+                    ['Early Response' not in str(o) for o in outcomes],
+                    dtype=bool,
+                )
+                if len(early_mask) == len(stimuli):
+                    stimuli = stimuli[early_mask]
+                    outcomes = outcomes[early_mask]
+            except Exception:
+                # If anything goes wrong, fall back to unfiltered data
+                pass
+
         unique_stimuli, lick_rates, catch_stimuli, catch_lick_rates = compute_lick_rate(stimuli, outcomes)
         unique_stimuli = np.concatenate((unique_stimuli, catch_stimuli))
         lick_rates = np.concatenate((lick_rates, catch_lick_rates))

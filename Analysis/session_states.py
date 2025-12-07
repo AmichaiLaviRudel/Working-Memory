@@ -51,7 +51,7 @@ def initialize_session_state():
     if 'low_boundary' not in st.session_state:
         st.session_state.low_boundary = 0.983
     if 'high_boundary' not in st.session_state:
-        st.session_state.high_boundary = 1.5
+        st.session_state.high_boundary = 1.525
 
     # Global preference: filter bins where FA rate = Hit rate = 100%
     if 'filter_fa_equal_hit' not in st.session_state:

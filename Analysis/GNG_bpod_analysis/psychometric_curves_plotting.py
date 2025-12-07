@@ -6,11 +6,14 @@ import Analysis.GNG_bpod_analysis.colors as colors
 import numpy as np
 
 from Analysis.GNG_bpod_analysis.licking_and_outcome import preprocess_stimuli_outcomes, compute_lick_rate
-from Analysis.GNG_bpod_analysis.GNG_bpod_general import get_sessions_for_animal, getNameAndSession
-from Analysis.GNG_bpod_analysis.GNG_bpod_general import get_plotly_config
+from Analysis.GNG_bpod_analysis.GNG_bpod_general import (
+    get_sessions_for_animal,
+    getNameAndSession,
+    get_plotly_config,
+    get_global_early_response_filter,
+)
 from statsmodels.stats.multitest import multipletests
 from scipy.stats import ttest_rel, ttest_ind, wilcoxon
-
 
 def remove_outlier_sessions(project_data, d_prime_threshold=1.0, t=10, show_details=False):
     """
@@ -147,7 +150,7 @@ def filter_and_prepare_data(project_data, n_bd, n_indices):
     return filtered_df.iloc[last_n_indices].reset_index()
 
 
-def compute_avg_lick_rates(filtered_df):
+def compute_avg_lick_rates(filtered_df, filter_early_response: bool):
     """Process filtered dataframe and compute lick rates."""
     all_lick_rates = []
     all_stimuli = []
@@ -157,6 +160,21 @@ def compute_avg_lick_rates(filtered_df):
 
         name, session = getNameAndSession(filtered_df, index)
         stimuli, outcomes = preprocess_stimuli_outcomes(filtered_df, index)
+
+        # Optionally filter out 'Early Response' trials before computing lick rates
+        if filter_early_response:
+            try:
+                early_mask = np.array(
+                    ['Early Response' not in str(o) for o in outcomes],
+                    dtype=bool,
+                )
+                if len(early_mask) == len(stimuli):
+                    stimuli = stimuli[early_mask]
+                    outcomes = outcomes[early_mask]
+            except Exception:
+                # If anything goes wrong, fall back to unfiltered data
+                pass
+
         unique_stimuli, lick_rates, catch_stimuli, catch_lick_rates = compute_lick_rate(stimuli, outcomes)
         # Concatenate stimuli and lick rates
         unique_stimuli = np.concatenate((unique_stimuli, catch_stimuli))
@@ -242,6 +260,10 @@ def plot_psychometric_curves_with_boundaries(project_data, N_Boundaries, n_indic
             t=t,
             show_details=False
         )
+
+    # Decide whether to filter Early Response trials for these aggregated plots
+    filter_early = get_global_early_response_filter()
+
     fig = go.Figure()
     normalize_avg = st.checkbox("Normalize average response", value=False, 
                                 key=f"normalize_avg_{N_Boundaries}_{n_indices}")
@@ -257,7 +279,9 @@ def plot_psychometric_curves_with_boundaries(project_data, N_Boundaries, n_indic
             filtered_df = filter_and_prepare_data(project_data, n_bd, n_indices)
             if filtered_df is None:
                 continue
-            common_stimuli, interpolated_lick_rates, individual_traces = compute_avg_lick_rates(filtered_df)
+            common_stimuli, interpolated_lick_rates, individual_traces = compute_avg_lick_rates(
+                filtered_df, filter_early_response=filter_early
+            )
             if common_stimuli is None:
                 continue
             
@@ -344,7 +368,9 @@ def plot_psychometric_curves_with_boundaries(project_data, N_Boundaries, n_indic
         st.error("Neither 'Unique_Stimuli_Values' nor 'Stimuli' column found in data")
         return
     
-    common_stimuli, interpolated_lick_rates, individual_traces = compute_avg_lick_rates(filtered_df)
+    common_stimuli, interpolated_lick_rates, individual_traces = compute_avg_lick_rates(
+        filtered_df, filter_early_response=filter_early
+    )
     
     # Default stimulus values
     if common_stimuli is None:

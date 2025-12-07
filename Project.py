@@ -5,6 +5,7 @@ import traceback
 import os
 import runpy
 from Analysis.GNG_bpod_analysis.colors import get_subject_color_map
+from Analysis.GNG_bpod_analysis.GNG_bpod_general import render_global_early_response_filter_checkbox
 from Analysis.session_states import initialize_session_state
 initialize_session_state()
 
@@ -94,7 +95,8 @@ def current_project_overview(existing_projects, selected_project, path, types):
                     width = "medium", help = "Types of trials", disabled = True
                 ),
                 "Outcomes":         st.column_config.Column(
-                    width = "medium", help = "Outcomes of trials", disabled = True            ),
+                    width = "medium", help = "Outcomes of trials", disabled = True
+                ),
                 "Stimuli":          st.column_config.Column(
                     width = "medium", help = "Stimuli used in trials", disabled = True
                 ),
@@ -280,6 +282,7 @@ st.divider()
 
 # Analysis section header
 st.title("Analysis")
+render_global_early_response_filter_checkbox()
 
 
 # Run analysis for each project type

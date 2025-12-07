@@ -44,17 +44,35 @@ def gng_bpod_analysis(project_data, index):
         st.write(st.session_state.analysis_type)
 
         try:
-            df_go_first_licks, df_no_go_first_licks, lick_by_stimulus = process_and_plot_lick_data(project_data, index, plot=True)
+            df_go_first_licks, df_no_go_first_licks, lick_by_stimulus = process_and_plot_lick_data(
+                project_data,
+                index,
+                plot=True,
+            )
             if st.session_state.analysis_type == 'Behavior-Bpod GUI':
-                plot_first_lick_by_stimulus(project_data, index, plot=True)
+                plot_first_lick_by_stimulus(
+                    project_data,
+                    index,
+                    plot=True,
+                )
                 try:
                     st.subheader("First Lick Latency Analysis")
-                    plot_first_lick_latency(project_data, index, df_go_first_licks, df_no_go_first_licks)
+                    plot_first_lick_latency(
+                        project_data,
+                        index,
+                        df_go_first_licks,
+                        df_no_go_first_licks,
+                        plot=True,
+                    )
                 except Exception as e:
                     st.warning(f"something went wrong with latency analysis :|\n\n{e}")
                     st.text(traceback.format_exc())
             elif st.session_state.analysis_type == 'Educage':
-                plot_n_lick_by_stimulus(project_data, index, plot=True)
+                plot_n_lick_by_stimulus(
+                    project_data,
+                    index,
+                    plot=True,
+                )
 
         except Exception as e:
             st.warning(f"something went wrong with latency analysis :|\n\n{e}")
@@ -162,6 +180,7 @@ def gng_bpod_analysis_multi_session(project_data, index):
         
         try:
             st.subheader(f"Psychometric Curves - {animal_name} (1 Boundary)")
+            # Show Early Response filter checkbox only once; subsequent calls reuse its value.
             plot_psychometric_curves_with_boundaries(animal_data, N_Boundaries = 1, n_indices = n_indices, 
                                                     filter_outliers=filter_outliers, 
                                                     d_prime_threshold=d_prime_threshold, 
@@ -266,6 +285,7 @@ def gng_bpod_analysis_multi_animal(project_data, index):
         n_indices_multi = st.slider("Number of indices to include", 1, 10, 2, 1, key="n_indices_multi")
         
         try:
+            # Show Early Response filter checkbox only for the first call in this section.
             plot_psychometric_curves_with_boundaries(project_data, N_Boundaries = 1, n_indices = n_indices_multi, 
                                                     filter_outliers=filter_outliers, 
                                                     d_prime_threshold=d_prime_threshold, 

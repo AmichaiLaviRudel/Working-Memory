@@ -1,6 +1,11 @@
 # Removed imports to avoid circular dependency
 from typing import Any
-from Analysis.GNG_bpod_analysis.GNG_bpod_general import filter_valid_arrays, parse_stimuli, filter_out_catch_and_early_response
+from Analysis.GNG_bpod_analysis.GNG_bpod_general import (
+    filter_valid_arrays,
+    parse_stimuli,
+    filter_out_catch_and_early_response,
+    get_global_early_response_filter,
+)
 import Analysis.GNG_bpod_analysis.colors as colors
 from Analysis.GNG_bpod_analysis.colors import COLOR_FA, OUTCOME_COLOR_MAP, COLOR_ACCENT, COLOR_GRAY, COLOR_GO, COLOR_NOGO, COLOR_BLUE, COLOR_D_PRIME, COLOR_HIT, COLOR_CR
 
@@ -250,7 +255,7 @@ def preprocess_stimuli_outcomes(selected_data, index=0):
 
     return stimuli, outcomes
 
-def process_and_plot_lick_data(project_data, index, plot=False):
+def process_and_plot_lick_data(project_data, index, plot=False, filter_early_response: bool | None = None):
     """
     Processes lick data from a DataFrame and generates raster and histogram plots using Plotly subplots.
 
@@ -329,6 +334,21 @@ def process_and_plot_lick_data(project_data, index, plot=False):
     ], dtype=object)
 
     licks = np.array([_trim_on_decrease(trial) for trial in licks], dtype=object)
+
+    if filter_early_response is None:
+        filter_early_response = get_global_early_response_filter()
+
+    # Optional filtering of Early Response trials
+    if filter_early_response:
+        early_response_mask = np.array(
+            ['Early Response' not in str(outcome) for outcome in outcomes],
+            dtype=bool
+        )
+
+        outcomes = outcomes[early_response_mask]
+        trials = trials[early_response_mask]
+        stimuli = stimuli[early_response_mask]
+        licks = licks[early_response_mask]
 
     # Identify 'Go' and 'No-Go' trials
     no_go_trial = np.where(trials == 'NoGo')[0]
@@ -610,11 +630,16 @@ def prepare_raster_data(licks_list, trial_type, trial_stim, start_index=1):
     return pd.DataFrame(data)
 
 
-def plot_first_lick_by_stimulus(project_data, index, plot=True):
+def plot_first_lick_by_stimulus(project_data, index, plot=True, filter_early_response: bool | None = None):
     """Plot first lick times by stimulus ID."""
     from Analysis.GNG_bpod_analysis.colors import COLOR_GO, COLOR_NOGO
-    # Get first lick data
-    df_go, df_nogo, _ = process_and_plot_lick_data(project_data, index, plot=False)
+    if filter_early_response is None:
+        filter_early_response = get_global_early_response_filter()
+
+    # Get first lick data (respect Early Response filter flag)
+    df_go, df_nogo, _ = process_and_plot_lick_data(
+        project_data, index, plot=False, filter_early_response=filter_early_response
+    )
     ftl_df = pd.concat([df_go, df_nogo])
     
     # Filter out values larger than 2 seconds
@@ -711,7 +736,7 @@ def plot_first_lick_by_stimulus(project_data, index, plot=True):
         st.plotly_chart(fig, use_container_width=True, config=get_plotly_config())
 
 
-def plot_n_lick_by_stimulus(project_data, index, plot=True):
+def plot_n_lick_by_stimulus(project_data, index, plot=True, filter_early_response: bool | None = None):
 
     # Build per-trial lick counts and stimulus IDs
     try:
@@ -737,6 +762,25 @@ def plot_n_lick_by_stimulus(project_data, index, plot=True):
             stimuli = np.array([float(x) for x in stimuli_str.strip("[]").split()])
         else:
             stimuli = np.array(stimuli_str)
+
+        # Optional Early Response filtering uses Outcomes to mask trials
+        if filter_early_response is None:
+            filter_early_response = get_global_early_response_filter()
+
+        if filter_early_response:
+            try:
+                outcomes = np.array(ast.literal_eval(project_data["Outcomes"].values[index]))
+                early_response_mask = np.array(
+                    ['Early Response' not in str(outcome) for outcome in outcomes],
+                    dtype=bool
+                )
+                # Guard against length mismatch
+                if len(early_response_mask) == len(stimuli) == len(licks):
+                    stimuli = stimuli[early_response_mask]
+                    licks = licks[early_response_mask]
+            except Exception:
+                # If anything goes wrong, fall back to unfiltered data
+                pass
 
         n_licks = np.array([len(l) if isinstance(l, np.ndarray) else 0 for l in licks])
 
@@ -886,7 +930,14 @@ def learning_curve(selected_data, index=0):
     # Display the interactive chart in Streamlit
     st.altair_chart(chart, use_container_width = True)
 
-def plot_first_lick_latency(selected_data, index=0, df_go_first_licks=None, df_no_go_first_licks= None, plot=True):
+def plot_first_lick_latency(
+    selected_data,
+    index: int = 0,
+    df_go_first_licks: pd.DataFrame | None = None,
+    df_no_go_first_licks: pd.DataFrame | None = None,
+    plot: bool = True,
+    filter_early_response: bool | None = None,
+):
     """
     Measures the latency of the first lick in each trial and compares Go vs NoGo trials.
     Creates a half violin plot to visualize the distribution of latencies.
@@ -901,10 +952,15 @@ def plot_first_lick_latency(selected_data, index=0, df_go_first_licks=None, df_n
     import numpy as np
     import ast
     from Analysis.GNG_bpod_analysis.colors import COLOR_GO, COLOR_NOGO, COLOR_GRAY
+    if filter_early_response is None:
+        filter_early_response = get_global_early_response_filter()
+
     # If first lick data is not provided, calculate it
     if df_go_first_licks is None or df_no_go_first_licks is None:
-        # Get the data from process_and_plot_lick_data
-        df_go_first_licks, df_no_go_first_licks, _ = process_and_plot_lick_data(selected_data, index, plot=False)
+        # Get the data from process_and_plot_lick_data (respect Early Response filter flag)
+        df_go_first_licks, df_no_go_first_licks, _ = process_and_plot_lick_data(
+            selected_data, index, plot=False, filter_early_response=filter_early_response
+        )
     
     # Check if we have valid data
     if df_go_first_licks is None or df_no_go_first_licks is None:

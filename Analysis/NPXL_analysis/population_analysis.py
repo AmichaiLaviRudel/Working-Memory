@@ -3,7 +3,10 @@ from Analysis.GNG_bpod_analysis.colors import COLOR_HIT, COLOR_MISS, COLOR_FA, C
 import streamlit as st
 import numpy as np
 import pandas as pd
-from Analysis.NPXL_analysis.npxl_single_unit_analysis import compute_stimulus_selectivity, compute_psth_pvalues_from_event_windows
+from Analysis.NPXL_analysis.single_unit_offline_analysis.single_unit_metrics import (
+    compute_stimulus_selectivity,
+    compute_psth_pvalues_from_event_windows,
+)
 from Analysis.GNG_bpod_analysis.colors import COLOR_ORANGE
 from Analysis.GNG_bpod_analysis.GNG_bpod_general import get_plotly_config
 

@@ -2,6 +2,34 @@
 
 import numpy as np
 import ast
+import streamlit as st
+
+_FILTER_EARLY_RESPONSE_KEY = "filter_early_responses_global"
+
+
+def ensure_global_early_response_setting(default: bool = True) -> None:
+    """Ensure the global Early Response filter flag exists in session_state."""
+    if _FILTER_EARLY_RESPONSE_KEY not in st.session_state:
+        st.session_state[_FILTER_EARLY_RESPONSE_KEY] = default
+
+
+def render_global_early_response_filter_checkbox(label: str = "Filter Early Response trials") -> None:
+    """
+    Render the single checkbox that controls Early Response filtering everywhere.
+    """
+    ensure_global_early_response_setting()
+    st.checkbox(
+        label,
+        value=st.session_state[_FILTER_EARLY_RESPONSE_KEY],
+        key=_FILTER_EARLY_RESPONSE_KEY,
+        help="Exclude trials labeled 'Early Response' from all downstream analyses.",
+    )
+
+
+def get_global_early_response_filter(default: bool = True) -> bool:
+    """Return the current global Early Response filter flag."""
+    ensure_global_early_response_setting(default)
+    return bool(st.session_state[_FILTER_EARLY_RESPONSE_KEY])
 
 
 def getNameAndSession(project_data, index):

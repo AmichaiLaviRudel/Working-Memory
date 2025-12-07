@@ -260,10 +260,107 @@ def load_spike_data(data_dir):
     len(spike_clusters) 
     return spike_times_sec, spike_clusters
 
-def couple_stimuli_outcome_and_times(parent_dir, stimuli, atten, outcomes, bin_size):
+def extract_first_lick_times(licks, tone_onset_times, bin_size):
+    """
+    Extracts the first lick time for each trial in absolute time (bins).
+    
+    Parameters:
+        licks (list): List of arrays containing lick times relative to stimulus onset (in seconds)
+        tone_onset_times (np.ndarray): Array of tone onset times in bins
+        bin_size (float): Bin size in seconds
+        
+    Returns:
+        np.ndarray: Array of first lick times in bins (NaN if no lick in that trial)
+    """
+    first_lick_times_bins = []
+    for i, trial_licks in enumerate(licks):
+        if trial_licks is not None and len(trial_licks) > 0:
+            # First lick relative to stimulus (in seconds)
+            first_lick_relative_sec = trial_licks[0]
+            # Convert to bins and add to tone onset time
+            first_lick_absolute_bins = tone_onset_times[i] + (first_lick_relative_sec / bin_size)
+            first_lick_times_bins.append(first_lick_absolute_bins)
+        else:
+            first_lick_times_bins.append(np.nan)
+    return np.array(first_lick_times_bins)
+
+def extract_outcome_times(raw_events_df, tone_onset_times, bin_size):
+    """
+    Extracts outcome times (Reward or Punishment) for each trial in absolute time (bins).
+    
+    Parameters:
+        raw_events_df (pd.DataFrame): DataFrame with state timestamps (Reward, Punishment columns)
+        tone_onset_times (np.ndarray): Array of tone onset times in bins
+        bin_size (float): Bin size in seconds
+        
+    Returns:
+        np.ndarray: Array of outcome times in bins (NaN if no outcome in that trial)
+    """
+    def contains_nan(cell):
+        if isinstance(cell, (np.ndarray, list, tuple)):
+            try:
+                arr = np.asarray(cell, dtype=float)
+                return np.any(np.isnan(arr))
+            except Exception:
+                return False
+        return False
+    
+    def get_state_start_time(state_value):
+        """Extract start time from state value (supports scalar or array-like)."""
+        if state_value is None:
+            return None
+        if isinstance(state_value, (list, tuple)):
+            try:
+                state_value = np.array(state_value, dtype=float)
+            except Exception:
+                return None
+        if isinstance(state_value, np.ndarray):
+            flat = state_value.ravel()
+            # drop NaNs
+            flat = flat[~np.isnan(flat)]
+            if flat.size > 0:
+                return float(flat[0])
+            return None
+        if isinstance(state_value, (int, float, np.integer, np.floating)):
+            return float(state_value)
+        try:
+            return float(state_value)
+        except Exception:
+            return None
+        return None
+
+    outcome_times_bins = []
+    min_length = min(len(raw_events_df), len(tone_onset_times))
+    
+    for i in range(min_length):
+        outcome_time = np.nan
+        
+        # Check for Reward state
+        if 'Reward' in raw_events_df.columns:
+            reward_state = raw_events_df.iloc[i]['Reward'][0][0]
+            if not contains_nan(reward_state):
+                reward_start_sec = get_state_start_time(reward_state)
+                if reward_start_sec is not None:
+                    outcome_time = tone_onset_times[i] + (reward_start_sec / bin_size)
+        
+        # If no reward, check for Punishment state
+        if np.isnan(outcome_time) and 'Punishment' in raw_events_df.columns:
+            punishment_state = raw_events_df.iloc[i]['Punishment'][0][0]
+            if not contains_nan(punishment_state):
+                punishment_start_sec = get_state_start_time(punishment_state)
+                if punishment_start_sec is not None:
+                    outcome_time = tone_onset_times[i] + (punishment_start_sec / bin_size)
+        
+        outcome_times_bins.append(outcome_time)
+    
+    return np.array(outcome_times_bins)
+
+def couple_stimuli_outcome_and_times(parent_dir, stimuli, atten, outcomes, bin_size, 
+                                     first_lick_times_bins=None, outcome_times_bins=None):
     """
     Finds the file ending with 'nidq.xd_0_1_100.txt' in the directory, loads times, and couples with stimuli values and outcomes.
     Trims all arrays to the shortest length if they mismatch.
+    Also includes first lick times and outcome times if provided.
     """
     # Define the expected file suffix
     expected_suffix = "nidq.xd_0_1_100.txt"
@@ -283,8 +380,26 @@ def couple_stimuli_outcome_and_times(parent_dir, stimuli, atten, outcomes, bin_s
     stimuli = stimuli[:min_len]
     atten = atten[:min_len]
     outcomes = outcomes[:min_len]
+    
+    # Trim first lick and outcome times if provided
+    if first_lick_times_bins is not None:
+        first_lick_times_bins = first_lick_times_bins[:min_len]
+    if outcome_times_bins is not None:
+        outcome_times_bins = outcome_times_bins[:min_len]
 
-    df = pd.DataFrame({'time': times, 'stimulus': stimuli, 'atten': atten, 'outcome': outcomes})
+    df = pd.DataFrame({
+        'time': times, 
+        'stimulus': stimuli, 
+        'atten': atten, 
+        'outcome': outcomes
+    })
+    
+    # Add first lick and outcome times if provided
+    if first_lick_times_bins is not None:
+        df['first_lick_time'] = first_lick_times_bins
+    if outcome_times_bins is not None:
+        df['outcome_time'] = outcome_times_bins
+    
     return df
 
 # --- Behavioral File Copy Function  ---
@@ -607,22 +722,23 @@ def reshape_licking_to_event_windows(licking_timestamps_in_bins, stimuli_outcome
     
     return lick_event_windows_matrix, time_axis, valid_event_indices
 
-def save_event_windows_data(folder, event_windows_matrix, time_axis, valid_event_indices, stimuli_outcome_df, lick_event_windows_matrix=None):
+def save_event_windows_data(folder, event_windows_matrix, time_axis, valid_event_indices, stimuli_outcome_df, 
+                           lick_event_windows_matrix=None):
     """
     Saves the event windows data and associated metadata.
     
     Args:
         folder (str): Directory to save the data
-        event_windows_matrix (np.ndarray): 3D matrix of shape [units × time × events]
+        event_windows_matrix (np.ndarray): 3D matrix of shape [units × time × events] (aligned to tone onset)
         time_axis (np.ndarray): Time axis for the window
         valid_event_indices (list): List of valid event indices
         stimuli_outcome_df (pd.DataFrame): Original stimuli_outcome DataFrame
-        lick_event_windows_matrix (np.ndarray, optional): 3D matrix of shape [1 × time × events] for lick rates
+        lick_event_windows_matrix (np.ndarray, optional): 3D matrix for lick rates aligned to tone onset
     """
     if not os.path.exists(folder):
         os.makedirs(folder)
     
-    # Save the 3D event windows matrix
+    # Save the 3D event windows matrix (tone onset aligned)
     np.save(os.path.join(folder, "event_windows_matrix.npy"), event_windows_matrix)
     
     # Save the licking event windows matrix if provided
@@ -792,7 +908,27 @@ def main():
                     recording_end_time = np.ceil(spike_timestamps_seconds.max()) 
                     firing_rate_matrix, time_bins = spike_times_to_firing_rate_matrix(spike_times_matrix, recording_start_time, recording_end_time, bin_size)
                     
-                    stimuli_outcome_df = couple_stimuli_outcome_and_times(nidq_dir, stimuli, atten, outcomes, bin_size)
+                    # Extract first lick times and outcome times
+                    # First, get tone onset times to calculate absolute times
+                    try:
+                        tone_onset_times_file = load_nidq_stream(nidq_dir, stream_suffix="nidq.xd_0_1_100.txt")
+                    except FileNotFoundError:
+                        tone_onset_times_file = load_nidq_stream(nidq_dir, stream_suffix="nidq.xd_0_1_0.txt")
+                    
+                    tone_onset_times_bins = tone_onset_times_file * (1/bin_size)
+                    
+                    # Extract first lick times
+                    first_lick_times_bins = extract_first_lick_times(licks, tone_onset_times_bins, bin_size)
+                    
+                    # Extract outcome times
+                    outcome_times_bins = extract_outcome_times(raw_events_df, tone_onset_times_bins, bin_size)
+                    
+                    # Create stimuli_outcome_df with first lick and outcome times
+                    stimuli_outcome_df = couple_stimuli_outcome_and_times(
+                        nidq_dir, stimuli, atten, outcomes, bin_size,
+                        first_lick_times_bins=first_lick_times_bins,
+                        outcome_times_bins=outcome_times_bins
+                    )
                     
                     # Load licking data
                     try:
@@ -823,7 +959,7 @@ def main():
                                 print(f"Warning: Could not create licking event windows: {e}")
                                 lick_event_windows_matrix = None
                         
-                        # Save event windows data (including licking if available)
+                        # Save event windows data (tone aligned + optional lick windows)
                         save_event_windows_data(analysis_output_dir, event_windows_matrix, time_axis, valid_event_indices, 
                                                stimuli_outcome_df, lick_event_windows_matrix)
                         print(f"Event windows data created successfully: {event_windows_matrix.shape}")
