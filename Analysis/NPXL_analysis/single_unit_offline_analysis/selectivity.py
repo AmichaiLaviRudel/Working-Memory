@@ -1,7 +1,7 @@
 """
 Selectivity metrics computation for NPXL offline analysis.
 """
-from typing import Any
+from typing import Any, Optional, Tuple
 
 
 import numpy as np
@@ -16,6 +16,9 @@ def compute_selectivity_metrics_for_active_units(
     window: tuple[float, float] = (-0.1, 0.5),
     region_name: str = "Unknown",
     use_unit_class: bool = True,
+    *,
+    aligned_action_data: Optional[tuple] = None,
+    aligned_outcome_data: Optional[tuple] = None,
 ) -> pd.DataFrame:
     """
     Compute stimulus selectivity, outcome modulation, go/nogo coding, and choice probability
@@ -46,8 +49,18 @@ def compute_selectivity_metrics_for_active_units(
         
         results = []
         for unit_idx in active_units:
-            unit = Unit(unit_idx, event_windows_data, region_name=region_name)
-            selectivity = unit.compute_selectivity(window=window)
+            unit = Unit(
+                unit_idx,
+                event_windows_data,
+                region_name=region_name,
+                aligned_action_data=aligned_action_data,
+                aligned_outcome_data=aligned_outcome_data,
+            )
+            selectivity = unit.compute_selectivity(
+                window=window,
+                aligned_action_data=aligned_action_data,
+                aligned_outcome_data=aligned_outcome_data,
+            )
             selectivity["unit_idx"] = unit_idx
             results.append(selectivity)
         return pd.DataFrame(results)
@@ -61,6 +74,19 @@ def compute_selectivity_metrics_for_active_units(
     else:
         event_windows_data_5 = event_windows_data
         event_windows_matrix, time_axis, valid_event_indices, stimuli_outcome_df, metadata = event_windows_data
+
+    action_tuple = None
+    outcome_tuple = None
+    if aligned_action_data is not None:
+        if len(aligned_action_data) == 6:
+            action_tuple = (aligned_action_data[0], aligned_action_data[1], aligned_action_data[2], aligned_action_data[3], aligned_action_data[4])
+        else:
+            action_tuple = aligned_action_data
+    if aligned_outcome_data is not None:
+        if len(aligned_outcome_data) == 6:
+            outcome_tuple = (aligned_outcome_data[0], aligned_outcome_data[1], aligned_outcome_data[2], aligned_outcome_data[3], aligned_outcome_data[4])
+        else:
+            outcome_tuple = aligned_outcome_data
     
     results = []
     
@@ -98,10 +124,11 @@ def compute_selectivity_metrics_for_active_units(
             unit_results["tuning_curve"] = []
             unit_results["tuning_curve_sem"] = []
         
-        # Outcome modulation
+        # Outcome modulation (use outcome-aligned data if provided)
         if 'outcome' in stimuli_outcome_df.columns:
+            outcome_source = outcome_tuple if outcome_tuple is not None else event_windows_data_5
             outcome_p, outcome_rates, outcome_means = npxl_single_unit_analysis.compute_outcome_modulation(
-                event_windows_data_5, stimuli_outcome_df, int(unit_idx), window=window
+                outcome_source, stimuli_outcome_df, int(unit_idx), window=window
             )
             if outcome_p is not None:
                 unit_results["outcome_p_value"] = float(outcome_p)
@@ -134,10 +161,11 @@ def compute_selectivity_metrics_for_active_units(
             unit_results["go_nogo_roc_auc"] = np.nan
             unit_results["go_nogo_selective"] = False
         
-        # Choice probability
+        # Choice probability (use action-aligned data if provided)
         if 'outcome' in stimuli_outcome_df.columns:
+            action_source = action_tuple if action_tuple is not None else event_windows_data_5
             cp, cp_corr = npxl_single_unit_analysis.compute_choice_probability(
-                event_windows_data_5, stimuli_outcome_df, int(unit_idx), window=window
+                action_source, stimuli_outcome_df, int(unit_idx), window=window
             )
             if cp is not None:
                 unit_results["choice_probability"] = float(cp)

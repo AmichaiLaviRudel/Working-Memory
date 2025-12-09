@@ -1,0 +1,4 @@
+*.sbatch text eol=lf
+
+
+

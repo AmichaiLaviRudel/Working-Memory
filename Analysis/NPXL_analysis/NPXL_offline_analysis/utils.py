@@ -31,13 +31,9 @@ def setup_results_directory(analysis_output_dir: str, subfolder: str = "") -> st
     # Create subdirectories for organization
     os.makedirs(os.path.join(results_dir, "tables"), exist_ok=True)
     os.makedirs(os.path.join(results_dir, "plots"), exist_ok=True)
-    os.makedirs(os.path.join(results_dir, "plots", "acx"), exist_ok=True)
-    os.makedirs(os.path.join(results_dir, "plots", "ofc"), exist_ok=True)
-    os.makedirs(os.path.join(results_dir, "plots", "comparison"), exist_ok=True)
-    os.makedirs(os.path.join(results_dir, "plots", "psth_by_stimulus"), exist_ok=True)
-    os.makedirs(os.path.join(results_dir, "plots", "psth_by_outcome"), exist_ok=True)
-    os.makedirs(os.path.join(results_dir, "plots", "psth_by_category"), exist_ok=True)
     os.makedirs(os.path.join(results_dir, "plots", "raw_psth"), exist_ok=True)
+    os.makedirs(os.path.join(results_dir, "plots", "raw_psth", "psth_by_category"), exist_ok=True)
+    os.makedirs(os.path.join(results_dir, "plots", "tone_aligned"), exist_ok=True)
     
     print(f"Results will be saved to: {results_dir}")
     return results_dir
@@ -249,11 +245,10 @@ def units_to_dataframe(
         
         # Add plot paths if available
         plot_paths = unit.plot_paths
-        row["plot_path_heatmap"] = plot_paths.get("heatmap", "")
-        row["plot_path_psth_by_stimulus"] = plot_paths.get("psth_by_stimulus", "")
+        row["plot_path_heatmap_tone"] = plot_paths.get("heatmap", "")
         row["plot_path_psth_by_outcome"] = plot_paths.get("psth_by_outcome", "")
         row["plot_path_psth_by_category"] = plot_paths.get("psth_by_category", "")
-        row["plot_path_raw_psth"] = plot_paths.get("raw_psth", "")
+        row["plot_path_raw_psth_tone"] = plot_paths.get("raw_psth", "")
         
         rows.append(row)
     

@@ -1,5 +1,6 @@
 # Removed imports to avoid circular dependency
 
+import os
 import numpy as np
 import ast
 import streamlit as st
@@ -40,6 +41,21 @@ def getNameAndSession(project_data, index):
     # Get the session number corresponding to the current index
     current_session = session_indices.index(index) + 1  # Assuming session numbers are 1-based
     return mouse_name, current_session
+
+
+def normalize_workspace_path(path: str) -> str:
+    """
+    Map cluster-style paths to the local Z: drive while leaving Z: paths untouched.
+    """
+    if not path:
+        return path
+    if path.lower().startswith("z:"):
+        return path
+    unix_prefix = "/ems/elsc-labs/mizrahi-a/"
+    if path.startswith(unix_prefix):
+        relative = path[len(unix_prefix):]
+        return os.path.join("z:\\", relative.replace("/", os.sep))
+    return path
 
 
 

@@ -22,11 +22,34 @@ from Analysis.NPXL_analysis.single_unit_offline_analysis.utils import save_plot_
 def _nanmean_sem(data: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """
     Compute mean and SEM while safely ignoring NaNs (for partially shifted windows).
+    
+    Handles empty arrays gracefully to avoid numpy warnings.
     """
+    # Handle empty data arrays
+    if data.size == 0:
+        return np.array([]), np.array([])
+    
+    if len(data.shape) < 2 or data.shape[1] == 0:
+        # Return NaN arrays with same time dimension
+        n_time = data.shape[0] if len(data.shape) > 0 else 0
+        return np.full(n_time, np.nan), np.zeros(n_time)
+    
     counts = np.sum(~np.isnan(data), axis=1)
-    mean = np.nanmean(data, axis=1)
-    sem = np.nanstd(data, axis=1) / np.sqrt(np.maximum(counts, 1))
-    sem[counts <= 1] = 0  # avoid exaggerated SEM with single trial
+    
+    # Only compute statistics where there are valid samples
+    valid_mask = counts > 0
+    mean = np.full(counts.shape[0], np.nan)
+    sem = np.zeros(counts.shape[0])
+    
+    if np.any(valid_mask):
+        # Compute mean only where there are valid samples
+        mean[valid_mask] = np.nanmean(data[valid_mask, :], axis=1)
+        # Compute SEM only where there are at least 2 samples
+        sem_mask = valid_mask & (counts >= 2)
+        if np.any(sem_mask):
+            sem[sem_mask] = np.nanstd(data[sem_mask, :], axis=1) / np.sqrt(counts[sem_mask])
+        # Set SEM to 0 for single-trial cases (already handled by sem_mask)
+    
     return mean, sem
 
 
@@ -39,6 +62,34 @@ def _hex_to_rgba(hex_color: str, alpha: float = 0.2) -> str:
     g = int(hex_color[2:4], 16)
     b = int(hex_color[4:6], 16)
     return f'rgba({r},{g},{b},{alpha})'
+
+
+def _time_zero_label(metadata: dict) -> str:
+    """
+    Choose label for time zero based on alignment metadata.
+    """
+    aligned_to = str(metadata.get("aligned_to", "")).lower() if isinstance(metadata, dict) else ""
+    if "first_lick" in aligned_to:
+        return "First lick"
+    if "outcome" in aligned_to:
+        return "Outcome (reward/punish)"
+    return "Tone"
+
+
+def _add_time_zero_annotation(fig: go.Figure, metadata: dict) -> None:
+    """
+    Add text annotation below the x=0 reference line to clarify alignment.
+    """
+    label = _time_zero_label(metadata)
+    fig.add_annotation(
+        x=0,
+        y=-0.12,
+        yref="paper",
+        xref="x",
+        text=label,
+        showarrow=False,
+        font=dict(size=10, color="gray"),
+    )
 
 
 def plot_psth_by_stimulus(
@@ -108,6 +159,7 @@ def plot_psth_by_stimulus(
     
     # Add vertical line at event onset
     fig.add_vline(x=0, line_dash="dash", line_color="gray", line_width=1)
+    _add_time_zero_annotation(fig, metadata)
     
     fig.update_layout(
         title=f"{region_name} Unit {unit_idx} - PSTH by Stimulus",
@@ -148,8 +200,8 @@ def plot_psth_by_outcome(
     unit_data_windowed = unit_data[start_idx:end_idx, :]
     time_axis_windowed = time_axis[start_idx:end_idx]
     
-    # Define outcomes - use OUTCOME_COLOR_MAP from colors.py
-    outcomes = ['Hit', 'Miss', 'False Alarm', 'CR']
+    # Define outcomes - only compare Hit vs False Alarm as requested
+    outcomes = ['Hit', 'False Alarm']
     
     # Create figure
     fig = go.Figure()
@@ -186,6 +238,7 @@ def plot_psth_by_outcome(
     
     # Add vertical line at event onset
     fig.add_vline(x=0, line_dash="dash", line_color="gray", line_width=1)
+    _add_time_zero_annotation(fig, metadata)
     
     fig.update_layout(
         title=f"{region_name} Unit {unit_idx} - PSTH by Outcome",
@@ -250,6 +303,7 @@ def plot_raw_psth(
     
     # Add vertical line at event onset
     fig.add_vline(x=0, line_dash="dash", line_color=COLOR_GRAY, line_width=1)
+    _add_time_zero_annotation(fig, metadata)
     
     fig.update_layout(
         title=f"{region_name} Unit {unit_idx} - Raw PSTH (n={unit_data_windowed.shape[1]} trials)",
@@ -502,12 +556,14 @@ def plot_unit_heatmap(
     else:
         event_windows_matrix, time_axis, valid_event_indices, stimuli_outcome_df, metadata = event_windows_data
     
-    # Create a new time axis that matches the current display_window
-    num_time_bins = event_windows_matrix.shape[1]
-    new_time_axis = np.linspace(display_window[0], display_window[1], num_time_bins)
+    # Filter time axis and data to display_window range
+    # This ensures x=0 aligns with the actual event onset time
+    time_mask = (time_axis >= display_window[0]) & (time_axis <= display_window[1])
+    filtered_time_axis = time_axis[time_mask]
+    time_indices = np.where(time_mask)[0]
     
-    # Get the unit's data
-    unit_data = event_windows_matrix[unit_idx, :, :]  # Shape: [time × events]
+    # Get the unit's data and filter to display_window
+    unit_data = event_windows_matrix[unit_idx, time_indices, :]  # Shape: [filtered_time × events]
     
     # Get outcomes for the valid events
     event_outcomes_for_raster = None
@@ -561,7 +617,7 @@ def plot_unit_heatmap(
     
     fig.add_trace(go.Heatmap(
         z=ordered_data,
-        x=new_time_axis,
+        x=filtered_time_axis,
         y=np.arange(ordered_data.shape[0]),
         colorbar=dict(title="Firing Rate (Hz)", len=0.8),
         colorscale='Viridis'
@@ -579,6 +635,25 @@ def plot_unit_heatmap(
             line=dict(width=0),
             layer="above"
         )
+    
+    # Add dashed white horizontal lines between different outcome groups
+    if event_outcomes_for_raster is not None:
+        # Find boundaries where trial type changes
+        boundaries = []
+        for i in range(len(trial_types_ordered) - 1):
+            if trial_types_ordered[i] != trial_types_ordered[i + 1]:
+                # Add line at the boundary between different trial types
+                boundaries.append(i + 0.5)
+        
+        # Add horizontal lines at boundaries
+        for boundary_y in boundaries:
+            fig.add_hline(
+                y=boundary_y,
+                line_dash="dash",
+                line_color="white",
+                line_width=1.5,
+                layer="above"
+            )
     
     # Add legend for trial types (only if we have outcome data)
     if event_outcomes_for_raster is not None:
@@ -613,7 +688,7 @@ def plot_unit_heatmap(
         title=f"{region_name} Unit {unit_idx} - Trial Heatmap",
         xaxis_title="Time (s)",
         yaxis_title="Trial",
-        xaxis=dict(constrain='domain'),
+        xaxis=dict[str, str](constrain='domain'),
         legend=dict(
             orientation='h',
             x=0.5,

@@ -31,7 +31,7 @@ from Analysis.NPXL_analysis.single_unit_offline_analysis.visualization import (
     get_trial_statistics,
 )
 from Analysis.GNG_bpod_analysis.colors import COLOR_GO, COLOR_GRAY, COLOR_NOGO, COLOR_HIT, COLOR_FA, COLOR_CR, COLOR_MISS, COLOR_BLUE, COLOR_BLUE_TRANSPARENT, COLOR_ACCENT, COLOR_ACCENT_TRANSPARENT
-
+from Analysis.GNG_bpod_analysis.GNG_bpod_general import normalize_workspace_path
 def save_pvalues_to_folder(pvals, selected_folder, window=(-1, 2), bin_size=0.01):
     """
     Save p-values to the analysis output folder.
@@ -509,46 +509,6 @@ def single_unit_analysis_panel(selected_recording_dir=None, selected_area=None, 
                 st.metric("Excitatory Units", exc_count)
 
 
-        # # Load event windows data for accurate p-value calculation (cached)
-        # if event_windows_data is None:
-        #     data_folder = analysis_output_dir if analysis_output_dir is not None else selected_folder
-        #     if data_folder is not None:
-        #         event_windows_data = load_event_windows_data_base(data_folder)
-        
-        # # Recompute p-values only if not loaded from metrics table
-        # if pvals is None and event_windows_data is not None:
-        #     event_windows_matrix, time_axis, valid_event_indices, event_stimuli_outcome_df, metadata = event_windows_data
-        #     pvals = compute_psth_pvalues_from_event_windows(
-        #         event_windows_matrix,
-        #         event_times,
-        #         bin_size=bin_size_display,
-        #         window=[-0.1, 0.3],
-        #     )
-        #     sorted_indices = np.argsort(pvals)
-        #     sorted_pvals = pvals[sorted_indices]
-        
-        # # Display statistics
-        # stats_col1, stats_col2, stats_col3 = st.columns(3)
-        # with stats_col1:
-        #     st.metric("Total Units", len(pvals))
-        # with stats_col2:
-        #     significant_units = np.sum(pvals < 0.05)
-        #     st.metric("Significant Units", f"{significant_units}/{len(pvals)}")
-        # with stats_col3:
-        #     significance_rate = (significant_units / len(pvals)) * 100 if len(pvals) > 0 else 0
-        #     st.metric("Significance Rate", f"{significance_rate:.1f}%")
-
-
-        # # Cache management
-        #     cache_col1, cache_col2 = st.columns(2)
-        #     with cache_col1:
-        #         if st.button("🗑️ Clear Analysis Cache"):
-        #             st.cache_data.clear()
-        #             st.toast("Analysis cache cleared - next computation will be fresh")
-        #     with cache_col2:
-        #         st.caption("💡 Metrics are cached for faster performance")
-
-
         # Unit Selection Section
         st.subheader("Unit Selection")
         unit_col1, unit_col2 = st.columns(2)
@@ -580,20 +540,52 @@ def single_unit_analysis_panel(selected_recording_dir=None, selected_area=None, 
             
             # --- Column 1: PSTH plot from saved HTML path ---
             with viz_col1:
-                html_path = None
-                if "plot_path_raw_psth" in units_metrics_df_sorted.columns:
-                    if pd.notna(row.get("plot_path_raw_psth", None)):
-                        html_path = row["plot_path_raw_psth"]
-                if html_path and os.path.exists(html_path):
+                html_tone_path = None
+                html_outcome_path = None
+                html_choice_path = None
+                # plot psth by tone
+                if "psth_tone_path" in units_metrics_df_sorted.columns:
+                    if pd.notna(row.get("psth_tone_path", None)):
+                        html_tone_path = normalize_workspace_path(row["psth_tone_path"])
+                if html_tone_path and os.path.exists(html_tone_path):
                     try:
-                        with open(html_path, "r", encoding="utf-8") as f:
+                        with open(html_tone_path, "r", encoding="utf-8") as f:
                             psth_render = f.read()
+                        st.markdown(f"### Tone PSTH")
                         components.html(psth_render, height=500, scrolling=False)
                     except Exception as e:
                         st.warning(f"Error loading PSTH plot: {e}")
                 else:
-                    st.info("No saved PSTH plot found for this unit.")
-            
+                    st.info("No saved tone PSTH plot found for this unit.")
+                # plot psth by choice
+                if "psth_choice_path" in units_metrics_df_sorted.columns:
+                        if pd.notna(row.get("psth_choice_path", None)):
+                            html_choice_path = normalize_workspace_path(row["psth_choice_path"])
+                if html_choice_path and os.path.exists(html_choice_path):
+                    try:
+                        with open(html_choice_path, "r", encoding="utf-8") as f:
+                            psth_render = f.read()
+                        st.markdown(f"### Choice PSTH")
+                        components.html(psth_render, height=500, scrolling=False)
+                    except Exception as e:
+                        st.warning(f"Error loading PSTH plot: {e}")
+                else:
+                    st.info("No saved choice PSTH plot found for this unit.")
+                # plot psth by outcome
+                if "psth_outcome_path" in units_metrics_df_sorted.columns:
+                    if pd.notna(row.get("psth_outcome_path", None)):
+                        html_outcome_path = normalize_workspace_path(row["psth_outcome_path"])
+                if html_outcome_path and os.path.exists(html_outcome_path):
+                    try:
+                        with open(html_outcome_path, "r", encoding="utf-8") as f:
+                            psth_render = f.read()
+                        st.markdown(f"### Outcome PSTH")
+                        components.html(psth_render, height=500, scrolling=False)
+                    except Exception as e:
+                        st.warning(f"Error loading PSTH plot: {e}")
+                else:
+                    st.info("No saved outcome PSTH plot found for this unit.")
+
                 psth_cols = [
                     ("psth_onset_latency", "Onset Latency", "s"),
                     ("psth_peak_latency", "Peak Latency", "s"),
@@ -624,7 +616,7 @@ def single_unit_analysis_panel(selected_recording_dir=None, selected_area=None, 
                 if "plot_path_heatmap" in units_metrics_df.columns:
                     # Locate row by unit_idx column if exists
                     if pd.notna(row.get("plot_path_heatmap", None)):
-                        heatmap_html_path = row["plot_path_heatmap"]
+                        heatmap_html_path = normalize_workspace_path(row["plot_path_heatmap"])
                 if heatmap_html_path and os.path.exists(heatmap_html_path):
                     try:
                         with open(heatmap_html_path, "r", encoding="utf-8") as f:
@@ -659,7 +651,7 @@ def single_unit_analysis_panel(selected_recording_dir=None, selected_area=None, 
             
     
     with tab2:
-        st.header("Advanced Single Unit Analysis")
+        st.header("Selectivity Analysis")
         
         if not has_analysis_data:
             st.warning("⚠️ Analysis output not found. Please run the offline analysis first.")

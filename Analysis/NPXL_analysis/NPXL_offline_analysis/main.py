@@ -58,15 +58,12 @@ from Analysis.NPXL_analysis.single_unit_offline_analysis.selectivity import (
     compute_selectivity_metrics_for_active_units,
 )
 from Analysis.NPXL_analysis.single_unit_offline_analysis.visualization import (
-    plot_psth_by_stimulus,
     plot_psth_by_outcome,
     save_raw_psth_for_active_units,
-    plot_selectivity_summary,
 )
 from Analysis.NPXL_analysis.single_unit_offline_analysis.category_analysis import (
     compute_category_sensitivity_for_all_units,
     plot_psth_by_category,
-    plot_category_sensitivity_summary,
 )
 from Analysis.NPXL_analysis.single_unit_offline_analysis.unit import (
     Unit,
@@ -195,12 +192,11 @@ def main(parent_dir: str = None):
     for i, unit in enumerate(acx_units):
         if (i + 1) % 10 == 0 or i == 0:
             print(f"  Processing unit {i+1}/{len(acx_units)}: Unit {unit.unit_idx}")
-        # Generate and save heatmap
-        unit.plot_heatmap(display_window=(-0.5, 1.0), cache_plot=True)
-        # Generate and save PSTH plots
-        unit.plot_psth_by_stimulus(display_window=(-0.5, 1.0), cache_plot=True)
-        unit.plot_psth_by_outcome(display_window=(-0.5, 1.0), cache_plot=True)
-        unit.plot_raw_psth(display_window=(-0.5, 1.0), cache_plot=True)
+        # Generate and save heatmap (tone-aligned)
+        unit.plot_heatmap(display_window=(-0.5, 2.0), cache_plot=True)
+        # Generate and save PSTH plots (outcome-separated and tone-aligned raw)
+        unit.plot_psth_by_outcome(display_window=(-0.5, 2.0), cache_plot=True)
+        unit.plot_raw_psth(display_window=(-0.5, 2.0), cache_plot=True)
     
     # Save comprehensive metrics table for all ACx units
     print("\n=== Saving comprehensive ACx unit metrics table ===")
@@ -214,10 +210,17 @@ def main(parent_dir: str = None):
         psth_baseline_window=(-0.5, 0),
         description="ACx comprehensive unit metrics"
     )
+    if acx_psth_paths:
+        acx_units_df["raw_psth_path"] = acx_units_df["unit_idx"].map(acx_psth_paths)
+        save_dataframe_to_csv(
+            acx_units_df,
+            os.path.join(results_dir, "tables", "acx_all_units_metrics.csv"),
+            "ACx comprehensive unit metrics (with raw psth path)"
+        )
     print(f"  Saved metrics for {len(acx_units)} ACx units")
     
     # ============================================================================
-    # Plot and save raw PSTH for all responsive units
+    # Batch save raw PSTH for all responsive units (tone-aligned)
     # ============================================================================
     save_raw_psth_for_active_units(
         acx_event_windows_data,
@@ -227,62 +230,18 @@ def main(parent_dir: str = None):
         results_dir,
         display_window=(-0.5, 1.0),
     )
-    
-    # ============================================================================
-    # Plot PSTH by stimulus and outcome for top active units
-    # ============================================================================
-    n_units_to_plot = min(5, len(active_units_acx))
-    for i, unit_idx in enumerate(active_units_acx[:n_units_to_plot]):
-        print(f"\n=== ACx Unit {unit_idx} (Rank {i+1} by significance) ===")
-        
-        # Plot by stimulus
-        if 'stimulus' in acx_stimuli_outcome_df.columns:
-            fig_stim = plot_psth_by_stimulus(
-                acx_event_windows_data,
-                int(unit_idx),
-                display_window=(-0.5, 1.0),
-                region_name="ACx"
-            )
-        
-        # Plot by outcome
-        if 'outcome' in acx_stimuli_outcome_df.columns:
-            fig_outcome = plot_psth_by_outcome(
-                acx_event_windows_data,
-                int(unit_idx),
-                display_window=(-0.5, 1.0),
-                region_name="ACx"
-            )
-            
-            # Save PSTH plots
-            if 'stimulus' in acx_stimuli_outcome_df.columns:
-                save_plot_to_html(
-                    fig_stim,
-                    os.path.join(results_dir, "plots", "psth_by_stimulus", f"acx_unit_{unit_idx}_psth_by_stimulus.html"),
-                    f"ACx Unit {unit_idx} PSTH by Stimulus"
-                )
-            save_plot_to_html(
-                fig_outcome,
-                os.path.join(results_dir, "plots", "psth_by_outcome", f"acx_unit_{unit_idx}_psth_by_outcome.html"),
-                f"ACx Unit {unit_idx} PSTH by Outcome"
-            )
-    
-    # ============================================================================
-    # Create selectivity summary plots
-    # ============================================================================
-    acx_fig_metrics, acx_fig_class = plot_selectivity_summary(acx_selectivity_df, region_name="ACx")
-    
-    # Save ACx summary plots
-    print("\n=== Saving ACx summary plots ===")
-    save_plot_to_html(
-        acx_fig_metrics,
-        os.path.join(results_dir, "plots", "acx", "acx_selectivity_metrics_summary.html"),
-        "ACx selectivity metrics summary"
-    )
-    save_plot_to_html(
-        acx_fig_class,
-        os.path.join(results_dir, "plots", "acx", "acx_unit_classification_summary.html"),
-        "ACx unit classification summary"
-    )
+    # Attach raw PSTH paths to ACx metrics (use same naming as saver)
+    acx_psth_paths = {}
+    if len(active_units_acx) > 0 and len(p_vals_acx) == len(active_units_acx):
+        sorted_idx = np.argsort(p_vals_acx)
+        sorted_units = active_units_acx[sorted_idx]
+        sorted_p = p_vals_acx[sorted_idx]
+        raw_dir_acx = os.path.join(results_dir, "plots", "raw_psth")
+        for rank, (u, p) in enumerate(zip(sorted_units, sorted_p), start=1):
+            fname = f"acx_unit_{int(u)}_rank{rank:03d}_p{float(p):.4f}_tone_psth.html"
+            acx_psth_paths[int(u)] = os.path.join(raw_dir_acx, fname)
+    else:
+        raw_dir_acx = None
     
     # Display detailed summary table
     print("\n=== ACx Selectivity Summary Table ===")
@@ -315,6 +274,18 @@ def main(parent_dir: str = None):
         results_dir,
         display_window=(-0.5, 1.0),
     )
+    # Attach raw PSTH paths to OFC metrics (use same naming as batch saver)
+    ofc_psth_paths = {}
+    if len(active_units_ofc) > 0 and len(p_vals_ofc) == len(active_units_ofc):
+        sorted_idx = np.argsort(p_vals_ofc)
+        sorted_units = active_units_ofc[sorted_idx]
+        sorted_p = p_vals_ofc[sorted_idx]
+        raw_dir_ofc = os.path.join(results_dir, "plots", "raw_psth")
+        for rank, (u, p) in enumerate(zip(sorted_units, sorted_p), start=1):
+            fname = f"ofc_unit_{int(u)}_rank{rank:03d}_p{float(p):.4f}_tone_psth.html"
+            ofc_psth_paths[int(u)] = os.path.join(raw_dir_ofc, fname)
+    else:
+        raw_dir_ofc = None
     
     # Compute selectivity metrics for OFC
     if len(active_units_ofc) > 0:
@@ -363,10 +334,9 @@ def main(parent_dir: str = None):
         for i, unit in enumerate(ofc_units):
             if (i + 1) % 10 == 0 or i == 0:
                 print(f"  Processing unit {i+1}/{len(ofc_units)}: Unit {unit.unit_idx}")
-            # Generate and save heatmap
+            # Generate and save heatmap (tone-aligned)
             unit.plot_heatmap(display_window=(-0.5, 2.0), cache_plot=True)
-            # Generate and save PSTH plots
-            unit.plot_psth_by_stimulus(display_window=(-0.5, 1.0), cache_plot=True)
+            # Generate and save PSTH plots (outcome-separated and tone-aligned raw)
             unit.plot_psth_by_outcome(display_window=(-0.5, 1.0), cache_plot=True)
             unit.plot_raw_psth(display_window=(-0.5, 2.0), cache_plot=True)
         
@@ -382,151 +352,15 @@ def main(parent_dir: str = None):
             psth_baseline_window=(-0.5, 0),
             description="OFC comprehensive unit metrics"
         )
+        if ofc_psth_paths:
+            ofc_units_df["raw_psth_path"] = ofc_units_df["unit_idx"].map(ofc_psth_paths)
+            save_dataframe_to_csv(
+                ofc_units_df,
+                os.path.join(results_dir, "tables", "ofc_all_units_metrics.csv"),
+                "OFC comprehensive unit metrics (with raw psth path)"
+            )
         print(f"  Saved metrics for {len(ofc_units)} OFC units")
         
-        # Create OFC summary plots
-        ofc_fig_metrics, ofc_fig_class = plot_selectivity_summary(ofc_selectivity_df, region_name="OFC")
-        
-        # Save OFC summary plots
-        print("\n=== Saving OFC summary plots ===")
-        save_plot_to_html(
-            ofc_fig_metrics,
-            os.path.join(results_dir, "plots", "ofc", "ofc_selectivity_metrics_summary.html"),
-            "OFC selectivity metrics summary"
-        )
-        save_plot_to_html(
-            ofc_fig_class,
-            os.path.join(results_dir, "plots", "ofc", "ofc_unit_classification_summary.html"),
-            "OFC unit classification summary"
-        )
-        
-        # Comparison plot: OFC vs ACx
-        has_acx_data = len(acx_selectivity_df) > 0 and 'stimulus_selective' in acx_selectivity_df.columns
-        has_ofc_data = len(ofc_selectivity_df) > 0 and 'stimulus_selective' in ofc_selectivity_df.columns
-        
-        if has_acx_data or has_ofc_data:
-            fig_comparison = go.Figure()
-            
-            metrics = ['Stimulus Selective', 'Outcome Modulated', 'Go/NoGo Selective', 'Choice Coding']
-            
-            if has_acx_data:
-                acx_counts = [
-                    acx_selectivity_df['stimulus_selective'].sum(),
-                    acx_selectivity_df['outcome_modulated'].sum(),
-                    acx_selectivity_df['go_nogo_selective'].sum(),
-                    acx_selectivity_df['choice_coding'].sum(),
-                ]
-                acx_proportions = [c / len(acx_selectivity_df) * 100 for c in acx_counts]
-            else:
-                acx_counts = [0, 0, 0, 0]
-                acx_proportions = [0, 0, 0, 0]
-            
-            if has_ofc_data:
-                ofc_counts = [
-                    ofc_selectivity_df['stimulus_selective'].sum(),
-                    ofc_selectivity_df['outcome_modulated'].sum(),
-                    ofc_selectivity_df['go_nogo_selective'].sum(),
-                    ofc_selectivity_df['choice_coding'].sum(),
-                ]
-                ofc_proportions = [c / len(ofc_selectivity_df) * 100 for c in ofc_counts]
-            else:
-                ofc_counts = [0, 0, 0, 0]
-                ofc_proportions = [0, 0, 0, 0]
-            
-            fig_comparison.add_trace(go.Bar(
-                x=metrics,
-                y=acx_proportions,
-                name='ACx',
-                marker_color='#1f77b4',
-                text=[f'{c} ({p:.1f}%)' for c, p in zip(acx_counts, acx_proportions)],
-                textposition='outside',
-                hovertemplate='ACx<br>%{x}<br>%{y:.1f}% (%{text})<extra></extra>'
-            ))
-            
-            fig_comparison.add_trace(go.Bar(
-                x=metrics,
-                y=ofc_proportions,
-                name='OFC',
-                marker_color='#ff7f0e',
-                text=[f'{c} ({p:.1f}%)' for c, p in zip(ofc_counts, ofc_proportions)],
-                textposition='outside',
-                hovertemplate='OFC<br>%{x}<br>%{y:.1f}% (%{text})<extra></extra>'
-            ))
-            
-            fig_comparison.update_layout(
-                title='OFC vs ACx - Selectivity Comparison (Proportion of Active Units)',
-                xaxis_title='Selectivity Type',
-                yaxis_title='Percentage of Active Units',
-                barmode='group',
-                template='plotly_white',
-                height=500,
-                legend=dict(x=0.7, y=0.95)
-            )
-            
-            # Save comparison plot
-            print("\n=== Saving comparison plots ===")
-            save_plot_to_html(
-                fig_comparison,
-                os.path.join(results_dir, "plots", "comparison", "ofc_vs_acx_selectivity_comparison.html"),
-                "OFC vs ACx selectivity comparison"
-            )
-            
-            # Summary statistics comparison
-            print("\n=== OFC vs ACx Comparison ===")
-            comparison_data = {
-                'Region': ['ACx', 'OFC'],
-                'Total Active Units': [len(acx_selectivity_df), len(ofc_selectivity_df)],
-                'Stimulus Selective': [acx_counts[0], ofc_counts[0]],
-                'Outcome Modulated': [acx_counts[1], ofc_counts[1]],
-                'Go/NoGo Selective': [acx_counts[2], ofc_counts[2]],
-                'Choice Coding': [acx_counts[3], ofc_counts[3]],
-            }
-            comparison_df = pd.DataFrame(comparison_data)
-            print(comparison_df.to_string(index=False))
-            
-            # Save comparison table
-            save_dataframe_to_csv(
-                comparison_df,
-                os.path.join(results_dir, "tables", "ofc_vs_acx_comparison.csv"),
-                "OFC vs ACx comparison table"
-            )
-        else:
-            print("\n=== Skipping OFC vs ACx comparison (no active units in either region) ===")
-        
-        # Plot example units from OFC
-        print("\n=== Plotting example OFC active units ===")
-        n_units_to_plot_ofc = min(3, len(active_units_ofc))
-        for i, unit_idx in enumerate(active_units_ofc[:n_units_to_plot_ofc]):
-            print(f"\n=== OFC Unit {unit_idx} (Rank {i+1}) ===")
-            
-            if 'stimulus' in ofc_stimuli_outcome_df.columns:
-                fig_stim_ofc = plot_psth_by_stimulus(
-                    ofc_event_windows_data,
-                    int(unit_idx),
-                    display_window=(-0.5, 1.0),
-                    region_name="OFC"
-                )
-            
-            if 'outcome' in ofc_stimuli_outcome_df.columns:
-                fig_outcome_ofc = plot_psth_by_outcome(
-                    ofc_event_windows_data,
-                    int(unit_idx),
-                    display_window=(-0.5, 1.0),
-                    region_name="OFC"
-                )
-                
-                # Save OFC PSTH plots
-                if 'stimulus' in ofc_stimuli_outcome_df.columns:
-                    save_plot_to_html(
-                        fig_stim_ofc,
-                        os.path.join(results_dir, "plots", "psth_by_stimulus", f"ofc_unit_{unit_idx}_psth_by_stimulus.html"),
-                        f"OFC Unit {unit_idx} PSTH by Stimulus"
-                    )
-                save_plot_to_html(
-                    fig_outcome_ofc,
-                    os.path.join(results_dir, "plots", "psth_by_outcome", f"ofc_unit_{unit_idx}_psth_by_outcome.html"),
-                    f"OFC Unit {unit_idx} PSTH by Outcome"
-                )
     else:
         print("No active OFC units found for comparison")
     
@@ -570,20 +404,7 @@ def main(parent_dir: str = None):
             "ACx category sensitivity table"
         )
         
-        # Create and save summary plot
-        acx_category_fig = plot_category_sensitivity_summary(
-            acx_category_df,
-            region_name="ACx",
-            low_boundary=0.983,
-            high_boundary=1.525,
-        )
-        save_plot_to_html(
-            acx_category_fig,
-            os.path.join(results_dir, "plots", "acx", "acx_category_sensitivity_summary.html"),
-            "ACx category sensitivity summary"
-        )
-        
-        # Plot PSTH by category for top category-sensitive units
+        # Plot PSTH by category for top category-sensitive units (saved via Unit class)
         if n_sensitive > 0:
             sensitive_units = acx_category_df[acx_category_df['category_sensitive']].copy()
             sensitive_units = sensitive_units.sort_values('category_anova_p')
@@ -596,19 +417,15 @@ def main(parent_dir: str = None):
                 p_val = row['category_anova_p']
                 print(f"    Unit {unit_idx} (p={p_val:.4f})")
                 
-                fig_cat = plot_psth_by_category(
-                    acx_event_windows_data,
-                    unit_idx,
-                    low_boundary=0.983,
-                    high_boundary=1.525,
-                    display_window=(-0.5, 1.0),
-                    region_name="ACx"
-                )
-                save_plot_to_html(
-                    fig_cat,
-                    os.path.join(results_dir, "plots", "psth_by_category", f"acx_unit_{unit_idx}_psth_by_category.html"),
-                    f"ACx Unit {unit_idx} PSTH by Category"
-                )
+                # Find the unit object and plot (will be saved automatically via Unit class)
+                unit_obj = next((u for u in acx_units if u.unit_idx == unit_idx), None)
+                if unit_obj is not None:
+                    unit_obj.plot_psth_by_category(
+                        low_boundary=0.983,
+                        high_boundary=1.525,
+                        display_window=(-0.5, 1.0),
+                        cache_plot=True
+                    )
     else:
         print("  No active units to analyze")
     
@@ -653,20 +470,7 @@ def main(parent_dir: str = None):
                 "OFC category sensitivity table"
             )
             
-            # Create and save summary plot
-            ofc_category_fig = plot_category_sensitivity_summary(
-                ofc_category_df,
-                region_name="OFC",
-                low_boundary=0.983,
-                high_boundary=1.525,
-            )
-            save_plot_to_html(
-                ofc_category_fig,
-                os.path.join(results_dir, "plots", "ofc", "ofc_category_sensitivity_summary.html"),
-                "OFC category sensitivity summary"
-            )
-            
-            # Plot PSTH by category for top category-sensitive units
+            # Plot PSTH by category for top category-sensitive units (saved via Unit class)
             if n_sensitive_ofc > 0:
                 sensitive_units_ofc = ofc_category_df[ofc_category_df['category_sensitive']].copy()
                 sensitive_units_ofc = sensitive_units_ofc.sort_values('category_anova_p')
@@ -679,19 +483,15 @@ def main(parent_dir: str = None):
                     p_val = row['category_anova_p']
                     print(f"    Unit {unit_idx} (p={p_val:.4f})")
                     
-                    fig_cat_ofc = plot_psth_by_category(
-                        ofc_event_windows_data,
-                        unit_idx,
-                        low_boundary=0.983,
-                        high_boundary=1.525,
-                        display_window=(-0.5, 1.0),
-                        region_name="OFC"
-                    )
-                    save_plot_to_html(
-                        fig_cat_ofc,
-                        os.path.join(results_dir, "plots", "psth_by_category", f"ofc_unit_{unit_idx}_psth_by_category.html"),
-                        f"OFC Unit {unit_idx} PSTH by Category"
-                    )
+                    # Find the unit object and plot (will be saved automatically via Unit class)
+                    unit_obj = next((u for u in ofc_units if u.unit_idx == unit_idx), None)
+                    if unit_obj is not None:
+                        unit_obj.plot_psth_by_category(
+                            low_boundary=0.983,
+                            high_boundary=1.525,
+                            display_window=(-0.5, 1.0),
+                            cache_plot=True
+                        )
         else:
             print("  No good units to analyze")
     else:

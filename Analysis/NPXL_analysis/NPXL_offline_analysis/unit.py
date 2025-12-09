@@ -345,9 +345,7 @@ class Unit:
         if cache_plot:
             # Store in memory cache
             self._plot_cache['psth_by_stimulus'] = fig
-            # Auto-save if plots directory is set
-            if self._plots_dir is not None:
-                self.save_plot('psth_by_stimulus', fig, subfolder='psth_by_stimulus', cache_in_memory=True)
+            # Note: psth_by_stimulus plots are no longer saved to disk
         return fig
     
     def plot_psth_by_outcome(
@@ -378,8 +376,14 @@ class Unit:
         )
         if cache_plot:
             self._plot_cache['psth_by_outcome'] = fig
+            # Save to raw_psth folder as separated PSTH by outcome
             if self._plots_dir is not None:
-                self.save_plot('psth_by_outcome', fig, subfolder='psth_by_outcome', cache_in_memory=True)
+                filename = f"{self.region_name.lower()}_unit_{self.unit_idx}_outcome_psth.html"
+                save_path = os.path.join(self._plots_dir, "raw_psth", filename)
+                os.makedirs(os.path.dirname(save_path), exist_ok=True)
+                from Analysis.NPXL_analysis.single_unit_offline_analysis.utils import save_plot_to_html
+                save_plot_to_html(fig, save_path, description=f"PSTH by outcome for unit {self.unit_idx}")
+                self._plot_paths['psth_by_outcome'] = save_path
         return fig
     
     def plot_raw_psth(
@@ -410,8 +414,14 @@ class Unit:
         )
         if cache_plot:
             self._plot_cache['raw_psth'] = fig
+            # Save to raw_psth folder
             if self._plots_dir is not None:
-                self.save_plot('raw_psth', fig, subfolder='raw_psth', cache_in_memory=True)
+                filename = f"{self.region_name.lower()}_unit_{self.unit_idx}_tone_psth.html"
+                save_path = os.path.join(self._plots_dir, "raw_psth", filename)
+                os.makedirs(os.path.dirname(save_path), exist_ok=True)
+                from Analysis.NPXL_analysis.single_unit_offline_analysis.utils import save_plot_to_html
+                save_plot_to_html(fig, save_path, description=f"Raw PSTH (tone-aligned) for unit {self.unit_idx}")
+                self._plot_paths['raw_psth'] = save_path
         return fig
     
     def plot_psth_by_category(
@@ -450,8 +460,14 @@ class Unit:
         )
         if cache_plot:
             self._plot_cache['psth_by_category'] = fig
+            # Save to raw_psth/psth_by_category folder
             if self._plots_dir is not None:
-                self.save_plot('psth_by_category', fig, subfolder='psth_by_category', cache_in_memory=True)
+                filename = f"{self.region_name.lower()}_unit_{self.unit_idx}_category_psth.html"
+                save_path = os.path.join(self._plots_dir, "raw_psth", "psth_by_category", filename)
+                os.makedirs(os.path.dirname(save_path), exist_ok=True)
+                from Analysis.NPXL_analysis.single_unit_offline_analysis.utils import save_plot_to_html
+                save_plot_to_html(fig, save_path, description=f"PSTH by category for unit {self.unit_idx}")
+                self._plot_paths['psth_by_category'] = save_path
         return fig
     
     def plot_heatmap(
@@ -482,8 +498,14 @@ class Unit:
         )
         if cache_plot:
             self._plot_cache['heatmap'] = fig
+            # Save to tone_aligned folder with target in filename
             if self._plots_dir is not None:
-                self.save_plot('heatmap', fig, subfolder='heatmap', cache_in_memory=True)
+                filename = f"{self.region_name.lower()}_unit_{self.unit_idx}_tone_heatmap.html"
+                save_path = os.path.join(self._plots_dir, "tone_aligned", filename)
+                os.makedirs(os.path.dirname(save_path), exist_ok=True)
+                from Analysis.NPXL_analysis.single_unit_offline_analysis.utils import save_plot_to_html
+                save_plot_to_html(fig, save_path, description=f"Tone-aligned heatmap for unit {self.unit_idx}")
+                self._plot_paths['heatmap'] = save_path
         return fig
     
     def get_trial_stats(self) -> Dict[str, int]:

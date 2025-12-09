@@ -15,12 +15,11 @@ def assign_stimulus_categories(
     high_boundary: float = 1.525,
 ) -> np.ndarray:
     """
-    Assign each stimulus to a category based on boundaries.
+    Assign each stimulus to Go/NoGo categories.
     
     Categories:
-    - 'Low': stimulus < low_boundary
-    - 'Middle': low_boundary <= stimulus <= high_boundary
-    - 'High': stimulus > high_boundary
+    - 'Go': stimulus < low_boundary OR stimulus > high_boundary
+    - 'NoGo': low_boundary <= stimulus <= high_boundary
     
     Parameters:
     -----------
@@ -34,11 +33,11 @@ def assign_stimulus_categories(
     Returns:
     --------
     np.ndarray
-        Array of category labels ('Low', 'Middle', 'High')
+        Array of category labels ('Go', 'NoGo')
     """
-    categories = np.full(len(stimuli), 'Middle', dtype=object)
-    categories[stimuli < low_boundary] = 'Low'
-    categories[stimuli > high_boundary] = 'High'
+    categories = np.full(len(stimuli), "NoGo", dtype=object)
+    go_mask = (stimuli < low_boundary) | (stimuli > high_boundary)
+    categories[go_mask] = "Go"
     return categories
 
 
@@ -50,9 +49,9 @@ def compute_category_sensitivity(
     window: tuple[float, float] = (-0.2, 1),
 ) -> dict:
     """
-    Test if a unit is sensitive to stimulus categories defined by boundaries.
+    Test if a unit is sensitive to Go vs NoGo (Low+High vs Middle).
     
-    Uses one-way ANOVA to test for differences in firing rates across categories.
+    Uses a two-group ANOVA (equivalent to a t-test) on Go vs NoGo rates.
     
     Parameters:
     -----------
@@ -83,15 +82,14 @@ def compute_category_sensitivity(
             'category_sensitive': False,
             'category_anova_p': np.nan,
             'category_anova_f': np.nan,
-            'low_mean_rate': np.nan,
-            'middle_mean_rate': np.nan,
-            'high_mean_rate': np.nan,
+            'go_mean_rate': np.nan,
+            'nogo_mean_rate': np.nan,
+            'go_n_trials': 0,
+            'nogo_n_trials': 0,
             'best_category': None,
             'go_nogo_dprime': np.nan,
             'go_nogo_roc_auc': np.nan,
             'go_nogo_selective': False,
-            'go_mean_rate': np.nan,
-            'nogo_mean_rate': np.nan,
         }
     
     # Get unit data
@@ -111,132 +109,75 @@ def compute_category_sensitivity(
     # Assign categories
     categories = assign_stimulus_categories(stimuli, low_boundary, high_boundary)
     
-    # Group firing rates by category
-    low_rates = mean_rates[categories == 'Low']
-    middle_rates = mean_rates[categories == 'Middle']
-    high_rates = mean_rates[categories == 'High']
+    # Group firing rates by Go/NoGo
+    go_rates = mean_rates[categories == "Go"]
+    nogo_rates = mean_rates[categories == "NoGo"]
     
-    # Check if we have enough data in each category (at least 2 trials)
-    has_low = len(low_rates) >= 2
-    has_middle = len(middle_rates) >= 2
-    has_high = len(high_rates) >= 2
+    # Require at least two trials per group for a meaningful test
+    has_go = len(go_rates) >= 2
+    has_nogo = len(nogo_rates) >= 2
     
-    # Perform ANOVA if we have at least 2 categories with sufficient data
-    category_groups = []
-    category_names = []
-    if has_low:
-        category_groups.append(low_rates)
-        category_names.append('Low')
-    if has_middle:
-        category_groups.append(middle_rates)
-        category_names.append('Middle')
-    if has_high:
-        category_groups.append(high_rates)
-        category_names.append('High')
+    go_mean_rate = float(np.mean(go_rates)) if len(go_rates) > 0 else np.nan
+    nogo_mean_rate = float(np.mean(nogo_rates)) if len(nogo_rates) > 0 else np.nan
     
-    if len(category_groups) < 2:
-        # Not enough categories for ANOVA, but still compute go/nogo if possible
-        go_rates = np.concatenate([high_rates, low_rates]) if (has_high and has_low) else (
-            high_rates if has_high else (low_rates if has_low else np.array([]))
-        )
-        nogo_rates = middle_rates if has_middle else np.array([])
-        
-        go_nogo_dprime = np.nan
-        go_nogo_roc_auc = np.nan
-        go_nogo_selective = False
-        
-        if len(go_rates) >= 2 and len(nogo_rates) >= 2:
-            go_mean, go_std = np.mean(go_rates), np.std(go_rates)
-            nogo_mean, nogo_std = np.mean(nogo_rates), np.std(nogo_rates)
-            pooled_std = np.sqrt((go_std**2 + nogo_std**2) / 2)
-            go_nogo_dprime = (go_mean - nogo_mean) / pooled_std if pooled_std > 0 else 0.0
-            
-            try:
-                labels = np.concatenate([np.ones(len(go_rates)), np.zeros(len(nogo_rates))])
-                scores = np.concatenate([go_rates, nogo_rates])
-                go_nogo_roc_auc = roc_auc_score(labels, scores)
-            except Exception:
-                go_nogo_roc_auc = 0.5
-            
-            go_nogo_selective = abs(go_nogo_dprime) > 0.5
-        
+    if not (has_go and has_nogo):
         return {
             'category_sensitive': False,
             'category_anova_p': np.nan,
             'category_anova_f': np.nan,
-            'low_mean_rate': float(np.mean(low_rates)) if has_low else np.nan,
-            'middle_mean_rate': float(np.mean(middle_rates)) if has_middle else np.nan,
-            'high_mean_rate': float(np.mean(high_rates)) if has_high else np.nan,
+            'go_mean_rate': go_mean_rate,
+            'nogo_mean_rate': nogo_mean_rate,
+            'go_n_trials': len(go_rates),
+            'nogo_n_trials': len(nogo_rates),
             'best_category': None,
-            'go_nogo_dprime': float(go_nogo_dprime) if not np.isnan(go_nogo_dprime) else np.nan,
-            'go_nogo_roc_auc': float(go_nogo_roc_auc) if not np.isnan(go_nogo_roc_auc) else np.nan,
-            'go_nogo_selective': go_nogo_selective,
-            'go_mean_rate': float(np.mean(go_rates)) if len(go_rates) > 0 else np.nan,
-            'nogo_mean_rate': float(np.mean(nogo_rates)) if len(nogo_rates) > 0 else np.nan,
+            'go_nogo_dprime': np.nan,
+            'go_nogo_roc_auc': np.nan,
+            'go_nogo_selective': False,
         }
     
-    # Perform one-way ANOVA
-    f_stat, p_val = f_oneway(*category_groups)
+    # Two-group ANOVA (equivalent to two-sample t-test on means)
+    f_stat, p_val = f_oneway(go_rates, nogo_rates)
     
-    # Determine best category (highest mean rate)
-    mean_rates_by_category = {}
-    if has_low:
-        mean_rates_by_category['Low'] = np.mean(low_rates)
-    if has_middle:
-        mean_rates_by_category['Middle'] = np.mean(middle_rates)
-    if has_high:
-        mean_rates_by_category['High'] = np.mean(high_rates)
-    
-    best_category = max(mean_rates_by_category, key=mean_rates_by_category.get) if mean_rates_by_category else None
-    
-    # Compute Go/NoGo selectivity: Go = High + Low, NoGo = Middle
-    go_rates = np.concatenate([high_rates, low_rates]) if (has_high and has_low) else (
-        high_rates if has_high else (low_rates if has_low else np.array([]))
-    )
-    nogo_rates = middle_rates if has_middle else np.array([])
+    best_category = "Go" if go_mean_rate > nogo_mean_rate else "NoGo"
     
     # Compute d' and ROC AUC for Go vs NoGo
     go_nogo_dprime = np.nan
     go_nogo_roc_auc = np.nan
     go_nogo_selective = False
     
-    if len(go_rates) >= 2 and len(nogo_rates) >= 2:
-        # Compute d'
-        go_mean, go_std = np.mean(go_rates), np.std(go_rates)
-        nogo_mean, nogo_std = np.mean(nogo_rates), np.std(nogo_rates)
+    # Safely compute statistics, handling empty or all-NaN arrays
+    if len(go_rates) > 0 and len(nogo_rates) > 0:
+        # Check for valid (non-NaN) values
+        go_valid = go_rates[~np.isnan(go_rates)]
+        nogo_valid = nogo_rates[~np.isnan(nogo_rates)]
         
-        # Pooled standard deviation
-        pooled_std = np.sqrt((go_std**2 + nogo_std**2) / 2)
-        go_nogo_dprime = (go_mean - nogo_mean) / pooled_std if pooled_std > 0 else 0.0
-        
-        # Compute ROC AUC
-        try:
-            # Create labels: 1 for Go, 0 for NoGo
-            labels = np.concatenate([np.ones(len(go_rates)), np.zeros(len(nogo_rates))])
-            scores = np.concatenate([go_rates, nogo_rates])
-            go_nogo_roc_auc = roc_auc_score(labels, scores)
-        except Exception:
-            go_nogo_roc_auc = 0.5
-        
-        # Consider selective if |d'| > 0.5 (same threshold as elsewhere in codebase)
-        go_nogo_selective = abs(go_nogo_dprime) > 0.5
+        if len(go_valid) >= 2 and len(nogo_valid) >= 2:
+            go_mean, go_std = np.mean(go_valid), np.std(go_valid)
+            nogo_mean, nogo_std = np.mean(nogo_valid), np.std(nogo_valid)
+            pooled_std = np.sqrt((go_std**2 + nogo_std**2) / 2)
+            go_nogo_dprime = (go_mean - nogo_mean) / pooled_std if pooled_std > 0 else 0.0
+            
+            try:
+                labels = np.concatenate([np.ones(len(go_valid)), np.zeros(len(nogo_valid))])
+                scores = np.concatenate([go_valid, nogo_valid])
+                go_nogo_roc_auc = roc_auc_score(labels, scores)
+            except Exception:
+                go_nogo_roc_auc = 0.5
+            
+            go_nogo_selective = abs(go_nogo_dprime) > 0.5
     
     return {
         'category_sensitive': p_val < 0.05,
         'category_anova_p': float(p_val),
         'category_anova_f': float(f_stat),
-        'low_mean_rate': float(np.mean(low_rates)) if has_low else np.nan,
-        'middle_mean_rate': float(np.mean(middle_rates)) if has_middle else np.nan,
-        'high_mean_rate': float(np.mean(high_rates)) if has_high else np.nan,
-        'low_n_trials': len(low_rates),
-        'middle_n_trials': len(middle_rates),
-        'high_n_trials': len(high_rates),
+        'go_mean_rate': go_mean_rate,
+        'nogo_mean_rate': nogo_mean_rate,
+        'go_n_trials': len(go_rates),
+        'nogo_n_trials': len(nogo_rates),
         'best_category': best_category,
         'go_nogo_dprime': float(go_nogo_dprime) if not np.isnan(go_nogo_dprime) else np.nan,
         'go_nogo_roc_auc': float(go_nogo_roc_auc) if not np.isnan(go_nogo_roc_auc) else np.nan,
         'go_nogo_selective': go_nogo_selective,
-        'go_mean_rate': float(np.mean(go_rates)) if len(go_rates) > 0 else np.nan,
-        'nogo_mean_rate': float(np.mean(nogo_rates)) if len(nogo_rates) > 0 else np.nan,
     }
 
 
@@ -248,7 +189,7 @@ def compute_category_sensitivity_for_all_units(
     window: tuple[float, float] = (-0.1, 0.5),
 ) -> pd.DataFrame:
     """
-    Compute category sensitivity for all active units.
+    Compute Go vs NoGo category sensitivity for all active units.
     
     Returns:
     --------
@@ -280,7 +221,7 @@ def plot_psth_by_category(
     region_name: str = "Unit",
 ) -> go.Figure:
     """
-    Plot PSTH separated by category (Low/Middle/High) for a single unit.
+    Plot PSTH separated by category (Go vs NoGo) for a single unit.
     """
     # Handle both 5-tuple and 6-tuple formats
     if len(event_windows_data) == 6:
@@ -310,20 +251,29 @@ def plot_psth_by_category(
     
     # Category colors
     category_colors = {
-        'Low': '#2ca02c',      # Green
-        'Middle': '#ff7f0e',   # Orange
-        'High': '#d62728',     # Red
+        "Go": "#2ca02c",     # Green
+        "NoGo": "#ff7f0e",   # Orange
     }
     
-    category_order = ['Low', 'Middle', 'High']
+    category_order = ["Go", "NoGo"]
     
     for category in category_order:
         cat_mask = (categories == category)
         cat_trials = unit_data_windowed[:, cat_mask]
         
         if cat_trials.shape[1] > 0:
-            psth_mean = np.mean(cat_trials, axis=1)
-            psth_sem = np.std(cat_trials, axis=1) / np.sqrt(cat_trials.shape[1])
+            # Safely compute mean and SEM, handling all-NaN cases
+            valid_counts = np.sum(~np.isnan(cat_trials), axis=1)
+            psth_mean = np.full(cat_trials.shape[0], np.nan)
+            psth_sem = np.zeros(cat_trials.shape[0])
+            
+            valid_mask = valid_counts > 0
+            if np.any(valid_mask):
+                psth_mean[valid_mask] = np.nanmean(cat_trials[valid_mask, :], axis=1)
+                # Only compute SEM where there are at least 2 valid samples
+                sem_mask = valid_mask & (valid_counts >= 2)
+                if np.any(sem_mask):
+                    psth_sem[sem_mask] = np.nanstd(cat_trials[sem_mask, :], axis=1) / np.sqrt(valid_counts[sem_mask])
             
             color = category_colors[category]
             
@@ -354,7 +304,10 @@ def plot_psth_by_category(
     fig.add_annotation(
         x=0.02, y=0.98,
         xref='paper', yref='paper',
-        text=f'Boundaries: Low={low_boundary:.3f}, High={high_boundary:.3f}',
+        text=(
+            f'Go: <{low_boundary:.3f} or >{high_boundary:.3f}<br>'
+            f'NoGo: between'
+        ),
         showarrow=False,
         font=dict(size=10),
         bgcolor='rgba(255,255,255,0.8)',
@@ -364,7 +317,7 @@ def plot_psth_by_category(
     )
     
     fig.update_layout(
-        title=f"{region_name} Unit {unit_idx} - PSTH by Category",
+        title=f"{region_name} Unit {unit_idx} - PSTH by Category (Go vs NoGo)",
         xaxis_title="Time (s)",
         yaxis_title="Firing Rate (Hz)",
         hovermode='x unified',

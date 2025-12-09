@@ -39,6 +39,9 @@ class Unit:
         event_windows_data: tuple,
         region_name: str = "Unknown",
         unit_labels: Optional[pd.DataFrame] = None,
+        *,
+        aligned_action_data: Optional[tuple] = None,
+        aligned_outcome_data: Optional[tuple] = None,
     ):
         """
         Initialize a Unit object.
@@ -57,6 +60,8 @@ class Unit:
         self.unit_idx = int(unit_idx)
         self.region_name = region_name
         self._event_windows_data = event_windows_data
+        self._aligned_action_data = aligned_action_data
+        self._aligned_outcome_data = aligned_outcome_data
         self._unit_labels = unit_labels
         
         # Unpack data once
@@ -141,7 +146,10 @@ class Unit:
     def compute_selectivity(
         self, 
         window: Tuple[float, float] = (-0.1, 0.5),
-        force_recompute: bool = False
+        force_recompute: bool = False,
+        *,
+        aligned_action_data: Optional[tuple] = None,
+        aligned_outcome_data: Optional[tuple] = None,
     ) -> Dict[str, Any]:
         """
         Compute selectivity metrics for this unit.
@@ -165,6 +173,11 @@ class Unit:
             return self._selectivity_metrics
         
         # Create 5-tuple for analysis functions
+        def _to_five_tuple(data_tuple: tuple) -> tuple:
+            if len(data_tuple) == 6:
+                return (data_tuple[0], data_tuple[1], data_tuple[2], data_tuple[3], data_tuple[4])
+            return data_tuple
+
         if len(self._event_windows_data) == 6:
             event_windows_data_5 = (
                 self.data, self.time_axis, self.valid_indices,
@@ -172,6 +185,9 @@ class Unit:
             )
         else:
             event_windows_data_5 = self._event_windows_data
+
+        action_data = aligned_action_data or self._aligned_action_data
+        outcome_data = aligned_outcome_data or self._aligned_outcome_data
         
         results = {}
         
@@ -212,11 +228,12 @@ class Unit:
             results["tuning_curve"] = []
             results["tuning_curve_sem"] = []
         
-        # Outcome modulation
+        # Outcome modulation (use outcome-aligned data if provided)
         if 'outcome' in self.stimuli_outcome_df.columns:
+            outcome_tuple = _to_five_tuple(outcome_data) if outcome_data is not None else event_windows_data_5
             outcome_p, outcome_rates, outcome_means = (
                 npxl_single_unit_analysis.compute_outcome_modulation(
-                    event_windows_data_5, self.stimuli_outcome_df,
+                    outcome_tuple, self.stimuli_outcome_df,
                     self.unit_idx, window=window
                 )
             )
@@ -254,10 +271,11 @@ class Unit:
             results["go_nogo_roc_auc"] = np.nan
             results["go_nogo_selective"] = False
         
-        # Choice probability
+        # Choice probability (use action-aligned data if provided)
         if 'outcome' in self.stimuli_outcome_df.columns:
+            action_tuple = _to_five_tuple(action_data) if action_data is not None else event_windows_data_5
             cp, cp_corr = npxl_single_unit_analysis.compute_choice_probability(
-                event_windows_data_5, self.stimuli_outcome_df,
+                action_tuple, self.stimuli_outcome_df,
                 self.unit_idx, window=window
             )
             if cp is not None:
@@ -904,6 +922,9 @@ def create_units_from_event_data(
     unit_indices: np.ndarray,
     region_name: str = "Unknown",
     unit_labels: Optional[pd.DataFrame] = None,
+    *,
+    aligned_action_data: Optional[tuple] = None,
+    aligned_outcome_data: Optional[tuple] = None,
 ) -> list[Unit]:
     """
     Create a list of Unit objects from event windows data.
@@ -925,7 +946,14 @@ def create_units_from_event_data(
         List of Unit objects
     """
     return [
-        Unit(idx, event_windows_data, region_name=region_name, unit_labels=unit_labels)
+        Unit(
+            idx,
+            event_windows_data,
+            region_name=region_name,
+            unit_labels=unit_labels,
+            aligned_action_data=aligned_action_data,
+            aligned_outcome_data=aligned_outcome_data,
+        )
         for idx in unit_indices
     ]
 

@@ -64,12 +64,12 @@ def find_active_units_by_midpoint(
         t_vals[u] = t_stat
         p_vals[u] = p_val
 
-    # Require statistical difference AND after > before
-    active_mask = (p_vals < alpha) & (mean_after > mean_before)
+    # Require statistical difference regardless of direction (two-sided)
+    active_mask = p_vals < alpha
     active_units = np.where(active_mask)[0]
 
     print(
-        f"Found {active_units.size} active units (after > before, p < {alpha}) "
+        f"Found {active_units.size} active units (p < {alpha}) "
         f"out of {n_units}"
     )
     # Sort active_units by their smallest p_val (ascending)
@@ -93,6 +93,9 @@ def align_event_windows_to_offsets(
     Align per-trial event windows so that a secondary event (e.g., lick/outcome)
     occurs at time zero (the midpoint).
 
+    The output size matches the input size. Data is trimmed from the start if needed
+    and zero-padded at the end if needed to maintain the same shape.
+
     Parameters
     ----------
     event_windows_data : tuple
@@ -112,7 +115,18 @@ def align_event_windows_to_offsets(
     -------
     tuple : aligned event_windows_data (same shape as input)
     np.ndarray : boolean mask indicating which events were retained during alignment
+    
+    Raises
+    ------
+    ValueError
+        If aligned data is None or has invalid shape after alignment.
     """
+    if event_windows_data is None:
+        raise ValueError(
+            "event_windows_data is None. This may occur if data loading failed "
+            "or the input tuple is incorrectly structured."
+        )
+    
     if len(event_windows_data) == 6:
         (
             event_windows_matrix,
@@ -132,7 +146,21 @@ def align_event_windows_to_offsets(
         ) = event_windows_data
         lick_event_windows_matrix = None
 
+    if event_windows_matrix is None:
+        raise ValueError(
+            "event_windows_matrix is None. This may occur if the data loading "
+            "failed or the matrix was not properly initialized."
+        )
+
     n_units, n_time, n_events = event_windows_matrix.shape
+    
+    if n_events != len(event_offsets_sec):
+        raise ValueError(
+            f"Mismatch between number of events ({n_events}) and number of "
+            f"offsets ({len(event_offsets_sec)}). Each event must have a corresponding offset."
+        )
+    
+    # Initialize output with fill_value (maintains same shape as input)
     aligned_matrix = np.full((n_units, n_time, n_events), fill_value, dtype=float)
     aligned_lick = (
         np.full_like(lick_event_windows_matrix, fill_value, dtype=float)
@@ -140,7 +168,7 @@ def align_event_windows_to_offsets(
         else None
     )
 
-    mid = n_time // 2
+    mid = n_time // 2  # Target midpoint where event should be placed
     pre_needed, post_needed = margin_bins or (0, 0)
     valid_events_mask = np.zeros(n_events, dtype=bool)
 
@@ -148,32 +176,61 @@ def align_event_windows_to_offsets(
         if np.isnan(offset_sec):
             continue
 
-        shift_bins = int(np.round(offset_sec / bin_size_sec))
-        center_idx = mid + shift_bins
-
-        if (
-            abs(shift_bins) >= n_time
-            or center_idx - pre_needed < 0
-            or center_idx + post_needed >= n_time
-        ):
-            continue  # insufficient data around the event to align
+        # Convert offset to bins (positive = event after tone onset)
+        offset_bins = int(np.round(offset_sec / bin_size_sec))
+        
+        # Calculate where the event occurs in the original data
+        # Original midpoint is at n_time // 2, so event is at mid + offset_bins
+        event_idx_in_original = mid + offset_bins
+        
+        # Check if event is within valid range
+        if event_idx_in_original < 0 or event_idx_in_original >= n_time:
+            # Event is outside the window; skip this trial
+            continue
+        
+        # Check margin requirements
+        pre_available = event_idx_in_original
+        post_available = n_time - event_idx_in_original - 1
+        if pre_available < pre_needed or post_available < post_needed:
+            # Insufficient margin; skip this trial
+            continue
 
         src = event_windows_matrix[:, :, idx]
-
-        if shift_bins > 0:
-            aligned_matrix[:, :-shift_bins, idx] = src[:, shift_bins:]
-            if aligned_lick is not None:
-                aligned_lick[:, :-shift_bins, idx] = lick_event_windows_matrix[:, shift_bins:, idx]
-        elif shift_bins < 0:
-            aligned_matrix[:, -shift_bins:, idx] = src[:, :shift_bins]
-            if aligned_lick is not None:
-                aligned_lick[:, -shift_bins:, idx] = lick_event_windows_matrix[:, :shift_bins, idx]
-        else:
-            aligned_matrix[:, :, idx] = src
-            if aligned_lick is not None:
-                aligned_lick[:, :, idx] = lick_event_windows_matrix[:, :, idx]
+        
+        # Strategy: Place event at midpoint by shifting data
+        # We want: original[event_idx_in_original] -> aligned[mid]
+        # General mapping: aligned[i] = original[i + (event_idx_in_original - mid)]
+        # This ensures aligned[mid] = original[event_idx_in_original]
+        
+        shift = event_idx_in_original - mid  # How much to shift source indices
+        
+        # Copy data with proper mapping, trimming/padding as needed
+        # Mapping: aligned[i] = original[i + shift] where shift = event_idx_in_original - mid
+        # This ensures aligned[mid] = original[event_idx_in_original] (event at midpoint)
+        for tgt_idx in range(n_time):
+            src_idx = tgt_idx + shift
+            
+            if 0 <= src_idx < n_time:
+                # Valid source index: copy data
+                aligned_matrix[:, tgt_idx, idx] = src[:, src_idx]
+                if aligned_lick is not None:
+                    aligned_lick[:, tgt_idx, idx] = lick_event_windows_matrix[:, src_idx, idx]
+            # else: tgt_idx remains as fill_value (already initialized, handles trimming/padding)
 
         valid_events_mask[idx] = True
+
+    # Verify output shape matches input
+    if aligned_matrix.shape != event_windows_matrix.shape:
+        raise ValueError(
+            f"Output shape {aligned_matrix.shape} does not match input shape "
+            f"{event_windows_matrix.shape}. This should not happen."
+        )
+    
+    if aligned_matrix is None:
+        raise ValueError(
+            "aligned_matrix is None after processing. This may occur if all "
+            "events were invalid or if there was an error during alignment."
+        )
 
     aligned_metadata = dict(metadata)
     aligned_metadata["aligned_to"] = event_label

@@ -3,6 +3,7 @@ Utility functions for NPXL offline analysis.
 """
 import os
 import json
+import time
 import pandas as pd
 import plotly.graph_objects as go
 
@@ -39,6 +40,9 @@ def setup_results_directory(analysis_output_dir: str, subfolder: str = "") -> st
     os.makedirs(os.path.join(results_dir, "plots", "psth_by_outcome"), exist_ok=True)
     os.makedirs(os.path.join(results_dir, "plots", "psth_by_category"), exist_ok=True)
     os.makedirs(os.path.join(results_dir, "plots", "raw_psth"), exist_ok=True)
+    os.makedirs(os.path.join(results_dir, "plots", "heatmap"), exist_ok=True)
+    os.makedirs(os.path.join(results_dir, "plots", "heatmap", "choice_aligned"), exist_ok=True)
+    os.makedirs(os.path.join(results_dir, "plots", "heatmap", "outcome_aligned"), exist_ok=True)
     
     print(f"Results will be saved to: {results_dir}")
     return results_dir
@@ -80,12 +84,62 @@ def save_dataframe_to_csv(df: pd.DataFrame, filepath: str, description: str = ""
 
 
 def save_plot_to_html(fig: go.Figure, filepath: str, description: str = ""):
-    """Save Plotly figure to HTML file."""
-    fig.write_html(filepath)
-    if description:
-        print(f"  Saved {description} to: {filepath}")
-    else:
-        print(f"  Saved plot to: {filepath}")
+    """
+    Save Plotly figure to HTML file with error handling for permission issues.
+    
+    Handles common Windows permission errors by:
+    - Ensuring directory exists
+    - Attempting to remove locked files
+    - Retrying with delay if initial write fails
+    """
+    # Ensure directory exists
+    dir_path = os.path.dirname(filepath)
+    if dir_path:
+        os.makedirs(dir_path, exist_ok=True)
+    
+    # Try to remove existing file if it exists (may be locked by browser)
+    max_retries = 3
+    retry_delay = 0.5  # seconds
+    
+    for attempt in range(max_retries):
+        try:
+            # If file exists, try to remove it first (may be locked by browser)
+            if os.path.exists(filepath):
+                try:
+                    os.remove(filepath)
+                    if attempt > 0:
+                        time.sleep(retry_delay)  # Brief pause after removal on retry
+                except (OSError, PermissionError):
+                    # File is locked, wait and retry
+                    if attempt < max_retries - 1:
+                        time.sleep(retry_delay)
+                        continue
+            
+            # Write the file
+            fig.write_html(filepath)
+            
+            if description:
+                print(f"  Saved {description} to: {filepath}")
+            else:
+                print(f"  Saved plot to: {filepath}")
+            return  # Success, exit function
+            
+        except (OSError, PermissionError) as e:
+            if attempt < max_retries - 1:
+                print(f"  Warning: Permission denied writing to {filepath} (attempt {attempt + 1}/{max_retries}). Retrying...")
+                time.sleep(retry_delay)
+            else:
+                # Final attempt failed
+                error_msg = (
+                    f"Failed to save plot after {max_retries} attempts: {filepath}\n"
+                    f"Error: {e}\n"
+                    f"Possible causes:\n"
+                    f"  - File is open in a browser or another program\n"
+                    f"  - Insufficient write permissions\n"
+                    f"  - File path too long (Windows 260 char limit)\n"
+                    f"Please close any programs using this file and try again."
+                )
+                raise PermissionError(error_msg) from e
 
 
 def units_to_dataframe(
@@ -180,18 +234,11 @@ def units_to_dataframe(
                 "category_sensitive": category_sens.get("category_sensitive", False),
                 "category_anova_p": category_sens.get("category_anova_p"),
                 "category_anova_f": category_sens.get("category_anova_f"),
-                "low_mean_rate": category_sens.get("low_mean_rate"),
-                "middle_mean_rate": category_sens.get("middle_mean_rate"),
-                "high_mean_rate": category_sens.get("high_mean_rate"),
-                "low_n_trials": category_sens.get("low_n_trials"),
-                "middle_n_trials": category_sens.get("middle_n_trials"),
-                "high_n_trials": category_sens.get("high_n_trials"),
+                "go_mean_rate": category_sens.get("go_mean_rate"),
+                "nogo_mean_rate": category_sens.get("nogo_mean_rate"),
+                "go_n_trials": category_sens.get("go_n_trials"),
+                "nogo_n_trials": category_sens.get("nogo_n_trials"),
                 "best_category": category_sens.get("best_category"),
-                "category_go_nogo_dprime": category_sens.get("go_nogo_dprime"),
-                "category_go_nogo_roc_auc": category_sens.get("go_nogo_roc_auc"),
-                "category_go_nogo_selective": category_sens.get("go_nogo_selective", False),
-                "category_go_mean_rate": category_sens.get("go_mean_rate"),
-                "category_nogo_mean_rate": category_sens.get("nogo_mean_rate"),
             })
         
         # Compute or get PSTH metrics
@@ -276,9 +323,7 @@ def units_to_dataframe(
         
         # Add plot paths if available
         plot_paths = unit.plot_paths
-        row["plot_path_heatmap"] = plot_paths.get("heatmap", "")
-        row["plot_path_psth_by_stimulus"] = plot_paths.get("psth_by_stimulus", "")
-        row["plot_path_psth_by_outcome"] = plot_paths.get("psth_by_outcome", "")
+        row["heatmap_tone_path"] = plot_paths.get("heatmap", "")
         row["plot_path_psth_by_category"] = plot_paths.get("psth_by_category", "")
         row["plot_path_raw_psth"] = plot_paths.get("raw_psth", "")
         

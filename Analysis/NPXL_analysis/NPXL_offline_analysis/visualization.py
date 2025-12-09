@@ -291,13 +291,13 @@ def save_raw_psth_for_active_units(
     sorted_units = active_units[sorted_indices]
     sorted_p_vals = p_vals[sorted_indices]
     
-    # Create region-specific subfolder
-    region_folder = region_name.lower()
-    raw_psth_dir = os.path.join(results_dir, "plots", "raw_psth", region_folder)
+    # Save to raw_psth folder (no region subfolder)
+    raw_psth_dir = os.path.join(results_dir, "plots", "raw_psth")
     os.makedirs(raw_psth_dir, exist_ok=True)
     
     print(f"\n=== Saving raw PSTH plots for all {region_name} responsive units (sorted by p-value) ===")
     print(f"  Saving to: {raw_psth_dir}")
+    region_lower = region_name.lower()
     for rank, (unit_idx, p_val) in enumerate(zip(sorted_units, sorted_p_vals), start=1):
         fig_raw_psth = plot_raw_psth(
             event_windows_data,
@@ -305,12 +305,11 @@ def save_raw_psth_for_active_units(
             display_window=display_window,
             region_name=region_name
         )
-        # Include rank in filename for easy identification
-        # Save in region-specific subfolder
+        # Include rank in filename for easy identification, with region prefix and tone target
         save_plot_to_html(
             fig_raw_psth,
-            os.path.join(raw_psth_dir, f"unit_{unit_idx}_rank{rank:03d}_p{p_val:.4f}_raw_psth.html"),
-            f"{region_name} Unit {unit_idx} (Rank {rank}, p={p_val:.4f}) Raw PSTH"
+            os.path.join(raw_psth_dir, f"{region_lower}_unit_{unit_idx}_rank{rank:03d}_p{p_val:.4f}_tone_psth.html"),
+            f"{region_name} Unit {unit_idx} (Rank {rank}, p={p_val:.4f}) Tone-aligned Raw PSTH"
         )
     print(f"  Saved {len(active_units)} {region_name} raw PSTH plots (sorted by significance) to {raw_psth_dir}")
 
