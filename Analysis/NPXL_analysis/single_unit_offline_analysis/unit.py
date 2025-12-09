@@ -486,6 +486,7 @@ class Unit:
     def plot_heatmap(
         self,
         display_window: Tuple[float, float] = (-0.5, 1.0),
+        target: str = "tone",
         cache_plot: bool = True
     ):
         """
@@ -495,6 +496,8 @@ class Unit:
         -----------
         display_window : tuple[float, float]
             Time window for display (start, end) in seconds
+        target : str
+            Alignment target name (e.g., "tone", "choice", "outcome")
         cache_plot : bool
             If True, store the plot reference in self._plots
         
@@ -512,7 +515,12 @@ class Unit:
         if cache_plot:
             self._plot_cache['heatmap'] = fig
             if self._plots_dir is not None:
-                self.save_plot('heatmap', fig, subfolder='heatmap', cache_in_memory=True)
+                # Generate filename with target name: {region}_unit_{unit_idx}_{target}_heatmap.html
+                filename = f"{self.region_name.lower()}_unit_{self.unit_idx}_{target}_heatmap.html"
+                
+                # Use target-specific subfolder (tone_align for tone, {target}_aligned for others)
+                subfolder = f"heatmap/{target}_aligned"
+                self.save_plot('heatmap', fig, subfolder=subfolder, filename=filename, cache_in_memory=True)
         return fig
     
     def get_trial_stats(self) -> Dict[str, int]:

@@ -214,7 +214,7 @@ def main(parent_dir: str = None, progress_fn=None, status_fn=None):
         acx_event_windows_data,
         lick_offsets_acx,
         bin_size_sec=acx_bin_size_sec,
-        alpha=0.15,
+        alpha=0.05,
         before_window=acx_before_window,
         after_window=acx_after_window,
     )
@@ -222,7 +222,7 @@ def main(parent_dir: str = None, progress_fn=None, status_fn=None):
         acx_event_windows_data,
         outcome_offsets_acx,
         bin_size_sec=acx_bin_size_sec,
-        alpha=0.15,
+        alpha=0.05,
         before_window=acx_before_window,
         after_window=acx_after_window,
     )
@@ -541,7 +541,7 @@ def main(parent_dir: str = None, progress_fn=None, status_fn=None):
     # Find active units in OFC
     active_units_ofc, t_vals_ofc, p_vals_ofc = find_active_units_by_midpoint(
         OFC_all,
-        alpha=0.15,
+        alpha=0.05,
         before_range=(int(-0.5*bin_to_sec), 0),  # Wider baseline to match longer OFC window
         after_range=(0, int(2 * bin_to_sec)),  # Capture delayed OFC responses
     )
@@ -556,7 +556,7 @@ def main(parent_dir: str = None, progress_fn=None, status_fn=None):
         ofc_event_windows_data,
         lick_offsets_ofc,
         bin_size_sec=ofc_bin_size_sec,
-        alpha=0.15,
+        alpha=0.05,
         before_window=ofc_before_window,
         after_window=ofc_after_window,
     )
@@ -564,7 +564,7 @@ def main(parent_dir: str = None, progress_fn=None, status_fn=None):
         ofc_event_windows_data,
         outcome_offsets_ofc,
         bin_size_sec=ofc_bin_size_sec,
-        alpha=0.15,
+        alpha=0.05,
         before_window=ofc_before_window,
         after_window=ofc_after_window,
     )
