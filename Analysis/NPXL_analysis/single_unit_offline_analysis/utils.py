@@ -33,14 +33,14 @@ def setup_results_directory(analysis_output_dir: str, subfolder: str = "") -> st
     # Create subdirectories for organization
     os.makedirs(os.path.join(results_dir, "tables"), exist_ok=True)
     os.makedirs(os.path.join(results_dir, "plots"), exist_ok=True)
-    os.makedirs(os.path.join(results_dir, "plots", "acx"), exist_ok=True)
-    os.makedirs(os.path.join(results_dir, "plots", "ofc"), exist_ok=True)
-    os.makedirs(os.path.join(results_dir, "plots", "comparison"), exist_ok=True)
-    os.makedirs(os.path.join(results_dir, "plots", "psth_by_stimulus"), exist_ok=True)
-    os.makedirs(os.path.join(results_dir, "plots", "psth_by_outcome"), exist_ok=True)
-    os.makedirs(os.path.join(results_dir, "plots", "psth_by_category"), exist_ok=True)
-    os.makedirs(os.path.join(results_dir, "plots", "raw_psth"), exist_ok=True)
+    
+    # PSTH plots directory (subdirectories like {region}_outcome, {region}_category, {region}_stimulus 
+    # will be created dynamically when saving)
+    os.makedirs(os.path.join(results_dir, "plots", "psth"), exist_ok=True)
+    
+    # Heatmap directories for different alignment targets
     os.makedirs(os.path.join(results_dir, "plots", "heatmap"), exist_ok=True)
+    os.makedirs(os.path.join(results_dir, "plots", "heatmap", "tone_aligned"), exist_ok=True)
     os.makedirs(os.path.join(results_dir, "plots", "heatmap", "choice_aligned"), exist_ok=True)
     os.makedirs(os.path.join(results_dir, "plots", "heatmap", "outcome_aligned"), exist_ok=True)
     
@@ -96,51 +96,9 @@ def save_plot_to_html(fig: go.Figure, filepath: str, description: str = ""):
     dir_path = os.path.dirname(filepath)
     if dir_path:
         os.makedirs(dir_path, exist_ok=True)
-    
-    # Try to remove existing file if it exists (may be locked by browser)
-    max_retries = 3
-    retry_delay = 0.5  # seconds
-    
-    for attempt in range(max_retries):
-        try:
-            # If file exists, try to remove it first (may be locked by browser)
-            if os.path.exists(filepath):
-                try:
-                    os.remove(filepath)
-                    if attempt > 0:
-                        time.sleep(retry_delay)  # Brief pause after removal on retry
-                except (OSError, PermissionError):
-                    # File is locked, wait and retry
-                    if attempt < max_retries - 1:
-                        time.sleep(retry_delay)
-                        continue
-            
-            # Write the file
-            fig.write_html(filepath)
-            
-            if description:
-                print(f"  Saved {description} to: {filepath}")
-            else:
-                print(f"  Saved plot to: {filepath}")
-            return  # Success, exit function
-            
-        except (OSError, PermissionError) as e:
-            if attempt < max_retries - 1:
-                print(f"  Warning: Permission denied writing to {filepath} (attempt {attempt + 1}/{max_retries}). Retrying...")
-                time.sleep(retry_delay)
-            else:
-                # Final attempt failed
-                error_msg = (
-                    f"Failed to save plot after {max_retries} attempts: {filepath}\n"
-                    f"Error: {e}\n"
-                    f"Possible causes:\n"
-                    f"  - File is open in a browser or another program\n"
-                    f"  - Insufficient write permissions\n"
-                    f"  - File path too long (Windows 260 char limit)\n"
-                    f"Please close any programs using this file and try again."
-                )
-                raise PermissionError(error_msg) from e
-
+        # Write the file
+    fig.write_html(filepath)
+   
 
 def units_to_dataframe(
     units: list,

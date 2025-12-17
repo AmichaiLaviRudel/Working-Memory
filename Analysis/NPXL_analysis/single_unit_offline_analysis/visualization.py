@@ -353,7 +353,7 @@ def save_raw_psth_for_active_units(
     
     # Create region-specific subfolder
     region_folder = region_name.lower()
-    raw_psth_dir = os.path.join(results_dir, "plots", "raw_psth", region_folder)
+    raw_psth_dir = os.path.join(results_dir, "plots", "psth", region_folder)
     os.makedirs(raw_psth_dir, exist_ok=True)
     
     print(f"\n=== Saving raw PSTH plots for all {region_name} responsive units (sorted by p-value) ===")
@@ -556,11 +556,26 @@ def plot_unit_heatmap(
     else:
         event_windows_matrix, time_axis, valid_event_indices, stimuli_outcome_df, metadata = event_windows_data
     
+    # Build an aligned time axis centered at the event (midpoint) using bin_size
+    # This fixes misalignment when event_windows_data has been aligned to targets
+    n_time = event_windows_matrix.shape[1]
+    mid = n_time // 2
+    try:
+        bin_size_sec = float(metadata.get("bin_size", 0))
+    except Exception:
+        bin_size_sec = 0
+    if bin_size_sec <= 0:
+        # Fallback: infer from provided time_axis if possible
+        if len(time_axis) > 1:
+            bin_size_sec = float(time_axis[1] - time_axis[0])
+        else:
+            bin_size_sec = 1.0
+    aligned_time_axis = (np.arange(n_time) - mid) * bin_size_sec
+    
     # Filter time axis and data to display_window range
-    # This ensures x=0 aligns with the actual event onset time
-    time_mask = (time_axis >= display_window[0]) & (time_axis <= display_window[1])
-    filtered_time_axis = time_axis[time_mask]
+    time_mask = (aligned_time_axis >= display_window[0]) & (aligned_time_axis <= display_window[1])
     time_indices = np.where(time_mask)[0]
+    filtered_time_axis = aligned_time_axis[time_mask]
     
     # Get the unit's data and filter to display_window
     unit_data = event_windows_matrix[unit_idx, time_indices, :]  # Shape: [filtered_time × events]

@@ -376,7 +376,10 @@ class Unit:
             self._plot_cache['psth_by_stimulus'] = fig
             # Auto-save if plots directory is set
             if self._plots_dir is not None:
-                self.save_plot('psth_by_stimulus', fig, subfolder='psth_by_stimulus', cache_in_memory=True)
+                # Save under psth/{region}_stimulus
+                region_lower = self.region_name.lower()
+                subfolder = f"psth/{region_lower}_stimulus"
+                self.save_plot('psth_by_stimulus', fig, subfolder=subfolder, cache_in_memory=True)
         return fig
     
     def plot_psth_by_outcome(
@@ -408,7 +411,10 @@ class Unit:
         if cache_plot:
             self._plot_cache['psth_by_outcome'] = fig
             if self._plots_dir is not None:
-                self.save_plot('psth_by_outcome', fig, subfolder='psth_by_outcome', cache_in_memory=True)
+                # Save under psth/{region}_outcome
+                region_lower = self.region_name.lower()
+                subfolder = f"psth/{region_lower}_outcome"
+                self.save_plot('psth_by_outcome', fig, subfolder=subfolder, cache_in_memory=True)
         return fig
     
     def plot_raw_psth(
@@ -440,7 +446,7 @@ class Unit:
         if cache_plot:
             self._plot_cache['raw_psth'] = fig
             if self._plots_dir is not None:
-                self.save_plot('raw_psth', fig, subfolder='raw_psth', cache_in_memory=True)
+                self.save_plot('psth', fig, subfolder='psth', cache_in_memory=True)
         return fig
     
     def plot_psth_by_category(
@@ -480,7 +486,10 @@ class Unit:
         if cache_plot:
             self._plot_cache['psth_by_category'] = fig
             if self._plots_dir is not None:
-                self.save_plot('psth_by_category', fig, subfolder='psth_by_category', cache_in_memory=True)
+                # Save under psth/{region}_category
+                region_lower = self.region_name.lower()
+                subfolder = f"psth/{region_lower}_category"
+                self.save_plot('psth_by_category', fig, subfolder=subfolder, cache_in_memory=True)
         return fig
     
     def plot_heatmap(

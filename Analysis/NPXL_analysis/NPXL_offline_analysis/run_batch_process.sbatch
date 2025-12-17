@@ -1,13 +1,17 @@
 #!/bin/bash
-#SBATCH --job-name=npxl_batch
-#SBATCH --output=npxl_batch_%j.out
-#SBATCH --error=npxl_batch_%j.err
+#SBATCH --job-name=npxl_batch_refactored
+#SBATCH --output=npxl_batch_refactored_%j.out
+#SBATCH --error=npxl_batch_refactored_%j.err
 #SBATCH --time=36:00:00
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=36
 #SBATCH --mem=64G
 #SBATCH --partition=elscn.q
+#
+# NPXL Batch Processing (Refactored Pipeline)
+# This job runs main_refactored.py for all catgt folders
+# Generates tone/choice/outcome aligned plots with p-value filtering
 
 # Try to initialize conda - adjust path if needed
 if [ -f ~/miniconda3/etc/profile.d/conda.sh ]; then
@@ -66,11 +70,11 @@ echo "Batch processing job completed at $(date)"
 # Show last 50 lines of output and error files
 echo ""
 echo "=== Last 50 lines of output (if available) ==="
-tail -n 50 "npxl_batch_${SLURM_JOB_ID}.out" 2>/dev/null || echo "Output file not yet written or not found"
+tail -n 50 "npxl_batch_refactored_${SLURM_JOB_ID}.out" 2>/dev/null || echo "Output file not yet written or not found"
 
 echo ""
 echo "=== Last 50 lines of error output (if available) ==="
-tail -n 50 "npxl_batch_${SLURM_JOB_ID}.err" 2>/dev/null || echo "Error file not yet written or not found"
+tail -n 50 "npxl_batch_refactored_${SLURM_JOB_ID}.err" 2>/dev/null || echo "Error file not yet written or not found"
 
 echo ""
-echo "Job finished. Check npxl_batch_${SLURM_JOB_ID}.out and npxl_batch_${SLURM_JOB_ID}.err for full output."
+echo "Job finished. Check npxl_batch_refactored_${SLURM_JOB_ID}.out and npxl_batch_refactored_${SLURM_JOB_ID}.err for full output."

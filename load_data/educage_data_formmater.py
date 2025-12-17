@@ -8,10 +8,10 @@ import sys
 from datetime import datetime
 
 # Source file path
-path1 = r"Z:\Shared\Noam\results\Educage1_09_11_2025\Educage1_09_11_2025.txt"
+path1 = r"Z:\Shared\Noam\results\Educage_headbar_pilot_15_12_2025\Educage_headbar_pilot_15_12_2025.txt"
 # path2 = r"Z:\Shared\Noam\results\experiments\experiments.txt"
 
-out_csv = Path(r"Z:\\Shared\\Amichai\\Code\\DB\\users_data\\Amichai\\Educage1_experimental_data.csv")
+out_csv = Path(r"Z:\\Shared\\Amichai\\Code\\DB\\users_data\\Amichai\\Educage_headbar_pilot_experimental_data.csv")
 # Read file
 df = pd.read_csv(path1)
 # Sort by datetime if possible and reindex

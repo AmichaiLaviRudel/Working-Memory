@@ -1,8 +1,13 @@
 """
-Batch processing script for NPXL offline analysis.
+Batch processing script for NPXL offline analysis (using refactored main script).
 
 This script searches for all folders starting with "catgt" in the main recordings directory
-and runs the analysis pipeline for each folder.
+and runs the refactored analysis pipeline (main_refactored.py) for each folder.
+
+The refactored pipeline uses nested loops for cleaner code and generates:
+- Tone, Choice, and Outcome aligned PSTHs and heatmaps
+- Category sensitivity plots
+- Comprehensive metrics CSV with all p-values and plot paths
 """
 import sys
 import os
@@ -29,7 +34,7 @@ else:
 if workspace_root not in sys.path:
     sys.path.insert(0, workspace_root)
 
-from Analysis.NPXL_analysis.single_unit_offline_analysis.main import main
+from Analysis.NPXL_analysis.NPXL_offline_analysis.main_refactored import main
 
 
 def find_catgt_folders(base_dir: str) -> list:

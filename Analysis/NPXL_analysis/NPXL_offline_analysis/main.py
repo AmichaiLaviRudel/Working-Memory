@@ -87,7 +87,7 @@ def main(parent_dir: str = None):
     # Load and explore data
     # ============================================================================
     if parent_dir is None:
-        parent_dir = r"Z:\Shared\Amichai\NPXL\Recs\group5\catGTGroup5\catgt_G5A3_2b_4t_new2_g0"
+        parent_dir = r"Z:\Shared\Amichai\NPXL\Recs\group7\catgt_G7A1_Expert_1B_3T_g0"
     
     OFC_all, ACx_all, data_dir_OFC, data_dir_ACx = load_data(
         data_dir_parent=parent_dir, data_dir_OFC=None, data_dir_ACx=None
@@ -187,16 +187,41 @@ def main(parent_dir: str = None):
     for unit in acx_units:
         unit.set_plots_directory(plots_dir)
     
-    # Generate and save plots for all units (heatmap and PSTHs)
+    # Map p-values for filtering
+    acx_pval_lookup = {int(u): float(p) for u, p in zip(active_units_acx, p_vals_acx)}
+    
+    # ============================================================================
+    # Batch save raw PSTH for all responsive units (tone-aligned) - do this FIRST
+    # ============================================================================
+    save_raw_psth_for_active_units(
+        acx_event_windows_data,
+        active_units_acx,
+        p_vals_acx,
+        "ACx",
+        results_dir,
+        display_window=(-0.5, 2.0),
+    )
+    
+    # Build PSTH paths map (use same naming as batch saver)
+    acx_psth_paths = {}
+    if len(active_units_acx) > 0 and len(p_vals_acx) == len(active_units_acx):
+        sorted_idx = np.argsort(p_vals_acx)
+        sorted_units = active_units_acx[sorted_idx]
+        sorted_p = p_vals_acx[sorted_idx]
+        raw_dir_acx = os.path.join(results_dir, "plots", "psth")
+        for rank, (u, p) in enumerate(zip(sorted_units, sorted_p), start=1):
+            fname = f"acx_unit_{int(u)}_rank{rank:03d}_p{float(p):.4f}_tone_psth.html"
+            acx_psth_paths[int(u)] = os.path.join(raw_dir_acx, fname)
+
+    # Generate and save plots for significant ACx units (heatmap only; raw PSTH already handled) with p<0.2
     print("\n=== Generating plots for all ACx units ===")
     for i, unit in enumerate(acx_units):
+        if acx_pval_lookup.get(int(unit.unit_idx), 1.0) >= 0.2:
+            continue
         if (i + 1) % 10 == 0 or i == 0:
             print(f"  Processing unit {i+1}/{len(acx_units)}: Unit {unit.unit_idx}")
         # Generate and save heatmap (tone-aligned)
         unit.plot_heatmap(display_window=(-0.5, 2.0), cache_plot=True)
-        # Generate and save PSTH plots (outcome-separated and tone-aligned raw)
-        unit.plot_psth_by_outcome(display_window=(-0.5, 2.0), cache_plot=True)
-        unit.plot_raw_psth(display_window=(-0.5, 2.0), cache_plot=True)
     
     # Save comprehensive metrics table for all ACx units
     print("\n=== Saving comprehensive ACx unit metrics table ===")
@@ -210,38 +235,20 @@ def main(parent_dir: str = None):
         psth_baseline_window=(-0.5, 0),
         description="ACx comprehensive unit metrics"
     )
-    if acx_psth_paths:
-        acx_units_df["raw_psth_path"] = acx_units_df["unit_idx"].map(acx_psth_paths)
-        save_dataframe_to_csv(
-            acx_units_df,
-            os.path.join(results_dir, "tables", "acx_all_units_metrics.csv"),
-            "ACx comprehensive unit metrics (with raw psth path)"
-        )
-    print(f"  Saved metrics for {len(acx_units)} ACx units")
     
-    # ============================================================================
-    # Batch save raw PSTH for all responsive units (tone-aligned)
-    # ============================================================================
-    save_raw_psth_for_active_units(
-        acx_event_windows_data,
-        active_units_acx,
-        p_vals_acx,
-        "ACx",
-        results_dir,
-        display_window=(-0.5, 1.0),
+    # Add tone p-values, PSTH paths, and ensure all p-values are included
+    tone_pval_map = {int(u): float(p) for u, p in zip(active_units_acx, p_vals_acx)}
+    acx_units_df["tone_p_value"] = acx_units_df["unit_idx"].map(tone_pval_map)
+    acx_units_df["raw_psth_path"] = acx_units_df["unit_idx"].map(acx_psth_paths)
+    
+    # Resave with all added columns
+    save_dataframe_to_csv(
+        acx_units_df,
+        os.path.join(results_dir, "tables", "acx_all_units_metrics.csv"),
+        "ACx comprehensive unit metrics (with tone p-value, outcome p-value, choice metrics, and PSTH paths)"
     )
-    # Attach raw PSTH paths to ACx metrics (use same naming as saver)
-    acx_psth_paths = {}
-    if len(active_units_acx) > 0 and len(p_vals_acx) == len(active_units_acx):
-        sorted_idx = np.argsort(p_vals_acx)
-        sorted_units = active_units_acx[sorted_idx]
-        sorted_p = p_vals_acx[sorted_idx]
-        raw_dir_acx = os.path.join(results_dir, "plots", "raw_psth")
-        for rank, (u, p) in enumerate(zip(sorted_units, sorted_p), start=1):
-            fname = f"acx_unit_{int(u)}_rank{rank:03d}_p{float(p):.4f}_tone_psth.html"
-            acx_psth_paths[int(u)] = os.path.join(raw_dir_acx, fname)
-    else:
-        raw_dir_acx = None
+    print(f"  Saved metrics for {len(acx_units)} ACx units")
+    print(f"  Columns include: tone_p_value, outcome_p_value, choice_probability, choice_probability_corr, raw_psth_path")
     
     # Display detailed summary table
     print("\n=== ACx Selectivity Summary Table ===")
@@ -272,27 +279,26 @@ def main(parent_dir: str = None):
         p_vals_ofc,
         "OFC",
         results_dir,
-        display_window=(-0.5, 1.0),
+        display_window=(-0.5, 2.0),
     )
-    # Attach raw PSTH paths to OFC metrics (use same naming as batch saver)
+    
+    # Build PSTH paths map (use same naming as batch saver)
     ofc_psth_paths = {}
     if len(active_units_ofc) > 0 and len(p_vals_ofc) == len(active_units_ofc):
         sorted_idx = np.argsort(p_vals_ofc)
         sorted_units = active_units_ofc[sorted_idx]
         sorted_p = p_vals_ofc[sorted_idx]
-        raw_dir_ofc = os.path.join(results_dir, "plots", "raw_psth")
+        raw_dir_ofc = os.path.join(results_dir, "plots", "psth")
         for rank, (u, p) in enumerate(zip(sorted_units, sorted_p), start=1):
             fname = f"ofc_unit_{int(u)}_rank{rank:03d}_p{float(p):.4f}_tone_psth.html"
             ofc_psth_paths[int(u)] = os.path.join(raw_dir_ofc, fname)
-    else:
-        raw_dir_ofc = None
     
     # Compute selectivity metrics for OFC
     if len(active_units_ofc) > 0:
         ofc_selectivity_df = compute_selectivity_metrics_for_active_units(
             ofc_event_windows_data,
             active_units_ofc,
-            window=(-0.1, 0.5),
+            window=(-0.5, 1.5),
             region_name="OFC",
             use_unit_class=True,
         )
@@ -329,16 +335,18 @@ def main(parent_dir: str = None):
         for unit in ofc_units:
             unit.set_plots_directory(plots_dir)
         
-        # Generate and save plots for all units (heatmap and PSTHs)
+        # Map p-values for filtering
+        ofc_pval_lookup = {int(u): float(p) for u, p in zip(active_units_ofc, p_vals_ofc)}
+        
+        # Generate and save plots for OFC units with p < 0.2 (heatmap only; raw PSTH already handled)
         print("\n=== Generating plots for all OFC units ===")
         for i, unit in enumerate(ofc_units):
+            if ofc_pval_lookup.get(int(unit.unit_idx), 1.0) >= 0.2:
+                continue
             if (i + 1) % 10 == 0 or i == 0:
                 print(f"  Processing unit {i+1}/{len(ofc_units)}: Unit {unit.unit_idx}")
             # Generate and save heatmap (tone-aligned)
             unit.plot_heatmap(display_window=(-0.5, 2.0), cache_plot=True)
-            # Generate and save PSTH plots (outcome-separated and tone-aligned raw)
-            unit.plot_psth_by_outcome(display_window=(-0.5, 1.0), cache_plot=True)
-            unit.plot_raw_psth(display_window=(-0.5, 2.0), cache_plot=True)
         
         # Save comprehensive metrics table for all OFC units
         print("\n=== Saving comprehensive OFC unit metrics table ===")
@@ -346,20 +354,26 @@ def main(parent_dir: str = None):
             ofc_units,
             os.path.join(results_dir, "tables", "ofc_all_units_metrics.csv"),
             compute_all_metrics=True,
-            selectivity_window=(-0.1, 1.5),
-            category_window=(-0.1, 1.5),
+            selectivity_window=(-0.5, 1.5),
+            category_window=(-0.5, 1.5),
             category_boundaries=(0.983, 1.525),
             psth_baseline_window=(-0.5, 0),
             description="OFC comprehensive unit metrics"
         )
-        if ofc_psth_paths:
-            ofc_units_df["raw_psth_path"] = ofc_units_df["unit_idx"].map(ofc_psth_paths)
-            save_dataframe_to_csv(
-                ofc_units_df,
-                os.path.join(results_dir, "tables", "ofc_all_units_metrics.csv"),
-                "OFC comprehensive unit metrics (with raw psth path)"
-            )
+        
+        # Add tone p-values, PSTH paths, and ensure all p-values are included
+        tone_pval_map_ofc = {int(u): float(p) for u, p in zip(active_units_ofc, p_vals_ofc)}
+        ofc_units_df["tone_p_value"] = ofc_units_df["unit_idx"].map(tone_pval_map_ofc)
+        ofc_units_df["raw_psth_path"] = ofc_units_df["unit_idx"].map(ofc_psth_paths)
+        
+        # Resave with all added columns
+        save_dataframe_to_csv(
+            ofc_units_df,
+            os.path.join(results_dir, "tables", "ofc_all_units_metrics.csv"),
+            "OFC comprehensive unit metrics (with tone p-value, outcome p-value, choice metrics, and PSTH paths)"
+        )
         print(f"  Saved metrics for {len(ofc_units)} OFC units")
+        print(f"  Columns include: tone_p_value, outcome_p_value, choice_probability, choice_probability_corr, raw_psth_path")
         
     else:
         print("No active OFC units found for comparison")
@@ -388,7 +402,7 @@ def main(parent_dir: str = None):
         # Show go/nogo selectivity (Go = High+Low, NoGo = Middle)
         if 'go_nogo_selective' in acx_category_df.columns:
             n_go_nogo = acx_category_df['go_nogo_selective'].sum()
-            print(f"  Go/NoGo selective units (|d'|>0.5): {n_go_nogo} / {len(acx_category_df)}")
+            print(f"Go/NoGo selective units (|d'|>0.5): {n_go_nogo} / {len(acx_category_df)}")
         
         # Show best category distribution
         if 'best_category' in acx_category_df.columns:
@@ -427,7 +441,7 @@ def main(parent_dir: str = None):
                         cache_plot=True
                     )
     else:
-        print("  No active units to analyze")
+        print("No active units to analyze")
     
     # Run category sensitivity analysis for OFC (using all good units, not just active units)
     ofc_event_matrix, _, _, _, _, _ = ofc_event_windows_data
@@ -443,7 +457,7 @@ def main(parent_dir: str = None):
             ofc_good_units_array,
             low_boundary=0.983,
             high_boundary=1.525,
-            window=(-0.1, 0.5),
+            window=(-0.1, 1.5),
         )
         
         print(f"\nOFC Category Sensitivity Results:")
