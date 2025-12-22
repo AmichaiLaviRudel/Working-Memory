@@ -10,7 +10,7 @@ __version__ = "1.0.0"
 
 # Main exports
 from Analysis.NPXL_analysis.single_unit_offline_analysis.unit import Unit, create_units_from_event_data
-from Analysis.NPXL_analysis.single_unit_offline_analysis.glm_fitting import (
+from Analysis.NPXL_analysis.single_unit_offline_analysis.GLM.glm_fitting import (
     fit_glm_for_unit,
     fit_glm_for_all_units,
     build_design_matrix,
