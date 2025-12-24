@@ -333,25 +333,26 @@ def extract_outcome_times(raw_events_df, tone_onset_times, bin_size):
     min_length = min(len(raw_events_df), len(tone_onset_times))
     
     for i in range(min_length):
-        outcome_time = np.nan
-        
+        outcome_time_relative_to_onset_bin = np.nan
+        tone_onset_time_sec = raw_events_df.iloc[i]['PlayTone'][0][0][0]
+
         # Check for Reward state
         if 'Reward' in raw_events_df.columns:
-            reward_state = raw_events_df.iloc[i]['Reward'][0][0]
-            if not contains_nan(reward_state):
-                reward_start_sec = get_state_start_time(reward_state)
+            reward_state_sec = raw_events_df.iloc[i]['Reward'][0][0]
+            if not contains_nan(reward_state_sec):
+                reward_start_sec = get_state_start_time(reward_state_sec)
                 if reward_start_sec is not None:
-                    outcome_time = tone_onset_times[i] + (reward_start_sec / bin_size)
+                    outcome_time_relative_to_onset_bin = (reward_start_sec - tone_onset_time_sec) / bin_size
         
         # If no reward, check for Punishment state
-        if np.isnan(outcome_time) and 'Punishment' in raw_events_df.columns:
+        if np.isnan(outcome_time_relative_to_onset_bin) and 'Punishment' in raw_events_df.columns:
             punishment_state = raw_events_df.iloc[i]['Punishment'][0][0]
             if not contains_nan(punishment_state):
                 punishment_start_sec = get_state_start_time(punishment_state)
                 if punishment_start_sec is not None:
-                    outcome_time = tone_onset_times[i] + (punishment_start_sec / bin_size)
+                    outcome_time_relative_to_onset_bin =  (punishment_start_sec - tone_onset_time_sec) / bin_size
         
-        outcome_times_bins.append(outcome_time)
+        outcome_times_bins.append(outcome_time_relative_to_onset_bin)
     
     return np.array(outcome_times_bins)
 
@@ -823,7 +824,7 @@ def main():
     # recordings_root_directory = r"/ems/elsc-labs/mizrahi-a/Shared/Amichai/NPXL/Recs/group5"
     # experiment_metadata_csv_path = r"/ems/elsc-labs/mizrahi-a/Code\DB\users_data\Amichai\NPXL recordings _experimental_data.csv".replace("\\", "/")
     
-    recordings_root_directory = r"Z:/Shared/Amichai/NPXL/Recs/group7".replace("\\", "/")
+    recordings_root_directory = r"Z:/Shared/Amichai/NPXL/Recs/group5".replace("\\", "/")
     experiment_metadata_csv_path = r"Z:\Shared\Amichai/Code\DB\users_data\Amichai\NPXL recordings _experimental_data.csv".replace("\\", "/")
     
 
@@ -861,7 +862,6 @@ def main():
                 # Process behavioral data
                 try:
                     trial_types_df, raw_events_df, session_date, session_time, trial_settings, notes, licks, states, stimulis, Unique_Stimuli_Values, tones_per_class, boundaries, recs = load_mat_file(behavioral_data_file_path)
-                    
                     # Check if this is actually an FRA file by checking if stimulis is a 2D array (FRA) or 1D (regular)
                     is_fra_file = "FRA" in current_ks_folder and isinstance(stimulis, np.ndarray) and len(stimulis.shape) == 2
                     
@@ -915,14 +915,15 @@ def main():
                     except FileNotFoundError:
                         tone_onset_times_file = load_nidq_stream(nidq_dir, stream_suffix="nidq.xd_0_1_0.txt")
                     
-                    tone_onset_times_bins = tone_onset_times_file * (1/bin_size)
+       
+                    tone_onset_times_bins = tone_onset_times_file / bin_size
                     
                     # Extract first lick times
                     first_lick_times_bins = extract_first_lick_times(licks, tone_onset_times_bins, bin_size)
                     
                     # Extract outcome times
-                    outcome_times_bins = extract_outcome_times(raw_events_df, tone_onset_times_bins, bin_size)
-                    
+                    outcome_times_bins = extract_outcome_times(raw_events_df, tone_onset_times_file, bin_size)
+
                     # Create stimuli_outcome_df with first lick and outcome times
                     stimuli_outcome_df = couple_stimuli_outcome_and_times(
                         nidq_dir, stimuli, atten, outcomes, bin_size,
@@ -933,7 +934,7 @@ def main():
                     # Load licking data
                     try:
                         licking_timestamps_seconds = load_nidq_stream(nidq_dir, stream_suffix="nidq.xd_0_2_0.txt")
-                        licking_timestamps_in_bins = licking_timestamps_seconds*(1/bin_size)
+                        licking_timestamps_in_bins = licking_timestamps_seconds / bin_size
 
                     except FileNotFoundError:
                         print(f"Warning: No licking data found for {current_ks_folder}")

@@ -164,3 +164,32 @@ def load_full_event_windows_data(data_dir_x: str):
     analysis_output_dir = os.path.join(data_dir_x, "analysis_output")
     return load_event_windows_data(analysis_output_dir)
 
+
+def load_behavioral_data(folder: str):
+    analysis_output_dir = os.path.join(folder, "analysis_output")
+     # Load the licking event windows matrix if it exists
+    lick_file_path = os.path.join(analysis_output_dir, "lick_event_windows_matrix.npy")
+    if os.path.exists(lick_file_path):
+        lick_event_windows_matrix = np.load(lick_file_path)
+    else:
+        lick_event_windows_matrix = None
+    
+    # Load the time axis
+    time_axis = np.load(os.path.join(analysis_output_dir, "event_window_time_axis.npy"))
+    
+    # Load the valid event indices
+    valid_event_indices = np.load(os.path.join(analysis_output_dir, "valid_event_indices.npy"))
+    
+    # Load the filtered stimuli_outcome DataFrame
+    stimuli_outcome_df = pd.read_csv(os.path.join(analysis_output_dir, "event_windows_stimuli_outcome.csv"))
+    
+    # Load metadata
+    metadata = {}
+    metadata_file = os.path.join(analysis_output_dir, "event_windows_metadata.txt")
+    if os.path.exists(metadata_file):
+        with open(metadata_file, 'r') as f:
+            for line in f:
+                key, value = line.strip().split(': ')
+                metadata[key] = value
+
+    return lick_event_windows_matrix, time_axis, valid_event_indices, stimuli_outcome_df, metadata
