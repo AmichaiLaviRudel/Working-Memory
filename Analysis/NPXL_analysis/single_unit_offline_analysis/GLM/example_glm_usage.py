@@ -11,11 +11,25 @@ import nemos as nmo
 # some helper plotting functions
 from nemos import _documentation_utils as doc_plots
 from patsy import dmatrix
+from matplotlib.patches import FancyBboxPatch
 # configure pynapple to ignore conversion warning
 nap.nap_config.suppress_conversion_warnings = True
 
 # configure plots some
 plt.style.use(nmo.styles.plot_style)
+
+# Set modern scientific font (Lato or Inter)
+import matplotlib
+matplotlib.rcParams['font.family'] = 'sans-serif'
+# Try Lato first, then Inter, then fallback to system sans-serif
+matplotlib.rcParams['font.sans-serif'] = ['Lato', 'Inter', 'DejaVu Sans', 'Helvetica', 'Liberation Sans']
+matplotlib.rcParams['font.size'] = 10
+matplotlib.rcParams['axes.labelsize'] = 11
+matplotlib.rcParams['axes.titlesize'] = 12
+matplotlib.rcParams['xtick.labelsize'] = 9
+matplotlib.rcParams['ytick.labelsize'] = 9
+matplotlib.rcParams['legend.fontsize'] = 9
+matplotlib.rcParams['figure.titlesize'] = 14
 
 
 
@@ -155,7 +169,7 @@ EPOCH_START = -1
 EPOCH_END = 3
 
 # Example epoch (for plotting): here from 236s to 242s
-EXAMPLE_EPOCH = nap.IntervalSet(start=30, end=40)
+EXAMPLE_EPOCH = nap.IntervalSet(start=30, end=90)
 
 # Which unit to show as example when plotting
 EXAMPLE_NEURON_ID = 1
@@ -276,55 +290,65 @@ neuron_count = spike_count[:, EXAMPLE_NEURON_ID]
 
 # restrict to a smaller time interval
 epoch_one_spk = EXAMPLE_EPOCH
-fig, axes = plt.subplots(4, 1, figsize=(10, 8), sharex=True)
+fig, axes = plt.subplots(4, 1, figsize=(12, 8), sharex=True)
 
-# Spike count
-axes[0].step(
-    neuron_count.restrict(epoch_one_spk).t,
-    neuron_count.restrict(epoch_one_spk).d,
-    where="post",
-    label="Spike Count"
-)
-axes[0].set_ylabel("Counts")
-axes[0].set_title("Spike Count Time Series")
+# Convert spike count to firing rate and smooth
+neuron_count_restricted = neuron_count.restrict(epoch_one_spk)
+firing_rate_tsd = nap.Tsd(t=neuron_count_restricted.t, d=neuron_count_restricted.d / BIN_SIZE)
+firing_rate_smooth = firing_rate_tsd.smooth(std=0.05, windowsize=0.25)
+
+# Create regular time grid for filled area plot
+t_start = epoch_one_spk.start[0]
+t_end = epoch_one_spk.end[0]
+t_full = np.arange(t_start, t_end + BIN_SIZE, BIN_SIZE)
+fr_filled = np.zeros_like(t_full, dtype=float)
+
+# Fill in smoothed values
+smooth_times = firing_rate_smooth.t
+smooth_values = firing_rate_smooth.d
+for i, t_val in enumerate(t_full):
+    dists = np.abs(smooth_times - t_val)
+    if len(dists) > 0 and np.min(dists) < BIN_SIZE:
+        fr_filled[i] = smooth_values[np.argmin(dists)]
+
+# Create gradient area plot for firing rate
+n_gradient_layers = 15
+for i in range(n_gradient_layers):
+    y_bottom = fr_filled * (i / n_gradient_layers)
+    y_top = fr_filled * ((i + 1) / n_gradient_layers)
+    alpha = 0.4 * ((i + 1) / n_gradient_layers)
+    axes[0].fill_between(t_full, y_bottom, y_top, alpha=alpha, color='tab:blue', linewidth=0)
+
+axes[0].plot(t_full, fr_filled, color='tab:blue', linewidth=2, alpha=0.7, label="Firing Rate")
+axes[0].set_ylabel("Firing Rate (Hz)")
+axes[0].set_title("Spike Count Time Series (Smoothed)")
 axes[0].legend()
+axes[0].grid(True, alpha=0.3)
 
-# Tone onset
-axes[1].step(
-    temporal_features["tone_onset"].restrict(epoch_one_spk).t,
-    temporal_features["tone_onset"].restrict(epoch_one_spk).d,
-    color="red",
-    alpha=0.5,
-    label="Tone Onset"
-)
+# Tone onset (keep as step plot for events)
+tone_data = temporal_features["tone_onset"].restrict(epoch_one_spk)
+axes[1].step(tone_data.t, tone_data.d, where="post", color="red", alpha=0.7, linewidth=1.5, label="Tone Onset")
 axes[1].set_ylabel("Event")
 axes[1].set_title("Tone Onset")
 axes[1].legend()
+axes[1].grid(True, alpha=0.3)
 
 # Licks
-axes[2].step(
-    temporal_features["licks"].restrict(epoch_one_spk).t,
-    temporal_features["licks"].restrict(epoch_one_spk).d,
-    color="blue",
-    alpha=0.5,
-    label="Licks"
-)
+lick_data = temporal_features["licks"].restrict(epoch_one_spk)
+axes[2].step(lick_data.t, lick_data.d, where="post", color="tab:blue", alpha=0.7, linewidth=1.5, label="Licks")
 axes[2].set_ylabel("Event")
 axes[2].set_title("Licks")
 axes[2].legend()
+axes[2].grid(True, alpha=0.3)
 
 # Outcome Onset
-axes[3].step(
-    temporal_features["outcome_onset"].restrict(epoch_one_spk).t,
-    temporal_features["outcome_onset"].restrict(epoch_one_spk).d,
-    color="green",
-    alpha=0.5,
-    label="Outcome Onset"
-)
+outcome_data = temporal_features["outcome_onset"].restrict(epoch_one_spk)
+axes[3].step(outcome_data.t, outcome_data.d, where="post", color="green", alpha=0.7, linewidth=1.5, label="Outcome Onset")
 axes[3].set_xlabel("Time (sec)")
 axes[3].set_ylabel("Event")
 axes[3].set_title("Outcome Onset")
 axes[3].legend()
+axes[3].grid(True, alpha=0.3)
 
 plt.tight_layout()
 
@@ -515,8 +539,8 @@ actual_rate_hz = np.squeeze(y_ep.d) / BIN_SIZE
 
 
 #%% --- Visualize: actual vs predicted FR ---
-# Choose a representative window
-plot_ep = nap.IntervalSet(start=epochs.start[0]+2.5*60, end=epochs.start[0]+3*60)
+# Use EXAMPLE_EPOCH for consistent plotting
+plot_ep = EXAMPLE_EPOCH
 # NeMoS helper plot - restrict data to plot window first
 y_plot = y_ep.restrict(plot_ep)
 pred_plot_mask = (y_ep.t >= plot_ep.start[0]) & (y_ep.t <= plot_ep.end[0])
@@ -525,6 +549,10 @@ pred_plot_mask = (y_ep.t >= plot_ep.start[0]) & (y_ep.t <= plot_ep.end[0])
 pred_rate_tsd = nap.Tsd(t=y_ep.t[pred_plot_mask], d=pred_rate_hz[pred_plot_mask])
 # Smooth predicted rate using Tsd smooth method (0.25s window = 5 bins at BIN_SIZE=0.05s)
 pred_rate_tsd = pred_rate_tsd.smooth(std=0.05, windowsize=0.25)
+
+# Also smooth actual rate
+actual_rate_tsd_raw = nap.Tsd(t=y_ep.t[pred_plot_mask], d=actual_rate_hz[pred_plot_mask])
+actual_rate_tsd = actual_rate_tsd_raw.smooth(std=0.05, windowsize=0.25)
 
 # Fill missing time points with zeros to ensure continuous area chart
 # Create regular time grid at BIN_SIZE resolution
@@ -536,14 +564,13 @@ pred_rate_filled = np.zeros_like(t_full, dtype=float)
 actual_rate_filled = np.zeros_like(t_full, dtype=float)
 
 # Fill in actual values by finding nearest neighbors
-actual_mask = pred_plot_mask
-if np.any(actual_mask):
-    actual_times = y_ep.t[actual_mask]
-    actual_values = actual_rate_hz[actual_mask]
+if len(actual_rate_tsd) > 0:
+    actual_times = actual_rate_tsd.t
+    actual_values = actual_rate_tsd.d
     for i, t_val in enumerate(t_full):
         # Find nearest time point
         dists = np.abs(actual_times - t_val)
-        if np.min(dists) < BIN_SIZE:
+        if len(dists) > 0 and np.min(dists) < BIN_SIZE:
             actual_rate_filled[i] = actual_values[np.argmin(dists)]
 
 # Fill in predicted values by finding nearest neighbors
@@ -553,16 +580,11 @@ if len(pred_rate_tsd) > 0:
     for i, t_val in enumerate(t_full):
         # Find nearest time point
         dists = np.abs(pred_times - t_val)
-        if np.min(dists) < BIN_SIZE:
+        if len(dists) > 0 and np.min(dists) < BIN_SIZE:
             pred_rate_filled[i] = pred_values[np.argmin(dists)]
 
-# Create filled Tsd objects
-pred_rate_tsd = nap.Tsd(t=t_full, d=pred_rate_filled)
-actual_rate_tsd = nap.Tsd(t=t_full, d=actual_rate_filled)
-
-
 # Direct matplotlib comparison with area chart and gradients
-fig, ax = plt.subplots(1, 1, figsize=(12, 4))
+fig, ax = plt.subplots(1, 1, figsize=(14, 5))
 
 # Use filled time series with zeros at all time points
 t_plot = t_full
@@ -591,12 +613,59 @@ for i in range(n_gradient_layers):
 ax.plot(t_plot, actual_plot, color='orange', linewidth=2, alpha=0.7, label="Actual FR")
 ax.plot(t_plot, pred_plot, color='green', linewidth=2, alpha=0.7, label="Predicted FR")
 
-ax.set_xlabel("Time (sec)")
-ax.set_ylabel("Firing rate (Hz)")
-ax.set_title(f"Actual vs Predicted Firing Rate - Neuron {EXAMPLE_NEURON_ID}")
-ax.legend()
+ax.set_xlabel("Time (sec)", fontsize=11)
+ax.set_ylabel("Firing rate (Hz)", fontsize=11)
+ax.set_title(f"Actual vs Predicted Firing Rate - Neuron {EXAMPLE_NEURON_ID}", fontsize=12, fontweight='bold')
+ax.legend(fontsize=10)
 ax.grid(True, alpha=0.3)
 plt.tight_layout()
+
+#%% Helper function for rounded bars
+def draw_rounded_bars(ax, x, heights, colors, alpha=0.7, edgecolor='black', boxstyle='round,pad=0.01'):
+    """
+    Draw rounded bars on an axis.
+    
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        Axis to draw on
+    x : array-like
+        X positions of bars
+    heights : array-like
+        Heights of bars
+    colors : array-like
+        Colors for each bar
+    alpha : float
+        Transparency
+    edgecolor : str
+        Edge color
+    boxstyle : str
+        Box style for rounded corners
+    """
+    for i, (xi, h, c) in enumerate(zip(x, heights, colors)):
+        if h >= 0:
+            # Positive bars: start from 0, go up
+            y_bottom = 0
+            y_top = h
+        else:
+            # Negative bars: start from 0, go down
+            y_bottom = h
+            y_top = 0
+        
+        width = 0.6  # Bar width
+        x_left = xi - width / 2
+        x_right = xi + width / 2
+        
+        # Create rounded rectangle
+        rect = FancyBboxPatch(
+            (x_left, y_bottom), x_right - x_left, y_top - y_bottom,
+            boxstyle=boxstyle,
+            facecolor=c,
+            edgecolor=edgecolor,
+            alpha=alpha,
+            linewidth=1
+        )
+        ax.add_patch(rect)
 
 #%% Visualize basis functions and how they reconstruct temporal kernels for all feature types
 # Evaluate basis functions on a grid (for temporal event features - causal)
@@ -670,9 +739,16 @@ for feature_name in temporal_feature_names:
         ax1.grid(True, alpha=0.3)
         ax1.legend(fontsize=6, ncol=2, loc='best')
         
-        # Column 2: Reconstructed kernel
+        # Column 2: Reconstructed kernel with gradient area
         ax2 = fig.add_subplot(gs[row_idx, 1])
-        ax2.plot(time_event_sec, reconstructed_kernel, 'b-', linewidth=3)
+        # Create gradient area plot
+        n_gradient_layers = 15
+        for i in range(n_gradient_layers):
+            y_bottom = reconstructed_kernel * (i / n_gradient_layers)
+            y_top = reconstructed_kernel * ((i + 1) / n_gradient_layers)
+            alpha = 0.4 * ((i + 1) / n_gradient_layers)
+            ax2.fill_between(time_event_sec, y_bottom, y_top, alpha=alpha, color='tab:blue', linewidth=0)
+        ax2.plot(time_event_sec, reconstructed_kernel, 'b-', linewidth=2, alpha=0.7)
         ax2.set_xlabel("Time (s)", fontsize=9)
         ax2.set_ylabel("Kernel weight", fontsize=9)
         ax2.set_title("Reconstructed Kernel", fontsize=10)
@@ -717,9 +793,16 @@ for feature_name in categorical_feature_names:
         ax1.grid(True, alpha=0.3)
         ax1.legend(fontsize=6, ncol=2, loc='best')
         
-        # Column 2: Reconstructed kernel
+        # Column 2: Reconstructed kernel with gradient area
         ax2 = fig.add_subplot(gs[row_idx, 1])
-        ax2.plot(time_cat_sec, reconstructed_kernel, 'g-', linewidth=3)
+        # Create gradient area plot
+        n_gradient_layers = 15
+        for i in range(n_gradient_layers):
+            y_bottom = reconstructed_kernel * (i / n_gradient_layers)
+            y_top = reconstructed_kernel * ((i + 1) / n_gradient_layers)
+            alpha = 0.4 * ((i + 1) / n_gradient_layers)
+            ax2.fill_between(time_cat_sec, y_bottom, y_top, alpha=alpha, color='tab:green', linewidth=0)
+        ax2.plot(time_cat_sec, reconstructed_kernel, 'g-', linewidth=2, alpha=0.7)
         ax2.set_xlabel("Time from event (s)", fontsize=9)
         ax2.set_ylabel("Kernel weight", fontsize=9)
         ax2.set_title("Reconstructed Kernel (Acausal)", fontsize=10)
@@ -760,9 +843,16 @@ if len(hist_feature_idx) == basis_history.n_basis_funcs:
     ax1.grid(True, alpha=0.3)
     ax1.legend(fontsize=6, ncol=2, loc='best')
     
-    # Column 2: Reconstructed kernel
+    # Column 2: Reconstructed kernel with gradient area
     ax2 = fig.add_subplot(gs[row_idx, 1])
-    ax2.plot(time_hist_sec, reconstructed_hist, 'r-', linewidth=3)
+    # Create gradient area plot
+    n_gradient_layers = 15
+    for i in range(n_gradient_layers):
+        y_bottom = reconstructed_hist * (i / n_gradient_layers)
+        y_top = reconstructed_hist * ((i + 1) / n_gradient_layers)
+        alpha = 0.4 * ((i + 1) / n_gradient_layers)
+        ax2.fill_between(time_hist_sec, y_bottom, y_top, alpha=alpha, color='tab:red', linewidth=0)
+    ax2.plot(time_hist_sec, reconstructed_hist, 'r-', linewidth=2, alpha=0.7)
     ax2.set_xlabel("Time from spike (s)", fontsize=9)
     ax2.set_ylabel("Kernel weight", fontsize=9)
     ax2.set_title("Reconstructed Kernel", fontsize=10)
@@ -781,8 +871,8 @@ if len(hist_feature_idx) == basis_history.n_basis_funcs:
     ax3.axhline(0, color='k', linewidth=0.5, linestyle='--')
     ax3.grid(True, alpha=0.3, axis='y')
 
-plt.suptitle("GLM Temporal Kernels: Causal (Temporal) + Acausal (Categorical) + Spike History", fontsize=14, fontweight='bold')
-plt.tight_layout()
+plt.suptitle("GLM Temporal Kernels: Causal (Temporal) + Acausal (Categorical) + Spike History", 
+            fontsize=14, fontweight='bold', fontfamily='sans-serif')
 
 
 
@@ -1175,8 +1265,34 @@ if INCLUDE_SPIKE_HISTORY:
             cross_region.extend(ofc_acx_flat)
         
         if len(within_region) > 0 and len(cross_region) > 0:
-            ax.hist(within_region, bins=30, alpha=0.6, label='Within-region', color='tab:blue', density=True)
-            ax.hist(cross_region, bins=30, alpha=0.6, label='Cross-region', color='tab:orange', density=True)
+            # Compute histogram values
+            bins = 50
+            within_counts, within_bins = np.histogram(within_region, bins=bins, density=True)
+            cross_counts, cross_bins = np.histogram(cross_region, bins=bins, density=True)
+            
+            # Use bin centers for x-axis
+            within_centers = (within_bins[:-1] + within_bins[1:]) / 2
+            cross_centers = (cross_bins[:-1] + cross_bins[1:]) / 2
+            
+            # Create gradient area fills for within-region
+            n_gradient_layers = 15
+            for i in range(n_gradient_layers):
+                y_bottom = within_counts * (i / n_gradient_layers)
+                y_top = within_counts * ((i + 1) / n_gradient_layers)
+                alpha = 0.4 * ((i + 1) / n_gradient_layers)
+                ax.fill_between(within_centers, y_bottom, y_top, alpha=alpha, color='tab:blue', linewidth=0)
+            
+            # Create gradient area fills for cross-region
+            for i in range(n_gradient_layers):
+                y_bottom = cross_counts * (i / n_gradient_layers)
+                y_top = cross_counts * ((i + 1) / n_gradient_layers)
+                alpha = 0.4 * ((i + 1) / n_gradient_layers)
+                ax.fill_between(cross_centers, y_bottom, y_top, alpha=alpha, color='tab:orange', linewidth=0)
+            
+            # Add highlighted lines on top
+            ax.plot(within_centers, within_counts, color='tab:blue', linewidth=2, alpha=0.8, label='Within-region')
+            ax.plot(cross_centers, cross_counts, color='tab:orange', linewidth=2, alpha=0.8, label='Cross-region')
+            
             ax.set_xlabel('Coupling Strength')
             ax.set_ylabel('Density')
             ax.set_title('Within-Region vs Cross-Region Coupling', fontweight='bold')
@@ -1188,7 +1304,8 @@ if INCLUDE_SPIKE_HISTORY:
                    transform=ax.transAxes, verticalalignment='top', 
                    bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
         
-        plt.suptitle('All-to-All Connectivity: ACx vs OFC Analysis', fontsize=16, fontweight='bold', y=0.995)
+        plt.suptitle('All-to-All Connectivity: ACx vs OFC Analysis', fontsize=16, fontweight='bold', 
+                    y=0.995, fontfamily='sans-serif')
         
         # Print top connections by type
         print(f"\nTop connections by type:")
