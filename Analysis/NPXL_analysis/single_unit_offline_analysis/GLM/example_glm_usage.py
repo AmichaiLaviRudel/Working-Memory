@@ -155,10 +155,10 @@ EPOCH_START = -1
 EPOCH_END = 3
 
 # Example epoch (for plotting): here from 236s to 242s
-EXAMPLE_EPOCH = nap.IntervalSet(start=236, end=242)
+EXAMPLE_EPOCH = nap.IntervalSet(start=30, end=40)
 
 # Which unit to show as example when plotting
-EXAMPLE_NEURON_ID = 10
+EXAMPLE_NEURON_ID = 1
 
 # Bin size for preprocessing continuous data used in feature extraction (in seconds)
 PREROCEESING_BIN_SIZE = 0.005
@@ -269,29 +269,13 @@ start = tone_onset - EPOCH_START
 end = tone_onset + EPOCH_END # 3 seconds after tone onset
 epochs = nap.IntervalSet(start=start, end=end)
 
-#%% Tuning curves
-stimulus = categorical_features["stimulus_ID"]
-tuning_curves = nap.compute_tuning_curves(
-    spikes.restrict(epochs).getby_category("region")["ACx"], features=stimulus, bins=15, range=(0, 2.5), feature_names=["stimulus"]
-)
-
-fig, ax = plt.subplots(1, 2, figsize=(12, 4))
-ax[0].plot(tuning_curves[0])
-ax[0].set_xlabel("frequency (hz)")
-ax[0].set_ylabel("Firing rate (Hz)")
-ax[1].plot(tuning_curves[1])
-ax[1].set_xlabel("frequency (hz)")
-plt.tight_layout()
-
 
 # %%
 # select a neuron's spike count time series
-neuron_count = spike_count[:, 0]
+neuron_count = spike_count[:, EXAMPLE_NEURON_ID]
 
 # restrict to a smaller time interval
-epoch_one_spk = nap.IntervalSet(
-    start=236, end=242
-)
+epoch_one_spk = EXAMPLE_EPOCH
 fig, axes = plt.subplots(4, 1, figsize=(10, 8), sharex=True)
 
 # Spike count
@@ -306,7 +290,7 @@ axes[0].set_title("Spike Count Time Series")
 axes[0].legend()
 
 # Tone onset
-axes[1].plot(
+axes[1].step(
     temporal_features["tone_onset"].restrict(epoch_one_spk).t,
     temporal_features["tone_onset"].restrict(epoch_one_spk).d,
     color="red",
@@ -318,7 +302,7 @@ axes[1].set_title("Tone Onset")
 axes[1].legend()
 
 # Licks
-axes[2].plot(
+axes[2].step(
     temporal_features["licks"].restrict(epoch_one_spk).t,
     temporal_features["licks"].restrict(epoch_one_spk).d,
     color="blue",
@@ -330,7 +314,7 @@ axes[2].set_title("Licks")
 axes[2].legend()
 
 # Outcome Onset
-axes[3].plot(
+axes[3].step(
     temporal_features["outcome_onset"].restrict(epoch_one_spk).t,
     temporal_features["outcome_onset"].restrict(epoch_one_spk).d,
     color="green",
@@ -525,36 +509,93 @@ glm_basis.fit(X_ep, y_ep)
 print(f"Train pseudo-R2: {glm_basis.score(X_ep, y_ep, score_type='pseudo-r2-Cohen'):.4f}")
 
 #%% --- Predict firing rate ---
-pred_rate_hz = np.squeeze(glm_basis.predict(X_ep)) * BIN_SIZE
-actual_rate_hz = np.squeeze(y_ep.d) * BIN_SIZE
+pred_rate_hz = np.squeeze(glm_basis.predict(X_ep)) / BIN_SIZE
+actual_rate_hz = np.squeeze(y_ep.d) / BIN_SIZE
 
 
 
 #%% --- Visualize: actual vs predicted FR ---
 # Choose a representative window
-EXAMPLE_EPOCH = nap.IntervalSet(start=epochs.start[0], end=epochs.start[0]+0.5*60)
-plot_ep = EXAMPLE_EPOCH
+plot_ep = nap.IntervalSet(start=epochs.start[0]+2.5*60, end=epochs.start[0]+3*60)
 # NeMoS helper plot - restrict data to plot window first
 y_plot = y_ep.restrict(plot_ep)
 pred_plot_mask = (y_ep.t >= plot_ep.start[0]) & (y_ep.t <= plot_ep.end[0])
 
 # Create a pynapple Tsd for predicted rate in plot window
 pred_rate_tsd = nap.Tsd(t=y_ep.t[pred_plot_mask], d=pred_rate_hz[pred_plot_mask])
+# Smooth predicted rate using Tsd smooth method (0.25s window = 5 bins at BIN_SIZE=0.05s)
+pred_rate_tsd = pred_rate_tsd.smooth(std=0.05, windowsize=0.25)
+
+# Fill missing time points with zeros to ensure continuous area chart
+# Create regular time grid at BIN_SIZE resolution
+t_start = plot_ep.start[0]
+t_end = plot_ep.end[0]
+t_full = np.arange(t_start, t_end + BIN_SIZE, BIN_SIZE)
+# Initialize with zeros
+pred_rate_filled = np.zeros_like(t_full, dtype=float)
+actual_rate_filled = np.zeros_like(t_full, dtype=float)
+
+# Fill in actual values by finding nearest neighbors
+actual_mask = pred_plot_mask
+if np.any(actual_mask):
+    actual_times = y_ep.t[actual_mask]
+    actual_values = actual_rate_hz[actual_mask]
+    for i, t_val in enumerate(t_full):
+        # Find nearest time point
+        dists = np.abs(actual_times - t_val)
+        if np.min(dists) < BIN_SIZE:
+            actual_rate_filled[i] = actual_values[np.argmin(dists)]
+
+# Fill in predicted values by finding nearest neighbors
+if len(pred_rate_tsd) > 0:
+    pred_times = pred_rate_tsd.t
+    pred_values = pred_rate_tsd.d
+    for i, t_val in enumerate(t_full):
+        # Find nearest time point
+        dists = np.abs(pred_times - t_val)
+        if np.min(dists) < BIN_SIZE:
+            pred_rate_filled[i] = pred_values[np.argmin(dists)]
+
+# Create filled Tsd objects
+pred_rate_tsd = nap.Tsd(t=t_full, d=pred_rate_filled)
+actual_rate_tsd = nap.Tsd(t=t_full, d=actual_rate_filled)
 
 
-# Direct matplotlib comparison
+# Direct matplotlib comparison with area chart and gradients
 fig, ax = plt.subplots(1, 1, figsize=(12, 4))
 
-# Find indices in y_ep that fall within plot_ep
-plot_mask = (y_ep.t >= plot_ep.start[0]) & (y_ep.t <= plot_ep.end[0])
-t_plot = y_ep.t[plot_mask]
+# Use filled time series with zeros at all time points
+t_plot = t_full
+actual_plot = actual_rate_filled
+pred_plot = pred_rate_filled
 
-ax.plot(t_plot, actual_rate_hz[plot_mask], color="k", linewidth=1, label="Actual FR", alpha=0.7)
-ax.plot(t_plot, pred_rate_hz[plot_mask], color="tab:red", linewidth=2, label="Predicted FR (Basis GLM)", alpha=0.8)
+# Create gradient effect for area charts using multiple overlapping fills
+# Orange gradient for observed (actual) firing rate - darker at top, lighter at bottom
+n_gradient_layers = 15
+for i in range(n_gradient_layers):
+    # Create gradient from bottom (transparent) to top (opaque)
+    y_bottom = actual_plot * (i / n_gradient_layers)
+    y_top = actual_plot * ((i + 1) / n_gradient_layers)
+    alpha = 0.4 * ((i + 1) / n_gradient_layers)  # Increasing opacity toward top
+    ax.fill_between(t_plot, y_bottom, y_top, alpha=alpha, color='orange', linewidth=0)
+
+# Green gradient for predicted firing rate - darker at top, lighter at bottom
+for i in range(n_gradient_layers):
+    # Create gradient from bottom (transparent) to top (opaque)
+    y_bottom = pred_plot * (i / n_gradient_layers)
+    y_top = pred_plot * ((i + 1) / n_gradient_layers)
+    alpha = 0.4 * ((i + 1) / n_gradient_layers)  # Increasing opacity toward top
+    ax.fill_between(t_plot, y_bottom, y_top, alpha=alpha, color='green', linewidth=0)
+
+# Add semi-transparent outlines for better visibility
+ax.plot(t_plot, actual_plot, color='orange', linewidth=2, alpha=0.7, label="Actual FR")
+ax.plot(t_plot, pred_plot, color='green', linewidth=2, alpha=0.7, label="Predicted FR")
+
 ax.set_xlabel("Time (sec)")
 ax.set_ylabel("Firing rate (Hz)")
-ax.set_title(f"Actual vs Predicted Firing Rate (NeMoS Basis GLM) - Neuron {EXAMPLE_NEURON_ID}")
+ax.set_title(f"Actual vs Predicted Firing Rate - Neuron {EXAMPLE_NEURON_ID}")
 ax.legend()
+ax.grid(True, alpha=0.3)
 plt.tight_layout()
 
 #%% Visualize basis functions and how they reconstruct temporal kernels for all feature types
@@ -744,7 +785,9 @@ plt.suptitle("GLM Temporal Kernels: Causal (Temporal) + Acausal (Categorical) + 
 plt.tight_layout()
 
 
-# %%
+
+
+
 #%% Create population design matrix with optional per-neuron spike history (self-coupling)
 
 # Get shared predictors (temporal + categorical) without spike history
@@ -941,24 +984,73 @@ if INCLUDE_SPIKE_HISTORY:
         
         history_coefs_reshaped = history_coefs.reshape(n_source, n_basis, n_target)
         
-        # Sum across basis functions to get total coupling strength (absolute)
+        # Reconstruct kernels for each connection and compute normalized coupling strength
+        # This accounts for both coefficients and basis function shapes
+        # Use L2 norm of reconstructed kernel as coupling strength (normalized metric)
+        # This is more interpretable than summing raw coefficients
         # Shape: (n_source_neurons, n_target_neurons)
-        coupling_strength = np.sum(np.abs(history_coefs_reshaped), axis=1)
+        coupling_strength = np.zeros((n_source, n_target))
+        coupling_signed = np.zeros((n_source, n_target))
         
-        # Also compute signed coupling (excitatory vs inhibitory)
-        coupling_signed = np.sum(history_coefs_reshaped, axis=1)
+        # Compute basis kernels for spike history
+        # Use the same window size as when basis_history was created
+        history_window_sec = 0.8
+        # Use the rate from the binned data (1/BIN_SIZE)
+        history_window_bins = int(history_window_sec / BIN_SIZE)
+        time_hist, basis_kernels_hist = basis_history.evaluate_on_grid(history_window_bins)
+        
+        for source_idx in range(n_source):
+            for target_idx in range(n_target):
+                # Get coefficients for this connection
+                coefs = history_coefs_reshaped[source_idx, :, target_idx]
+                # Reconstruct kernel (same as for temporal features)
+                reconstructed_kernel = np.dot(basis_kernels_hist, coefs)
+                # Compute coupling strength as L2 norm of reconstructed kernel (magnitude)
+                coupling_strength[source_idx, target_idx] = np.linalg.norm(reconstructed_kernel)
+                # Compute signed coupling as sum of reconstructed kernel (net effect: +excitatory, -inhibitory)
+                coupling_signed[source_idx, target_idx] = np.sum(reconstructed_kernel)
+        
+        # Normalize signed coupling to -1 to 1 range to preserve excitation/inhibition
+        # Divide by maximum absolute value to scale to [-1, 1]
+        max_abs_coupling = np.max(np.abs(coupling_signed))
+        coupling_normalized = coupling_signed / (max_abs_coupling + 1e-10)
         
         print(f"Coupling matrix shape: {coupling_strength.shape} (source × target)")
-        print(f"Mean coupling strength: {np.mean(coupling_strength):.4f}")
-        print(f"Max coupling strength: {np.max(coupling_strength):.4f}")
+        print(f"Signed coupling: Sum of reconstructed kernels (preserves excitation/inhibition)")
+        print(f"  Raw - Mean: {np.mean(coupling_signed):.4f}, Max: {np.max(coupling_signed):.4f}, Min: {np.min(coupling_signed):.4f}")
+        print(f"  Normalized (-1 to 1) - Mean: {np.mean(coupling_normalized):.4f}, Max: {np.max(coupling_normalized):.4f}, Min: {np.min(coupling_normalized):.4f}")
+        
+        # Use normalized signed coupling for visualization and analysis
+        # Positive values = excitatory, negative values = inhibitory
+        # For visualization, use signed values to show excitation/inhibition
+        coupling_strength = coupling_normalized  # Signed normalized coupling (-1 to 1)
+        coupling_signed = coupling_normalized  # Same as coupling_strength (signed)
         
         # Separate neurons by region
         acx_indices = [i for i, r in enumerate(population_regions) if r == 'ACx']
         ofc_indices = [i for i, r in enumerate(population_regions) if r == 'OFC']
         
+        # Sort within each region by total outgoing coupling strength (sum of absolute values)
+        # This orders units by their overall influence on other units
+        def sort_by_coupling_strength(indices):
+            if len(indices) == 0:
+                return indices
+            # Compute total outgoing coupling strength for each unit
+            outgoing_strength = np.sum(np.abs(coupling_strength[np.ix_(indices, range(n_target))]), axis=1)
+            # Sort indices by descending coupling strength
+            sorted_idx = np.argsort(outgoing_strength)[::-1]
+            return [indices[i] for i in sorted_idx]
+        
+        acx_indices_sorted = sort_by_coupling_strength(acx_indices)
+        ofc_indices_sorted = sort_by_coupling_strength(ofc_indices)
+        
         print(f"\nRegion breakdown:")
-        print(f"  ACx neurons: {len(acx_indices)} (indices: {acx_indices})")
-        print(f"  OFC neurons: {len(ofc_indices)} (indices: {ofc_indices})")
+        print(f"  ACx neurons: {len(acx_indices_sorted)} (sorted by coupling strength)")
+        print(f"  OFC neurons: {len(ofc_indices_sorted)} (sorted by coupling strength)")
+        
+        # Use sorted indices for all subsequent analysis
+        acx_indices = acx_indices_sorted
+        ofc_indices = ofc_indices_sorted
         
         # Extract submatrices for different connection types
         # ACx → ACx
@@ -1006,13 +1098,14 @@ if INCLUDE_SPIKE_HISTORY:
         
         # Full matrix with region boundaries (top row)
         ax_full = fig.add_subplot(gs[0, :])
-        # Reorder neurons by region for visualization
+        # Reorder neurons by region (already sorted by coupling strength within each region)
         region_order = acx_indices + ofc_indices
         coupling_ordered = coupling_strength[np.ix_(region_order, region_order)]
-        im = ax_full.imshow(coupling_ordered, aspect='auto', cmap='viridis')
+        # Use diverging colormap to show excitation (red/positive) and inhibition (blue/negative)
+        im = ax_full.imshow(coupling_ordered, aspect='auto', cmap='RdBu_r', vmin=-1, vmax=1)
         ax_full.set_xlabel('Target Neuron')
         ax_full.set_ylabel('Source Neuron')
-        ax_full.set_title('Full Connectivity Matrix (Ordered by Region)', fontsize=12, fontweight='bold')
+        ax_full.set_title('Full Connectivity Matrix (Grouped by Region, Sorted by Coupling Strength)', fontsize=12, fontweight='bold')
         
         # Add region boundaries
         if len(acx_indices) > 0 and len(ofc_indices) > 0:
@@ -1023,12 +1116,12 @@ if INCLUDE_SPIKE_HISTORY:
             ax_full.text(-1, len(acx_indices)/2, 'ACx', ha='right', va='center', fontsize=10, fontweight='bold', color='white', rotation=90)
             ax_full.text(-1, len(acx_indices) + len(ofc_indices)/2, 'OFC', ha='right', va='center', fontsize=10, fontweight='bold', color='white', rotation=90)
         
-        plt.colorbar(im, ax=ax_full, label='Coupling Strength')
+        plt.colorbar(im, ax=ax_full, label='Coupling Strength (Normalized -1 to 1)\nRed=Excitatory, Blue=Inhibitory')
         
         # ACx → ACx
         if acx_to_acx.size > 0:
             ax = fig.add_subplot(gs[1, 0])
-            im = ax.imshow(acx_to_acx, aspect='auto', cmap='viridis')
+            im = ax.imshow(acx_to_acx, aspect='auto', cmap='RdBu_r', vmin=-1, vmax=1)
             ax.set_title('ACx → ACx', fontweight='bold')
             ax.set_xlabel('Target ACx')
             ax.set_ylabel('Source ACx')
@@ -1038,7 +1131,7 @@ if INCLUDE_SPIKE_HISTORY:
         # ACx → OFC
         if acx_to_ofc.size > 0:
             ax = fig.add_subplot(gs[1, 1])
-            im = ax.imshow(acx_to_ofc, aspect='auto', cmap='viridis')
+            im = ax.imshow(acx_to_ofc, aspect='auto', cmap='RdBu_r', vmin=-1, vmax=1)
             ax.set_title('ACx → OFC', fontweight='bold')
             ax.set_xlabel('Target OFC')
             ax.set_ylabel('Source ACx')
@@ -1047,7 +1140,7 @@ if INCLUDE_SPIKE_HISTORY:
         # OFC → ACx
         if ofc_to_acx.size > 0:
             ax = fig.add_subplot(gs[1, 2])
-            im = ax.imshow(ofc_to_acx, aspect='auto', cmap='viridis')
+            im = ax.imshow(ofc_to_acx, aspect='auto', cmap='RdBu_r', vmin=-1, vmax=1)
             ax.set_title('OFC → ACx', fontweight='bold')
             ax.set_xlabel('Target ACx')
             ax.set_ylabel('Source OFC')
@@ -1056,7 +1149,7 @@ if INCLUDE_SPIKE_HISTORY:
         # OFC → OFC
         if ofc_to_ofc.size > 0:
             ax = fig.add_subplot(gs[2, 0])
-            im = ax.imshow(ofc_to_ofc, aspect='auto', cmap='viridis')
+            im = ax.imshow(ofc_to_ofc, aspect='auto', cmap='RdBu_r', vmin=-1, vmax=1)
             ax.set_title('OFC → OFC', fontweight='bold')
             ax.set_xlabel('Target OFC')
             ax.set_ylabel('Source OFC')
@@ -1099,30 +1192,172 @@ if INCLUDE_SPIKE_HISTORY:
         
         # Print top connections by type
         print(f"\nTop connections by type:")
+        best_connections = {}
         if acx_to_acx.size > 0:
             top_acx_acx = np.unravel_index(np.argmax(acx_to_acx), acx_to_acx.shape)
-            print(f"  ACx→ACx: Neuron {population_ids[acx_indices[top_acx_acx[0]]]} → {population_ids[acx_indices[top_acx_acx[1]]]}: {acx_to_acx[top_acx_acx]:.4f}")
+            source_id = population_ids[acx_indices[top_acx_acx[0]]]
+            target_id = population_ids[acx_indices[top_acx_acx[1]]]
+            best_connections['ACx→ACx'] = (source_id, target_id, acx_to_acx[top_acx_acx])
+            print(f"  ACx→ACx: Neuron {source_id} → {target_id}: {acx_to_acx[top_acx_acx]:.4f}")
         if acx_to_ofc.size > 0:
             top_acx_ofc = np.unravel_index(np.argmax(acx_to_ofc), acx_to_ofc.shape)
-            print(f"  ACx→OFC: Neuron {population_ids[acx_indices[top_acx_ofc[0]]]} → {population_ids[ofc_indices[top_acx_ofc[1]]]}: {acx_to_ofc[top_acx_ofc]:.4f}")
+            source_id = population_ids[acx_indices[top_acx_ofc[0]]]
+            target_id = population_ids[ofc_indices[top_acx_ofc[1]]]
+            best_connections['ACx→OFC'] = (source_id, target_id, acx_to_ofc[top_acx_ofc])
+            print(f"  ACx→OFC: Neuron {source_id} → {target_id}: {acx_to_ofc[top_acx_ofc]:.4f}")
         if ofc_to_acx.size > 0:
             top_ofc_acx = np.unravel_index(np.argmax(ofc_to_acx), ofc_to_acx.shape)
-            print(f"  OFC→ACx: Neuron {population_ids[ofc_indices[top_ofc_acx[0]]]} → {population_ids[acx_indices[top_ofc_acx[1]]]}: {ofc_to_acx[top_ofc_acx]:.4f}")
+            source_id = population_ids[ofc_indices[top_ofc_acx[0]]]
+            target_id = population_ids[acx_indices[top_ofc_acx[1]]]
+            best_connections['OFC→ACx'] = (source_id, target_id, ofc_to_acx[top_ofc_acx])
+            print(f"  OFC→ACx: Neuron {source_id} → {target_id}: {ofc_to_acx[top_ofc_acx]:.4f}")
         if ofc_to_ofc.size > 0:
             top_ofc_ofc = np.unravel_index(np.argmax(ofc_to_ofc), ofc_to_ofc.shape)
-            print(f"  OFC→OFC: Neuron {population_ids[ofc_indices[top_ofc_ofc[0]]]} → {population_ids[ofc_indices[top_ofc_ofc[1]]]}: {ofc_to_ofc[top_ofc_ofc]:.4f}")
+            source_id = population_ids[ofc_indices[top_ofc_ofc[0]]]
+            target_id = population_ids[ofc_indices[top_ofc_ofc[1]]]
+            best_connections['OFC→OFC'] = (source_id, target_id, ofc_to_ofc[top_ofc_ofc])
+            print(f"  OFC→OFC: Neuron {source_id} → {target_id}: {ofc_to_ofc[top_ofc_ofc]:.4f}")
+
+#%% Plot actual firing rates of best connected units by type
+if INCLUDE_SPIKE_HISTORY and len(best_connections) > 0:
+    # Create boolean mask for EXAMPLE_EPOCH
+    plot_mask = (X_ep_pop.t >= EXAMPLE_EPOCH.start[0]) & (X_ep_pop.t <= EXAMPLE_EPOCH.end[0])
+    t_plot_raw = X_ep_pop.t[plot_mask]
+    
+    # Get event times that fall within the plot window
+    tone_times_plot = tone_onset[(tone_onset >= EXAMPLE_EPOCH.start[0]) & (tone_onset <= EXAMPLE_EPOCH.end[0])]
+    lick_times_plot = licks[(licks >= EXAMPLE_EPOCH.start[0]) & (licks <= EXAMPLE_EPOCH.end[0])]
+    outcome_times_plot = outcome_time[(outcome_time >= EXAMPLE_EPOCH.start[0]) & (outcome_time <= EXAMPLE_EPOCH.end[0])]
+    
+    # Create 4 subplots for each connection type
+    fig, axes = plt.subplots(2, 2, figsize=(16, 10), sharex=True)
+    axes = axes.flatten()
+    
+    connection_types = ['ACx→ACx', 'ACx→OFC', 'OFC→ACx', 'OFC→OFC']
+    colors = {'source': 'tab:blue', 'target': 'tab:orange'}
+    
+    for plot_idx, conn_type in enumerate(connection_types):
+        ax = axes[plot_idx]
+        
+        if conn_type in best_connections:
+            source_id, target_id, coupling_strength = best_connections[conn_type]
+            
+            # Find indices in population_ids
+            source_idx = list(population_ids).index(source_id)
+            target_idx = list(population_ids).index(target_id)
+            
+            # Get firing rates for source and target neurons (restricted to epoch)
+            source_fr_raw = actual_firing_rate[plot_mask, source_idx]
+            target_fr_raw = actual_firing_rate[plot_mask, target_idx]
+            
+            # Smooth firing rates using pynapple
+            source_tsd = nap.Tsd(t=t_plot_raw, d=source_fr_raw)
+            target_tsd = nap.Tsd(t=t_plot_raw, d=target_fr_raw)
+            source_smooth = source_tsd.smooth(std=0.05, windowsize=0.25)
+            target_smooth = target_tsd.smooth(std=0.05, windowsize=0.25)
+            
+            # Create regular time grid at BIN_SIZE resolution for filled area plot
+            t_start = EXAMPLE_EPOCH.start[0]
+            t_end = EXAMPLE_EPOCH.end[0]
+            t_full = np.arange(t_start, t_end + BIN_SIZE, BIN_SIZE)
+            
+            # Fill in smoothed values by finding nearest neighbors
+            source_filled = np.zeros_like(t_full, dtype=float)
+            target_filled = np.zeros_like(t_full, dtype=float)
+            
+            source_times = source_smooth.t
+            source_values = source_smooth.d
+            target_times = target_smooth.t
+            target_values = target_smooth.d
+            
+            for i, t_val in enumerate(t_full):
+                # Find nearest time point for source
+                dists_source = np.abs(source_times - t_val)
+                if len(dists_source) > 0 and np.min(dists_source) < BIN_SIZE:
+                    source_filled[i] = source_values[np.argmin(dists_source)]
+                
+                # Find nearest time point for target
+                dists_target = np.abs(target_times - t_val)
+                if len(dists_target) > 0 and np.min(dists_target) < BIN_SIZE:
+                    target_filled[i] = target_values[np.argmin(dists_target)]
+            
+            # Create gradient effect for area charts using multiple overlapping fills
+            n_gradient_layers = 15
+            
+            # Blue gradient for source neuron - darker at top, lighter at bottom
+            for i in range(n_gradient_layers):
+                y_bottom = source_filled * (i / n_gradient_layers)
+                y_top = source_filled * ((i + 1) / n_gradient_layers)
+                alpha = 0.4 * ((i + 1) / n_gradient_layers)  # Increasing opacity toward top
+                ax.fill_between(t_full, y_bottom, y_top, alpha=alpha, color=colors['source'], linewidth=0)
+            
+            # Orange gradient for target neuron - darker at top, lighter at bottom
+            for i in range(n_gradient_layers):
+                y_bottom = target_filled * (i / n_gradient_layers)
+                y_top = target_filled * ((i + 1) / n_gradient_layers)
+                alpha = 0.4 * ((i + 1) / n_gradient_layers)  # Increasing opacity toward top
+                ax.fill_between(t_full, y_bottom, y_top, alpha=alpha, color=colors['target'], linewidth=0)
+            
+            # Add semi-transparent outlines for better visibility
+            ax.plot(t_full, source_filled, color=colors['source'], linewidth=2, alpha=0.7, 
+                   label=f'Source: Neuron {source_id}')
+            ax.plot(t_full, target_filled, color=colors['target'], linewidth=2, alpha=0.7, 
+                   label=f'Target: Neuron {target_id}')
+            
+            # Add event markers
+            y_min, y_max = ax.get_ylim()
+            y_range = y_max - y_min
+            
+            # Tone onsets (red vertical lines)
+            for tone_t in tone_times_plot:
+                ax.axvline(tone_t, color='red', alpha=0.3, linewidth=1, linestyle='--', zorder=5)
+            
+            # Licks (black circle markers at bottom of plot)
+            if len(lick_times_plot) > 0:
+                lick_y_position = y_min + 0.05 * y_range  # 5% from bottom
+                ax.scatter(lick_times_plot, 
+                          np.ones(len(lick_times_plot)) * lick_y_position,
+                          marker='o', s=30, color='black', alpha=0.6, 
+                          edgecolors='black', linewidths=0.5, zorder=10)
+            
+            # Outcomes (green vertical lines)
+            for outcome_t in outcome_times_plot:
+                if outcome_t > 0:  # Skip invalid outcome times
+                    ax.axvline(outcome_t, color='green', alpha=0.3, linewidth=1, linestyle='--', zorder=5)
+            
+            ax.set_ylabel('Firing Rate (Hz)')
+            ax.set_title(f'{conn_type}: Neuron {source_id} → {target_id}\n(Coupling: {coupling_strength:.4f})', 
+                        fontweight='bold')
+            ax.legend(loc='upper right')
+            ax.grid(True, alpha=0.3)
+        else:
+            ax.text(0.5, 0.5, f'No {conn_type} connections found', 
+                   ha='center', va='center', transform=ax.transAxes, fontsize=12)
+            ax.set_title(f'{conn_type}', fontweight='bold')
+            ax.set_ylabel('Firing Rate (Hz)')
+    
+    axes[2].set_xlabel('Time (s)')
+    axes[3].set_xlabel('Time (s)')
+    plt.suptitle(f'Actual Firing Rates of Best Connected Units by Type\n(Time window: {EXAMPLE_EPOCH.start[0]:.1f}s - {EXAMPLE_EPOCH.end[0]:.1f}s)', 
+                fontsize=16, fontweight='bold', y=0.995)
+    plt.tight_layout()
 
 #%% Plot actual vs predicted firing rate for each neuron with event markers
 # Create boolean mask for EXAMPLE_EPOCH
 UNIT_TO_PLOT = min(20, len(population_ids))
 population_ids_sorted = sorted(population_ids, key=lambda x: per_unit_scores[x], reverse=True)
 plot_mask = (X_ep_pop.t >= EXAMPLE_EPOCH.start[0]) & (X_ep_pop.t <= EXAMPLE_EPOCH.end[0])
-t_plot = X_ep_pop.t[plot_mask]
+t_plot_raw = X_ep_pop.t[plot_mask]
 
 # Get event times that fall within the plot window
 tone_times_plot = tone_onset[(tone_onset >= EXAMPLE_EPOCH.start[0]) & (tone_onset <= EXAMPLE_EPOCH.end[0])]
 lick_times_plot = licks[(licks >= EXAMPLE_EPOCH.start[0]) & (licks <= EXAMPLE_EPOCH.end[0])]
 outcome_times_plot = outcome_time[(outcome_time >= EXAMPLE_EPOCH.start[0]) & (outcome_time <= EXAMPLE_EPOCH.end[0])]
+
+# Create regular time grid at BIN_SIZE resolution for filled area plot
+t_start = EXAMPLE_EPOCH.start[0]
+t_end = EXAMPLE_EPOCH.end[0]
+t_full = np.arange(t_start, t_end + BIN_SIZE, BIN_SIZE)
 
 fig, axes = plt.subplots(UNIT_TO_PLOT, 1, figsize=(12, 3*UNIT_TO_PLOT), sharex=True)
 if UNIT_TO_PLOT == 1:
@@ -1134,11 +1369,56 @@ for plot_idx, uid in enumerate(population_ids_sorted[:UNIT_TO_PLOT]):
     # Find original index of this neuron in population_ids
     original_idx = list(population_ids).index(uid)
     
-    # Plot firing rates
-    ax.plot(t_plot, actual_firing_rate[plot_mask, original_idx], 
-            color='k', linewidth=1, label='Actual', alpha=0.7)
-    ax.plot(t_plot, predicted_firing_rate[plot_mask, original_idx], 
-            color='tab:blue', linewidth=2, label='Predicted', alpha=0.8)
+    # Get firing rates (restricted to epoch)
+    actual_fr_raw = actual_firing_rate[plot_mask, original_idx]
+    pred_fr_raw = predicted_firing_rate[plot_mask, original_idx]
+    
+    # Smooth firing rates using pynapple
+    actual_tsd = nap.Tsd(t=t_plot_raw, d=actual_fr_raw)
+    pred_tsd = nap.Tsd(t=t_plot_raw, d=pred_fr_raw)
+    actual_smooth = actual_tsd.smooth(std=0.05, windowsize=0.25)
+    pred_smooth = pred_tsd.smooth(std=0.05, windowsize=0.25)
+    
+    # Fill in smoothed values by finding nearest neighbors
+    actual_filled = np.zeros_like(t_full, dtype=float)
+    pred_filled = np.zeros_like(t_full, dtype=float)
+    
+    actual_times = actual_smooth.t
+    actual_values = actual_smooth.d
+    pred_times = pred_smooth.t
+    pred_values = pred_smooth.d
+    
+    for i, t_val in enumerate(t_full):
+        # Find nearest time point for actual
+        dists_actual = np.abs(actual_times - t_val)
+        if len(dists_actual) > 0 and np.min(dists_actual) < BIN_SIZE:
+            actual_filled[i] = actual_values[np.argmin(dists_actual)]
+        
+        # Find nearest time point for predicted
+        dists_pred = np.abs(pred_times - t_val)
+        if len(dists_pred) > 0 and np.min(dists_pred) < BIN_SIZE:
+            pred_filled[i] = pred_values[np.argmin(dists_pred)]
+    
+    # Create gradient effect for area charts using multiple overlapping fills
+    n_gradient_layers = 15
+    
+    # Orange gradient for actual firing rate - darker at top, lighter at bottom
+    for i in range(n_gradient_layers):
+        y_bottom = actual_filled * (i / n_gradient_layers)
+        y_top = actual_filled * ((i + 1) / n_gradient_layers)
+        alpha = 0.4 * ((i + 1) / n_gradient_layers)  # Increasing opacity toward top
+        ax.fill_between(t_full, y_bottom, y_top, alpha=alpha, color='orange', linewidth=0)
+    
+    # Green gradient for predicted firing rate - darker at top, lighter at bottom
+    for i in range(n_gradient_layers):
+        y_bottom = pred_filled * (i / n_gradient_layers)
+        y_top = pred_filled * ((i + 1) / n_gradient_layers)
+        alpha = 0.4 * ((i + 1) / n_gradient_layers)  # Increasing opacity toward top
+        ax.fill_between(t_full, y_bottom, y_top, alpha=alpha, color='green', linewidth=0)
+    
+    # Add semi-transparent outlines for better visibility
+    ax.plot(t_full, actual_filled, color='orange', linewidth=2, alpha=0.7, label='Actual FR')
+    ax.plot(t_full, pred_filled, color='green', linewidth=2, alpha=0.7, label='Predicted FR')
     
     # Add event markers
     y_min, y_max = ax.get_ylim()
@@ -1146,21 +1426,20 @@ for plot_idx, uid in enumerate(population_ids_sorted[:UNIT_TO_PLOT]):
     
     # Tone onsets (red vertical lines)
     for tone_t in tone_times_plot:
-        ax.axvline(tone_t, color='red', alpha=0.3, linewidth=1, linestyle='--')
+        ax.axvline(tone_t, color='red', alpha=0.3, linewidth=1, linestyle='--', zorder=5)
     
-    # Licks (cyan circle markers at bottom of plot)
+    # Licks (black circle markers at bottom of plot)
     if len(lick_times_plot) > 0:
         lick_y_position = y_min + 0.05 * y_range  # 5% from bottom
         ax.scatter(lick_times_plot, 
                   np.ones(len(lick_times_plot)) * lick_y_position,
                   marker='o', s=30, color='black', alpha=0.6, 
-                  edgecolors='black', linewidths=0.5, 
-                  label='Licks' if i == 0 else '', zorder=10)
+                  edgecolors='black', linewidths=0.5, zorder=10)
     
     # Outcomes (green vertical lines)
     for outcome_t in outcome_times_plot:
         if outcome_t > 0:  # Skip invalid outcome times
-            ax.axvline(outcome_t, color='green', alpha=0.3, linewidth=1, linestyle='--')
+            ax.axvline(outcome_t, color='green', alpha=0.3, linewidth=1, linestyle='--', zorder=5)
     
     ax.set_ylabel('Firing Rate (Hz)')
     ax.set_title(f'Neuron {uid} ({population_regions[original_idx]}) - Pseudo-R2: {per_unit_scores[uid]:.4f}')
