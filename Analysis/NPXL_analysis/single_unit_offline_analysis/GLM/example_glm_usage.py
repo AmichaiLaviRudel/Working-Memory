@@ -212,8 +212,12 @@ spikes = spikes.getby_threshold("rate", RATE_TH)
 
 
 # %% 
-licks = np.loadtxt(os.path.join(base_path, "G5A3_2b_4t_new2_g0_tcat.nidq.xd_0_2_0.txt"))
-tone_onset = np.loadtxt(os.path.join(base_path, "G5A3_2b_4t_new2_g0_tcat.nidq.xd_0_1_100.txt"))
+base_name = base_path.split('\\')[-1]
+# Remove 'catgt_' prefix if present
+rec_name = base_name.replace('catgt_', '') if base_name.startswith('catgt_') else base_name
+
+licks = np.loadtxt(os.path.join(base_path, f"{rec_name}_tcat.nidq.xd_0_2_0.txt"))
+tone_onset = np.loadtxt(os.path.join(base_path, f"{rec_name}_tcat.nidq.xd_0_1_100.txt"))
 stimuli_outcome_df = pd.read_csv(os.path.join(probe_path_acx, "analysis_output", "stimuli_outcome_df.csv"))
 
 
@@ -823,7 +827,7 @@ n_categorical = len(categorical_feature_names)
 n_total_features = n_temporal + n_categorical + 1  # temporal + categorical + spike_history
 
 # Create subplots: first 2 rows for basis functions, then 3 columns per feature (weighted, kernel, coefficients)
-fig = plt.figure(figsize=(18, 3 * (n_total_features + 2)))
+fig = plt.figure(figsize=(18, 3 * (n_total_features)))
 gs = fig.add_gridspec(n_total_features + 2, 3, hspace=0.4, wspace=0.3)
 
 # Row 0: Causal basis functions for temporal features (spans all columns)
@@ -1009,7 +1013,7 @@ plt.suptitle("GLM Temporal Kernels: Causal (Temporal) + Acausal (Categorical) + 
 
 
 
-
+plt.tight_layout()
 
 #%% Create population design matrix with optional per-neuron spike history (self-coupling)
 
