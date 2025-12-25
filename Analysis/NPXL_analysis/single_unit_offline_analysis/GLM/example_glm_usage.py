@@ -1,6 +1,7 @@
 #%%
 from typing import Any
 import os
+import re
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
@@ -159,10 +160,10 @@ print(f"By unit type: {pd.Series(all_unit_types).value_counts().to_dict()}")
 
 #%% Parameters
 # Minimum average firing rate threshold (Hz) for selecting units
-RATE_TH = 5
+RATE_TH = 1
 
 # Bin size for binning spike counts and predictors (in seconds)
-BIN_SIZE = 0.05
+BIN_SIZE = 0.01
 
 # Window for peri-event epoching (in seconds, relative to event)
 EPOCH_START = -1
@@ -188,11 +189,18 @@ EVENT_WINDOW_SEC = 4  # seconds after event
 ACAUSAL_BEFORE_SEC = 1  # seconds before event
 ACAUSAL_AFTER_SEC = 3   # seconds after event
 
+# Spike history window size (in seconds) for spike history predictor
+HISTORY_WINDOW_SEC = 1
+
+# Acausal window for spike history in population GLM (captures effects before and after spike)
+HISTORY_ACAUSAL_BEFORE_SEC = 1  # seconds before spike
+HISTORY_ACAUSAL_AFTER_SEC = 1   # seconds after spike
+
 # Number of raised cosine basis functions for all event-locked convolutions
-N_BASIS_FUNCS = 10
+N_BASIS_FUNCS = 8
 
 # Parameter to control whether to include spike history
-N_POPULATION = 200
+N_POPULATION = 300
 
 INCLUDE_SPIKE_HISTORY = True  # Set to False to exclude spike history
 # Note: When True, creates ALL-TO-ALL connectivity - each neuron's spike history 
@@ -209,7 +217,7 @@ tone_onset = np.loadtxt(os.path.join(base_path, "G5A3_2b_4t_new2_g0_tcat.nidq.xd
 stimuli_outcome_df = pd.read_csv(os.path.join(probe_path_acx, "analysis_output", "stimuli_outcome_df.csv"))
 
 
-stimulus = stimuli_outcome_df["stimulus"].values.astype(float)
+stimulus = np.round(stimuli_outcome_df["stimulus"].values.astype(float), 2)
 outcome_str = stimuli_outcome_df["outcome"].astype(str).str.lower().values
 outcome_time_bins = (stimuli_outcome_df['outcome_time'] ).values.astype(float) 
 outcome_time = np.nan_to_num((outcome_time_bins) * PREROCEESING_BIN_SIZE + tone_onset, nan=0)
@@ -226,7 +234,7 @@ data = pd.DataFrame({"stimulus_ID": stimulus,
                     "previous_outcome": previous_outcome})
 
 #%%
-formula = "stimulus_ID + category_ID + outcome_ID + previous_outcome"
+formula = "C(stimulus_ID) + category_ID + outcome_ID + previous_outcome"
 categorical_design_matrix = dmatrix(formula, data, return_type="dataframe")
 categorical_design_matrix.drop(columns=["Intercept"], inplace=True)
 
@@ -353,7 +361,6 @@ axes[3].grid(True, alpha=0.3)
 plt.tight_layout()
 
 
-
 #%% NeMoS GLM
 # check that the dimensionality matches NeMoS expectation
 print(f"predictor shape: {temporal_features.shape}")
@@ -442,8 +449,7 @@ X_categorical_conv = basis_categorical.compute_features(categorical_impulse_shif
 print(f"Convolved categorical features shape: {X_categorical_conv.shape}")
 
 #%% --- Spike-history predictor with basis ---
-history_window_sec = 0.8
-history_window_bins = int(history_window_sec * neuron_count.rate)
+history_window_bins = int(HISTORY_WINDOW_SEC * neuron_count.rate)
 
 basis_history = nmo.basis.RaisedCosineLogConv(
     n_basis_funcs= N_BASIS_FUNCS,
@@ -620,6 +626,133 @@ ax.legend(fontsize=10)
 ax.grid(True, alpha=0.3)
 plt.tight_layout()
 
+#%% Calculate and plot partial contribution of each predictor (stacked bar)
+import re
+
+# Get GLM coefficients
+coefs = np.asarray(glm_basis.coef_).flatten()
+
+# Group coefficients by feature type and sum absolute values
+feature_contributions = {}
+
+# Temporal features (tone_onset, licks, outcome_onset)
+for temp_feat in temporal_features.columns:
+    feature_indices = [i for i, col in enumerate(X.columns) if col.startswith(f"{temp_feat}_basis")]
+    if len(feature_indices) > 0:
+        feature_contributions[temp_feat] = np.sum(np.abs(coefs[feature_indices]))
+
+# Categorical features
+for cat_feat in categorical_features.columns:
+    # Find all columns that contain this categorical feature
+    feature_indices = [i for i, col in enumerate(X.columns) if cat_feat in col and 'basis' in col]
+    if len(feature_indices) > 0:
+        # Handle stimulus_ID formatting first (before other replacements)
+        # Check if this is a stimulus-related column in the original name
+        short_name = cat_feat
+        if 'stimulus' in cat_feat.lower():
+            # Try to extract the numeric value from various patsy patterns
+            # Pattern 1: C(stimulus_ID)[T.1.17] or C(stimulus_ID)[T.1.17]
+            stim_match = re.search(r'\[T?\.?([\d.]+)\]', cat_feat)
+            if not stim_match:
+                # Pattern 2: Look for any number in the string (fallback)
+                stim_match = re.search(r'([\d.]+)', cat_feat)
+            
+            if stim_match:
+                stim_value = stim_match.group(1)
+                short_name = f'stim:{stim_value}'
+            else:
+                # If no number found, just use a generic label
+                short_name = 'stimulus'
+        else:
+            # Apply other replacements for non-stimulus features
+            short_name = cat_feat.replace('category_ID[T.', 'cat:').replace('outcome_ID[T.', 'out:').replace('previous_outcome[T.', 'prev:').replace(']', '')
+        
+        feature_contributions[short_name] = np.sum(np.abs(coefs[feature_indices]))
+
+# Spike history - excluded from partial contribution plot
+# hist_indices = [i for i, col in enumerate(X.columns) if 'spike_history' in col and 'basis' in col]
+# if len(hist_indices) > 0:
+#     feature_contributions['spike_history'] = np.sum(np.abs(coefs[hist_indices]))
+
+# Sort by contribution (descending)
+sorted_features = sorted(feature_contributions.items(), key=lambda x: x[1], reverse=True)
+feature_names = [name for name, _ in sorted_features]
+contributions = [val for _, val in sorted_features]
+
+# Normalize to percentages (sum to 100%)
+total_contribution = sum(contributions) if contributions else 1
+percentages = [(c / total_contribution) * 100 for c in contributions]
+
+# Create vertical stacked bar plot
+fig, ax = plt.subplots(1, 1, figsize=(8, 10))
+
+# Color scheme: different colors for different feature types
+colors = []
+for name in feature_names:
+    if name in ['tone_onset', 'licks', 'outcome_onset']:
+        colors.append('#4A90E2')  # Blue for temporal
+    elif name.startswith('cat:') or name.startswith('out:') or name.startswith('prev:') or name == 'stimulus':
+        colors.append('#50C878')  # Green for categorical
+    elif name == 'spike_history':
+        colors.append('#E74C3C')  # Red for spike history
+    else:
+        colors.append('#95A5A6')  # Gray for others
+
+# Create stacked bar (single vertical bar with all segments)
+bottom = 0
+bars = []
+x_pos = 0
+bar_width = 0.6
+
+for i, (name, pct, color) in enumerate(zip(feature_names, percentages, colors)):
+    bar = ax.bar(x_pos, pct, bottom=bottom, width=bar_width, color=color, 
+                edgecolor='white', linewidth=1.5, label=name)
+    bars.append(bar)
+    
+    # Add percentage and name label beside the segment
+    segment_center = bottom + pct / 2
+    
+    # Percentage label inside segment if large enough, otherwise outside
+    if pct >= 3:
+        # Text inside the segment (white)
+        ax.text(x_pos, segment_center, f'{pct:.1f}%',
+               ha='center', va='center', fontsize=10, fontweight='bold',
+               color='white')
+        # Name label outside to the right (with spacing)
+        ax.text(x_pos + bar_width/2 + 0.15, segment_center, name,
+               ha='left', va='center', fontsize=9, color='black')
+    else:
+        # For small segments, place percentage on the left side and name on the right side
+        # Percentage on the left
+        ax.text(x_pos - bar_width/2 - 0.05, segment_center, f'{pct:.1f}%',
+               ha='right', va='center', fontsize=9, fontweight='bold',
+               color='black')
+        # Name on the right
+        ax.text(x_pos + bar_width/2 + 0.15, segment_center, name,
+               ha='left', va='center', fontsize=9, color='black')
+    
+    bottom += pct
+
+# Customize plot
+ax.set_ylim(0, 100)
+ax.set_xlim(-0.5, 1.2)  # Increased left padding for spacing between bar and y-axis
+ax.set_ylabel('Relative Contribution (%)', fontsize=11)
+ax.set_title('Partial Contribution of Each Predictor to GLM\n(Sum of Absolute Coefficients)', 
+            fontsize=12, fontweight='bold', pad=20)
+ax.set_xticks([])
+ax.set_yticks([0, 25, 50, 75, 100])
+ax.set_yticklabels(['0%', '25%', '50%', '75%', '100%'], fontsize=9)
+ax.grid(False, axis='x')
+ax.grid(True, axis='y', alpha=0.2, linestyle='--', linewidth=0.5)
+
+# Remove top and right spines
+ax.spines['top'].set_visible(False)
+ax.spines['right'].set_visible(False)
+ax.spines['left'].set_color('#CCCCCC')
+ax.spines['bottom'].set_visible(False)
+
+
+
 #%% Helper function for rounded bars
 def draw_rounded_bars(ax, x, heights, colors, alpha=0.7, edgecolor='black', boxstyle='round,pad=0.01'):
     """
@@ -678,7 +811,7 @@ time_cat_sec = time_cat * acausal_total_sec - ACAUSAL_BEFORE_SEC  # Shift so 0 i
 
 # Evaluate basis functions for spike history
 time_hist, basis_kernels_hist = basis_history.evaluate_on_grid(history_window_bins)
-time_hist_sec = time_hist * history_window_sec
+time_hist_sec = time_hist * HISTORY_WINDOW_SEC
 
 # Get feature names
 temporal_feature_names = list(temporal_features.columns)
@@ -895,17 +1028,11 @@ print(f"  Include spike history: {INCLUDE_SPIKE_HISTORY}")
 
 # Create POPULATION target matrix (multiple neurons) for PopulationGLM
 # PopulationGLM requires y to be 2D: (n_timebins, n_neurons)
-#%%
 # Select neurons for population analysis
 N_POPULATION = min(N_POPULATION, len(spikes))
 population_ids = np.random.choice(list(spikes.keys()), N_POPULATION, replace=False)
 
-
-print(f"\nBuilding population target matrix:")
-print(f"  {N_POPULATION} neurons: {population_ids}")
-
-
-#%% Build population spike count matrix and per-neuron spike history features
+# Build population spike count matrix and per-neuron spike history features
 spikes_population = spikes[population_ids]
 
 spike_count_population = spikes_population.count(BIN_SIZE, ep=epochs)
@@ -923,6 +1050,19 @@ spike_count_population = nap.TsdFrame(
 if INCLUDE_SPIKE_HISTORY:
     print(f"  Creating ALL-TO-ALL spike history connectivity for {len(population_ids)} neurons...")
     print(f"    Each neuron's history can affect all neurons (cross-coupling enabled)")
+    
+    # Create acausal basis for spike history in population GLM
+    history_acausal_total_sec = HISTORY_ACAUSAL_BEFORE_SEC + HISTORY_ACAUSAL_AFTER_SEC
+    history_acausal_window_bins = int(history_acausal_total_sec * spike_count_population.rate)
+    
+    basis_history_pop = nmo.basis.RaisedCosineLinearConv(
+        n_basis_funcs=N_BASIS_FUNCS,
+        window_size=history_acausal_window_bins,
+        label="spike_history_acausal"
+    )
+    
+    print(f"  Acausal spike history basis: {N_BASIS_FUNCS} functions over {history_acausal_total_sec}s window ({-HISTORY_ACAUSAL_BEFORE_SEC}s to +{HISTORY_ACAUSAL_AFTER_SEC}s)")
+    
     history_features_list = []
 
     for uid in population_ids:
@@ -930,8 +1070,8 @@ if INCLUDE_SPIKE_HISTORY:
         uid_idx = list(spike_count.columns).index(uid)
         neuron_spikes = spike_count[:, uid_idx]
         
-        # Compute spike history features for this neuron
-        neuron_history = basis_history.compute_features(neuron_spikes)
+        # Compute spike history features for this neuron using acausal basis
+        neuron_history = basis_history_pop.compute_features(neuron_spikes)
         neuron_history_ep = neuron_history.restrict(epochs)
         
         # Align to X_shared_ep timestamps
@@ -943,7 +1083,7 @@ if INCLUDE_SPIKE_HISTORY:
             neuron_history_aligned = neuron_history_ep.values
         
         # Label columns with source neuron ID (this history can affect all target neurons)
-        history_cols = [f"hist_from_neuron{uid}_basis{i}" for i in range(basis_history.n_basis_funcs)]
+        history_cols = [f"hist_from_neuron{uid}_basis{i}" for i in range(basis_history_pop.n_basis_funcs)]
         history_features_list.append((neuron_history_aligned, history_cols))
 
     # Combine all history features from all source neurons
@@ -952,7 +1092,7 @@ if INCLUDE_SPIKE_HISTORY:
     all_history_features = np.column_stack([hist for hist, _ in history_features_list])
     all_history_cols = [col for _, cols in history_features_list for col in cols]
 
-    print(f"  All-to-all connectivity: {len(population_ids)} source neurons × {basis_history.n_basis_funcs} basis = {all_history_features.shape[1]} history features")
+    print(f"  All-to-all connectivity: {len(population_ids)} source neurons × {basis_history_pop.n_basis_funcs} basis = {all_history_features.shape[1]} history features")
     print(f"    Total possible connections: {len(population_ids)}² = {len(population_ids)**2} neuron pairs")
     
     # Combine shared predictors + all neuron-specific history features
@@ -992,9 +1132,8 @@ else:
 population_regions = spikes_population.get_info('region').values
 
 print(f"y_ep_pop shape: {y_ep_pop.shape}")
-print(f"Regions: {dict(zip(population_ids, population_regions))}")
 
-# %%
+
 #%% Fit Population GLM
 model_pop = nmo.glm.PopulationGLM(
     solver_name="LBFGS",
@@ -1051,6 +1190,138 @@ for i, uid in enumerate(population_ids):
 predicted_firing_rate = y_pred_np / BIN_SIZE
 actual_firing_rate = y_actual_np / BIN_SIZE
 
+
+#%% Plot actual vs predicted firing rate for each neuron with event markers
+# Create boolean mask for EXAMPLE_EPOCH
+# Select top 3 from ACx and top 3 from OFC
+acx_ids = [uid for uid in population_ids if population_regions[list(population_ids).index(uid)] == 'ACx']
+ofc_ids = [uid for uid in population_ids if population_regions[list(population_ids).index(uid)] == 'OFC']
+
+# Sort by score and take top 3 from each region
+acx_sorted = sorted(acx_ids, key=lambda x: per_unit_scores[x], reverse=True)[:3]
+ofc_sorted = sorted(ofc_ids, key=lambda x: per_unit_scores[x], reverse=True)[:3]
+
+# Combine: ACx first, then OFC
+population_ids_sorted = acx_sorted + ofc_sorted
+UNIT_TO_PLOT = len(population_ids_sorted)
+
+plot_mask = (X_ep_pop.t >= EXAMPLE_EPOCH.start[0]) & (X_ep_pop.t <= EXAMPLE_EPOCH.end[0])
+t_plot_raw = X_ep_pop.t[plot_mask]
+
+# Get event times that fall within the plot window
+tone_times_plot = tone_onset[(tone_onset >= EXAMPLE_EPOCH.start[0]) & (tone_onset <= EXAMPLE_EPOCH.end[0])]
+lick_times_plot = licks[(licks >= EXAMPLE_EPOCH.start[0]) & (licks <= EXAMPLE_EPOCH.end[0])]
+outcome_times_plot = outcome_time[(outcome_time >= EXAMPLE_EPOCH.start[0]) & (outcome_time <= EXAMPLE_EPOCH.end[0])]
+
+# Create regular time grid at BIN_SIZE resolution for filled area plot
+t_start = EXAMPLE_EPOCH.start[0]
+t_end = EXAMPLE_EPOCH.end[0]
+t_full = np.arange(t_start, t_end + BIN_SIZE, BIN_SIZE)
+
+fig, axes = plt.subplots(UNIT_TO_PLOT, 1, figsize=(12, 3*UNIT_TO_PLOT), sharex=True)
+if UNIT_TO_PLOT == 1:
+    axes = [axes]
+
+for plot_idx, uid in enumerate(population_ids_sorted[:UNIT_TO_PLOT]):
+    ax = axes[plot_idx]
+    
+    # Find original index of this neuron in population_ids
+    original_idx = list(population_ids).index(uid)
+    
+    # Get firing rates (restricted to epoch)
+    actual_fr_raw = actual_firing_rate[plot_mask, original_idx]
+    pred_fr_raw = predicted_firing_rate[plot_mask, original_idx]
+    
+    # Smooth firing rates using pynapple
+    actual_tsd = nap.Tsd(t=t_plot_raw, d=actual_fr_raw)
+    pred_tsd = nap.Tsd(t=t_plot_raw, d=pred_fr_raw)
+    actual_smooth = actual_tsd.smooth(std=0.05, windowsize=0.25)
+    pred_smooth = pred_tsd.smooth(std=0.05, windowsize=0.25)
+    
+    # Fill in smoothed values by finding nearest neighbors
+    actual_filled = np.zeros_like(t_full, dtype=float)
+    pred_filled = np.zeros_like(t_full, dtype=float)
+    
+    actual_times = actual_smooth.t
+    actual_values = actual_smooth.d
+    pred_times = pred_smooth.t
+    pred_values = pred_smooth.d
+    
+    for i, t_val in enumerate(t_full):
+        # Find nearest time point for actual
+        dists_actual = np.abs(actual_times - t_val)
+        if len(dists_actual) > 0 and np.min(dists_actual) < BIN_SIZE:
+            actual_filled[i] = actual_values[np.argmin(dists_actual)]
+        
+        # Find nearest time point for predicted
+        dists_pred = np.abs(pred_times - t_val)
+        if len(dists_pred) > 0 and np.min(dists_pred) < BIN_SIZE:
+            pred_filled[i] = pred_values[np.argmin(dists_pred)]
+    
+    # Create gradient effect for area charts using multiple overlapping fills
+    n_gradient_layers = 15
+    
+    # Orange gradient for actual firing rate - darker at top, lighter at bottom
+    for i in range(n_gradient_layers):
+        y_bottom = actual_filled * (i / n_gradient_layers)
+        y_top = actual_filled * ((i + 1) / n_gradient_layers)
+        alpha = 0.4 * ((i + 1) / n_gradient_layers)  # Increasing opacity toward top
+        ax.fill_between(t_full, y_bottom, y_top, alpha=alpha, color='orange', linewidth=0)
+    
+    # Green gradient for predicted firing rate - darker at top, lighter at bottom
+    for i in range(n_gradient_layers):
+        y_bottom = pred_filled * (i / n_gradient_layers)
+        y_top = pred_filled * ((i + 1) / n_gradient_layers)
+        alpha = 0.4 * ((i + 1) / n_gradient_layers)  # Increasing opacity toward top
+        ax.fill_between(t_full, y_bottom, y_top, alpha=alpha, color='green', linewidth=0)
+    
+    # Add semi-transparent outlines for better visibility
+    ax.plot(t_full, actual_filled, color='orange', linewidth=2, alpha=0.7, label='Actual FR')
+    ax.plot(t_full, pred_filled, color='green', linewidth=2, alpha=0.7, label='Predicted FR')
+    
+    # Add event markers
+    y_min, y_max = ax.get_ylim()
+    y_range = y_max - y_min
+    
+    # Tone onsets (red vertical lines)
+    for tone_t in tone_times_plot:
+        ax.axvline(tone_t, color='red', alpha=0.3, linewidth=1, linestyle='--', zorder=5)
+    
+    # Licks (black circle markers at bottom of plot)
+    if len(lick_times_plot) > 0:
+        lick_y_position = y_min + 0.05 * y_range  # 5% from bottom
+        ax.scatter(lick_times_plot, 
+                  np.ones(len(lick_times_plot)) * lick_y_position,
+                  marker='o', s=30, color='black', alpha=0.6, 
+                  edgecolors='black', linewidths=0.5, zorder=10)
+    
+    # Outcomes (green vertical lines)
+    for outcome_t in outcome_times_plot:
+        if outcome_t > 0:  # Skip invalid outcome times
+            ax.axvline(outcome_t, color='green', alpha=0.3, linewidth=1, linestyle='--', zorder=5)
+    
+    ax.set_ylabel('Firing Rate (Hz)')
+    ax.set_title(f'Neuron {uid} ({population_regions[original_idx]}) - Pseudo-R2: {per_unit_scores[uid]:.4f}')
+    ax.legend(loc='upper right')
+    ax.grid(True, alpha=0.3)
+    
+    # Add legend for events (only on first subplot)
+    if plot_idx == 0:
+        from matplotlib.lines import Line2D
+        event_legend = [
+            Line2D([0], [0], color='red', linewidth=1, linestyle='--', alpha=0.5, label='Tone onset'),
+            Line2D([0], [0], marker='o', color='black', markersize=6, linestyle='', 
+                   markeredgecolor='black', markeredgewidth=0.5, alpha=0.6, label='Licks'),
+            Line2D([0], [0], color='green', linewidth=1, linestyle='--', alpha=0.5, label='Outcome')
+        ]
+        ax.legend(handles=ax.get_legend_handles_labels()[0] + event_legend, 
+                 loc='upper right', fontsize=8, ncol=2)
+
+axes[-1].set_xlabel('Time (s)')
+plt.suptitle('Population GLM: Actual vs Predicted Firing Rates with Events', fontsize=14, fontweight='bold')
+plt.tight_layout()
+
+
 #%% Analyze all-to-all connectivity structure (if spike history is included)
 if INCLUDE_SPIKE_HISTORY:
     print(f"\n{'='*60}")
@@ -1069,7 +1340,7 @@ if INCLUDE_SPIKE_HISTORY:
         
         # Reshape to (n_source_neurons, n_basis, n_target_neurons)
         n_source = len(population_ids)
-        n_basis = basis_history.n_basis_funcs
+        n_basis = basis_history_pop.n_basis_funcs
         n_target = len(population_ids)
         
         history_coefs_reshaped = history_coefs.reshape(n_source, n_basis, n_target)
@@ -1082,18 +1353,20 @@ if INCLUDE_SPIKE_HISTORY:
         coupling_strength = np.zeros((n_source, n_target))
         coupling_signed = np.zeros((n_source, n_target))
         
-        # Compute basis kernels for spike history
-        # Use the same window size as when basis_history was created
-        history_window_sec = 0.8
+        # Compute basis kernels for spike history (using acausal basis for population GLM)
+        # Use the acausal window size as when basis_history_pop was created
+        history_acausal_total_sec_pop = HISTORY_ACAUSAL_BEFORE_SEC + HISTORY_ACAUSAL_AFTER_SEC
         # Use the rate from the binned data (1/BIN_SIZE)
-        history_window_bins = int(history_window_sec / BIN_SIZE)
-        time_hist, basis_kernels_hist = basis_history.evaluate_on_grid(history_window_bins)
+        history_acausal_window_bins = int(history_acausal_total_sec_pop / BIN_SIZE)
+        time_hist, basis_kernels_hist = basis_history_pop.evaluate_on_grid(history_acausal_window_bins)
+        # Shift time axis so 0 is at the spike (acausal: negative before, positive after)
+        time_hist_sec = time_hist * history_acausal_total_sec_pop - HISTORY_ACAUSAL_BEFORE_SEC
         
         for source_idx in range(n_source):
             for target_idx in range(n_target):
                 # Get coefficients for this connection
                 coefs = history_coefs_reshaped[source_idx, :, target_idx]
-                # Reconstruct kernel (same as for temporal features)
+                # Reconstruct kernel using acausal basis
                 reconstructed_kernel = np.dot(basis_kernels_hist, coefs)
                 # Compute coupling strength as L2 norm of reconstructed kernel (magnitude)
                 coupling_strength[source_idx, target_idx] = np.linalg.norm(reconstructed_kernel)
@@ -1182,72 +1455,97 @@ if INCLUDE_SPIKE_HISTORY:
             ofc_ofc_cross_mean = np.mean(ofc_ofc_cross) if len(ofc_ofc_cross) > 0 else 0.0
             print(f"  OFC → OFC: mean={np.mean(ofc_to_ofc):.4f}, self={np.mean(ofc_ofc_self):.4f}, cross={ofc_ofc_cross_mean:.4f}")
         
-        # Visualize by region
-        fig = plt.figure(figsize=(16, 12))
-        gs = fig.add_gridspec(3, 3, hspace=0.3, wspace=0.3)
-        
-        # Full matrix with region boundaries (top row)
-        ax_full = fig.add_subplot(gs[0, :])
         # Reorder neurons by region (already sorted by coupling strength within each region)
         region_order = acx_indices + ofc_indices
+        
+        # Figure 1: Full connectivity matrix (square figure)
+        fig1 = plt.figure(figsize=(8, 8))
+        ax_full = fig1.add_subplot(1, 1, 1)
         coupling_ordered = coupling_strength[np.ix_(region_order, region_order)]
         # Use diverging colormap to show excitation (red/positive) and inhibition (blue/negative)
-        im = ax_full.imshow(coupling_ordered, aspect='auto', cmap='RdBu_r', vmin=-1, vmax=1)
-        ax_full.set_xlabel('Target Neuron')
-        ax_full.set_ylabel('Source Neuron')
-        ax_full.set_title('Full Connectivity Matrix (Grouped by Region, Sorted by Coupling Strength)', fontsize=12, fontweight='bold')
+        # Set aspect ratio to match matrix dimensions (square matrix = square plot)
+        aspect_ratio = coupling_ordered.shape[0] / coupling_ordered.shape[1] if coupling_ordered.shape[1] > 0 else 1
+        im = ax_full.imshow(coupling_ordered, aspect=aspect_ratio, cmap='RdBu_r', vmin=-1, vmax=1)
+        ax_full.set_xlabel('Target Neuron', fontsize=11)
+        ax_full.set_ylabel('Source Neuron', fontsize=11)
+        ax_full.set_title('Full Connectivity Matrix (Grouped by Region, Sorted by Coupling Strength)', 
+                         fontsize=12, fontweight='bold')
         
         # Add region boundaries
         if len(acx_indices) > 0 and len(ofc_indices) > 0:
-            ax_full.axvline(len(acx_indices) - 0.5, color='white', linewidth=2, linestyle='--')
-            ax_full.axhline(len(acx_indices) - 0.5, color='white', linewidth=2, linestyle='--')
-            ax_full.text(len(acx_indices)/2, -1, 'ACx', ha='center', va='top', fontsize=10, fontweight='bold', color='white')
-            ax_full.text(len(acx_indices) + len(ofc_indices)/2, -1, 'OFC', ha='center', va='top', fontsize=10, fontweight='bold', color='white')
-            ax_full.text(-1, len(acx_indices)/2, 'ACx', ha='right', va='center', fontsize=10, fontweight='bold', color='white', rotation=90)
-            ax_full.text(-1, len(acx_indices) + len(ofc_indices)/2, 'OFC', ha='right', va='center', fontsize=10, fontweight='bold', color='white', rotation=90)
+            ax_full.axvline(len(acx_indices) - 0.5, color='black', linewidth=2, linestyle='--')
+            ax_full.axhline(len(acx_indices) - 0.5, color='black', linewidth=2, linestyle='--')
+            ax_full.text(len(acx_indices)/2, -1, 'ACx', ha='center', va='top', fontsize=10, fontweight='bold', color='black')
+            ax_full.text(len(acx_indices) + len(ofc_indices)/2, -1, 'OFC', ha='center', va='top', fontsize=10, fontweight='bold', color='black')
+            ax_full.text(-1, len(acx_indices)/2, 'ACx', ha='right', va='center', fontsize=10, fontweight='bold', color='black', rotation=90)
+            ax_full.text(-1, len(acx_indices) + len(ofc_indices)/2, 'OFC', ha='right', va='center', fontsize=10, fontweight='bold', color='black', rotation=90)
         
-        plt.colorbar(im, ax=ax_full, label='Coupling Strength (Normalized -1 to 1)\nRed=Excitatory, Blue=Inhibitory')
+        # Make the colorbar half the size and center it beneath the matrix
+        from mpl_toolkits.axes_grid1 import make_axes_locatable
+        divider = make_axes_locatable(ax_full)
+        # cax_width is half the width of the plot, position below center
+        cax = divider.append_axes("bottom", size="1%", pad=0.45)  # "5%" is bar thickness, pad <0.5 centers better
+        cb = plt.colorbar(im, cax=cax, orientation='horizontal')
+        cb.set_label('Coupling Strength (Normalized -1 to 1)')
+        # Make the colorbar half the width of the axes and centered
+        box = ax_full.get_position()
+        cbox = cax.get_position()
+        new_width = (box.width) * 0.5
+        cax.set_position([
+            box.x0 + (box.width - new_width) / 2,
+            cbox.y0,
+            new_width,
+            cbox.height
+        ])
+        plt.suptitle('All-to-All Connectivity Matrix', fontsize=14, fontweight='bold', 
+                    fontfamily='sans-serif', y=0.98)
+        plt.tight_layout()
+        
+        # Figure 2: Breakdown by connection type
+        fig2 = plt.figure(figsize=(16, 8))
+        gs = fig2.add_gridspec(2, 4, hspace=0.3, wspace=0.3, height_ratios=[3, 1])
         
         # ACx → ACx
         if acx_to_acx.size > 0:
-            ax = fig.add_subplot(gs[1, 0])
-            im = ax.imshow(acx_to_acx, aspect='auto', cmap='RdBu_r', vmin=-1, vmax=1)
+            ax = fig2.add_subplot(gs[0, 0])
+            # Set aspect ratio to square (1:1)
+            im = ax.imshow(acx_to_acx, aspect=1, cmap='RdBu_r', vmin=-1, vmax=1)
             ax.set_title('ACx → ACx', fontweight='bold')
             ax.set_xlabel('Target ACx')
             ax.set_ylabel('Source ACx')
-            plt.colorbar(im, ax=ax)
             ax.plot([-0.5, len(acx_indices)-0.5], [-0.5, len(acx_indices)-0.5], 'r--', linewidth=1, alpha=0.5)
         
         # ACx → OFC
         if acx_to_ofc.size > 0:
-            ax = fig.add_subplot(gs[1, 1])
-            im = ax.imshow(acx_to_ofc, aspect='auto', cmap='RdBu_r', vmin=-1, vmax=1)
+            ax = fig2.add_subplot(gs[0, 1])
+            # Set aspect ratio to square (1:1)
+            im = ax.imshow(acx_to_ofc, aspect=1, cmap='RdBu_r', vmin=-1, vmax=1)
             ax.set_title('ACx → OFC', fontweight='bold')
             ax.set_xlabel('Target OFC')
             ax.set_ylabel('Source ACx')
-            plt.colorbar(im, ax=ax)
         
         # OFC → ACx
         if ofc_to_acx.size > 0:
-            ax = fig.add_subplot(gs[1, 2])
-            im = ax.imshow(ofc_to_acx, aspect='auto', cmap='RdBu_r', vmin=-1, vmax=1)
+            ax = fig2.add_subplot(gs[0, 2])
+            # Set aspect ratio to square (1:1)
+            im = ax.imshow(ofc_to_acx, aspect=1, cmap='RdBu_r', vmin=-1, vmax=1)
             ax.set_title('OFC → ACx', fontweight='bold')
             ax.set_xlabel('Target ACx')
             ax.set_ylabel('Source OFC')
-            plt.colorbar(im, ax=ax)
         
         # OFC → OFC
         if ofc_to_ofc.size > 0:
-            ax = fig.add_subplot(gs[2, 0])
-            im = ax.imshow(ofc_to_ofc, aspect='auto', cmap='RdBu_r', vmin=-1, vmax=1)
+            ax = fig2.add_subplot(gs[0, 3])
+            # Set aspect ratio to square (1:1)
+            im = ax.imshow(ofc_to_ofc, aspect=1, cmap='RdBu_r', vmin=-1, vmax=1)
             ax.set_title('OFC → OFC', fontweight='bold')
             ax.set_xlabel('Target OFC')
             ax.set_ylabel('Source OFC')
             plt.colorbar(im, ax=ax)
             ax.plot([-0.5, len(ofc_indices)-0.5], [-0.5, len(ofc_indices)-0.5], 'r--', linewidth=1, alpha=0.5)
         
-        # Comparison: Within-region vs cross-region
-        ax = fig.add_subplot(gs[2, 1:])
+        # Comparison: Within-region vs cross-region (spans full width of first row)
+        ax = fig2.add_subplot(gs[1, :])
         within_region = []
         cross_region = []
         
@@ -1264,48 +1562,66 @@ if INCLUDE_SPIKE_HISTORY:
             ofc_acx_flat = ofc_to_acx.flatten()
             cross_region.extend(ofc_acx_flat)
         
-        if len(within_region) > 0 and len(cross_region) > 0:
-            # Compute histogram values
+        # Plot separate histograms for within-region and cross-region
+        if len(within_region) > 0 or len(cross_region) > 0:
+            # Determine common bin range for both distributions
+            all_values = within_region + cross_region if len(within_region) > 0 and len(cross_region) > 0 else (within_region if len(within_region) > 0 else cross_region)
             bins = 50
-            within_counts, within_bins = np.histogram(within_region, bins=bins, density=True)
-            cross_counts, cross_bins = np.histogram(cross_region, bins=bins, density=True)
+            bin_range = (np.min(all_values), np.max(all_values))
             
-            # Use bin centers for x-axis
-            within_centers = (within_bins[:-1] + within_bins[1:]) / 2
-            cross_centers = (cross_bins[:-1] + cross_bins[1:]) / 2
+            # Plot within-region distribution
+            if len(within_region) > 0:
+                within_counts, within_bins = np.histogram(within_region, bins=bins, range=bin_range, density=True)
+                within_centers = (within_bins[:-1] + within_bins[1:]) / 2
+                
+                # Create gradient area fills for within-region
+                n_gradient_layers = 15
+                for i in range(n_gradient_layers):
+                    y_bottom = within_counts * (i / n_gradient_layers)
+                    y_top = within_counts * ((i + 1) / n_gradient_layers)
+                    alpha = 0.4 * ((i + 1) / n_gradient_layers)
+                    ax.fill_between(within_centers, y_bottom, y_top, alpha=alpha, color='tab:blue', linewidth=0)
+                
+                # Add highlighted line on top
+                ax.plot(within_centers, within_counts, color='tab:blue', linewidth=2, alpha=0.8, label='Within Region')
             
-            # Create gradient area fills for within-region
-            n_gradient_layers = 15
-            for i in range(n_gradient_layers):
-                y_bottom = within_counts * (i / n_gradient_layers)
-                y_top = within_counts * ((i + 1) / n_gradient_layers)
-                alpha = 0.4 * ((i + 1) / n_gradient_layers)
-                ax.fill_between(within_centers, y_bottom, y_top, alpha=alpha, color='tab:blue', linewidth=0)
-            
-            # Create gradient area fills for cross-region
-            for i in range(n_gradient_layers):
-                y_bottom = cross_counts * (i / n_gradient_layers)
-                y_top = cross_counts * ((i + 1) / n_gradient_layers)
-                alpha = 0.4 * ((i + 1) / n_gradient_layers)
-                ax.fill_between(cross_centers, y_bottom, y_top, alpha=alpha, color='tab:orange', linewidth=0)
-            
-            # Add highlighted lines on top
-            ax.plot(within_centers, within_counts, color='tab:blue', linewidth=2, alpha=0.8, label='Within-region')
-            ax.plot(cross_centers, cross_counts, color='tab:orange', linewidth=2, alpha=0.8, label='Cross-region')
+            # Plot cross-region distribution
+            if len(cross_region) > 0:
+                cross_counts, cross_bins = np.histogram(cross_region, bins=bins, range=bin_range, density=True)
+                cross_centers = (cross_bins[:-1] + cross_bins[1:]) / 2
+                
+                # Create gradient area fills for cross-region
+                n_gradient_layers = 15
+                for i in range(n_gradient_layers):
+                    y_bottom = cross_counts * (i / n_gradient_layers)
+                    y_top = cross_counts * ((i + 1) / n_gradient_layers)
+                    alpha = 0.4 * ((i + 1) / n_gradient_layers)
+                    ax.fill_between(cross_centers, y_bottom, y_top, alpha=alpha, color='tab:orange', linewidth=0)
+                
+                # Add highlighted line on top
+                ax.plot(cross_centers, cross_counts, color='tab:orange', linewidth=2, alpha=0.8, label='Cross Region')
             
             ax.set_xlabel('Coupling Strength')
             ax.set_ylabel('Density')
-            ax.set_title('Within-Region vs Cross-Region Coupling', fontweight='bold')
-            ax.legend()
+            ax.set_title('Coupling Strength Distribution', fontweight='bold')
+            ax.legend(loc='upper right')
             ax.grid(True, alpha=0.3)
             
-            # Add statistics text
-            ax.text(0.05, 0.95, f'Within: μ={np.mean(within_region):.4f}\nCross: μ={np.mean(cross_region):.4f}', 
-                   transform=ax.transAxes, verticalalignment='top', 
-                   bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+            # Add statistics text for both distributions
+            stats_text = []
+            if len(within_region) > 0:
+                stats_text.append(f'Within: μ={np.mean(within_region):.4f}, σ={np.std(within_region):.4f}')
+            if len(cross_region) > 0:
+                stats_text.append(f'Cross: μ={np.mean(cross_region):.4f}, σ={np.std(cross_region):.4f}')
+            
+            if stats_text:
+                ax.text(0.05, 0.95, '\n'.join(stats_text), 
+                       transform=ax.transAxes, verticalalignment='top', 
+                       bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
         
-        plt.suptitle('All-to-All Connectivity: ACx vs OFC Analysis', fontsize=16, fontweight='bold', 
-                    y=0.995, fontfamily='sans-serif')
+        plt.suptitle('Connectivity Breakdown by Region', fontsize=14, fontweight='bold', 
+                    fontfamily='sans-serif', y=0.98)
+        plt.tight_layout()
         
         # Print top connections by type
         print(f"\nTop connections by type:")
@@ -1459,124 +1775,351 @@ if INCLUDE_SPIKE_HISTORY and len(best_connections) > 0:
                 fontsize=16, fontweight='bold', y=0.995)
     plt.tight_layout()
 
-#%% Plot actual vs predicted firing rate for each neuron with event markers
-# Create boolean mask for EXAMPLE_EPOCH
-UNIT_TO_PLOT = min(20, len(population_ids))
-population_ids_sorted = sorted(population_ids, key=lambda x: per_unit_scores[x], reverse=True)
-plot_mask = (X_ep_pop.t >= EXAMPLE_EPOCH.start[0]) & (X_ep_pop.t <= EXAMPLE_EPOCH.end[0])
-t_plot_raw = X_ep_pop.t[plot_mask]
-
-# Get event times that fall within the plot window
-tone_times_plot = tone_onset[(tone_onset >= EXAMPLE_EPOCH.start[0]) & (tone_onset <= EXAMPLE_EPOCH.end[0])]
-lick_times_plot = licks[(licks >= EXAMPLE_EPOCH.start[0]) & (licks <= EXAMPLE_EPOCH.end[0])]
-outcome_times_plot = outcome_time[(outcome_time >= EXAMPLE_EPOCH.start[0]) & (outcome_time <= EXAMPLE_EPOCH.end[0])]
-
-# Create regular time grid at BIN_SIZE resolution for filled area plot
-t_start = EXAMPLE_EPOCH.start[0]
-t_end = EXAMPLE_EPOCH.end[0]
-t_full = np.arange(t_start, t_end + BIN_SIZE, BIN_SIZE)
-
-fig, axes = plt.subplots(UNIT_TO_PLOT, 1, figsize=(12, 3*UNIT_TO_PLOT), sharex=True)
-if UNIT_TO_PLOT == 1:
-    axes = [axes]
-
-for plot_idx, uid in enumerate(population_ids_sorted[:UNIT_TO_PLOT]):
-    ax = axes[plot_idx]
-    
-    # Find original index of this neuron in population_ids
-    original_idx = list(population_ids).index(uid)
-    
-    # Get firing rates (restricted to epoch)
-    actual_fr_raw = actual_firing_rate[plot_mask, original_idx]
-    pred_fr_raw = predicted_firing_rate[plot_mask, original_idx]
-    
-    # Smooth firing rates using pynapple
-    actual_tsd = nap.Tsd(t=t_plot_raw, d=actual_fr_raw)
-    pred_tsd = nap.Tsd(t=t_plot_raw, d=pred_fr_raw)
-    actual_smooth = actual_tsd.smooth(std=0.05, windowsize=0.25)
-    pred_smooth = pred_tsd.smooth(std=0.05, windowsize=0.25)
-    
-    # Fill in smoothed values by finding nearest neighbors
-    actual_filled = np.zeros_like(t_full, dtype=float)
-    pred_filled = np.zeros_like(t_full, dtype=float)
-    
-    actual_times = actual_smooth.t
-    actual_values = actual_smooth.d
-    pred_times = pred_smooth.t
-    pred_values = pred_smooth.d
-    
-    for i, t_val in enumerate(t_full):
-        # Find nearest time point for actual
-        dists_actual = np.abs(actual_times - t_val)
-        if len(dists_actual) > 0 and np.min(dists_actual) < BIN_SIZE:
-            actual_filled[i] = actual_values[np.argmin(dists_actual)]
-        
-        # Find nearest time point for predicted
-        dists_pred = np.abs(pred_times - t_val)
-        if len(dists_pred) > 0 and np.min(dists_pred) < BIN_SIZE:
-            pred_filled[i] = pred_values[np.argmin(dists_pred)]
-    
-    # Create gradient effect for area charts using multiple overlapping fills
-    n_gradient_layers = 15
-    
-    # Orange gradient for actual firing rate - darker at top, lighter at bottom
-    for i in range(n_gradient_layers):
-        y_bottom = actual_filled * (i / n_gradient_layers)
-        y_top = actual_filled * ((i + 1) / n_gradient_layers)
-        alpha = 0.4 * ((i + 1) / n_gradient_layers)  # Increasing opacity toward top
-        ax.fill_between(t_full, y_bottom, y_top, alpha=alpha, color='orange', linewidth=0)
-    
-    # Green gradient for predicted firing rate - darker at top, lighter at bottom
-    for i in range(n_gradient_layers):
-        y_bottom = pred_filled * (i / n_gradient_layers)
-        y_top = pred_filled * ((i + 1) / n_gradient_layers)
-        alpha = 0.4 * ((i + 1) / n_gradient_layers)  # Increasing opacity toward top
-        ax.fill_between(t_full, y_bottom, y_top, alpha=alpha, color='green', linewidth=0)
-    
-    # Add semi-transparent outlines for better visibility
-    ax.plot(t_full, actual_filled, color='orange', linewidth=2, alpha=0.7, label='Actual FR')
-    ax.plot(t_full, pred_filled, color='green', linewidth=2, alpha=0.7, label='Predicted FR')
-    
-    # Add event markers
-    y_min, y_max = ax.get_ylim()
-    y_range = y_max - y_min
-    
-    # Tone onsets (red vertical lines)
-    for tone_t in tone_times_plot:
-        ax.axvline(tone_t, color='red', alpha=0.3, linewidth=1, linestyle='--', zorder=5)
-    
-    # Licks (black circle markers at bottom of plot)
-    if len(lick_times_plot) > 0:
-        lick_y_position = y_min + 0.05 * y_range  # 5% from bottom
-        ax.scatter(lick_times_plot, 
-                  np.ones(len(lick_times_plot)) * lick_y_position,
-                  marker='o', s=30, color='black', alpha=0.6, 
-                  edgecolors='black', linewidths=0.5, zorder=10)
-    
-    # Outcomes (green vertical lines)
-    for outcome_t in outcome_times_plot:
-        if outcome_t > 0:  # Skip invalid outcome times
-            ax.axvline(outcome_t, color='green', alpha=0.3, linewidth=1, linestyle='--', zorder=5)
-    
-    ax.set_ylabel('Firing Rate (Hz)')
-    ax.set_title(f'Neuron {uid} ({population_regions[original_idx]}) - Pseudo-R2: {per_unit_scores[uid]:.4f}')
-    ax.legend(loc='upper right')
-    ax.grid(True, alpha=0.3)
-    
-    # Add legend for events (only on first subplot)
-    if plot_idx == 0:
-        from matplotlib.lines import Line2D
-        event_legend = [
-            Line2D([0], [0], color='red', linewidth=1, linestyle='--', alpha=0.5, label='Tone onset'),
-            Line2D([0], [0], marker='o', color='black', markersize=6, linestyle='', 
-                   markeredgecolor='black', markeredgewidth=0.5, alpha=0.6, label='Licks'),
-            Line2D([0], [0], color='green', linewidth=1, linestyle='--', alpha=0.5, label='Outcome')
-        ]
-        ax.legend(handles=ax.get_legend_handles_labels()[0] + event_legend, 
-                 loc='upper right', fontsize=8, ncol=2)
-
-axes[-1].set_xlabel('Time (s)')
-plt.suptitle('Population GLM: Actual vs Predicted Firing Rates with Events', fontsize=14, fontweight='bold')
-plt.tight_layout()
 
 # %%
+# Select non-history coefficient rows and group categorical features
+feature_names_all = list(X_ep_pop.columns)
+non_history_indices = [i for i in range(len(feature_names_all)) if i not in history_feature_indices]
+
+# Group categorical features together
+# Define feature groups
+feature_groups = {
+    'tone_onset': [],
+    'licks': [],
+    'outcome_onset': [],
+    'stimulus': [],  # All stimulus_ID values grouped together
+    'category': [],
+    'outcome': [],
+    'previous_outcome': []
+}
+
+# Map each feature to its group
+for idx in non_history_indices:
+    feat_name = feature_names_all[idx]
+    
+    # Temporal features
+    if feat_name.startswith('tone_onset_basis'):
+        feature_groups['tone_onset'].append(idx)
+    elif feat_name.startswith('licks_basis'):
+        feature_groups['licks'].append(idx)
+    elif feat_name.startswith('outcome_onset_basis'):
+        feature_groups['outcome_onset'].append(idx)
+    # Categorical features
+    elif 'stimulus' in feat_name.lower():
+        feature_groups['stimulus'].append(idx)
+    elif 'category_ID' in feat_name:
+        feature_groups['category'].append(idx)
+    elif 'outcome_ID' in feat_name:
+        feature_groups['outcome'].append(idx)
+    elif 'previous_outcome' in feat_name:
+        feature_groups['previous_outcome'].append(idx)
+
+# Create grouped coefficient matrix and feature names
+grouped_feature_names = []
+grouped_coef_indices = []
+
+for group_name, indices in feature_groups.items():
+    if len(indices) > 0:
+        grouped_feature_names.append(group_name)
+        grouped_coef_indices.append(indices)
+
+# Create grouped coefficient matrix by summing absolute values within each group
+n_neurons = coef_matrix.shape[1]
+n_groups = len(grouped_feature_names)
+grouped_coefs = np.zeros((n_groups, n_neurons))
+
+for group_idx, (group_name, indices) in enumerate(zip(grouped_feature_names, grouped_coef_indices)):
+    # Sum absolute coefficients for this group across all neurons
+    grouped_coefs[group_idx, :] = np.sum(np.abs(coef_matrix[indices, :]), axis=0)
+
+print(f"Grouped coefficients shape: {grouped_coefs.shape}")
+print(f"Grouped feature names: {grouped_feature_names}")
+print(f"Number of features per group: {[len(indices) for indices in grouped_coef_indices]}")
+
+#%%
+
+ofc_coefs = grouped_coefs[:, ofc_indices]
+acx_coefs = grouped_coefs[:, acx_indices]
+
+print(ofc_coefs.shape)
+print(acx_coefs.shape)
+
+#%% Half violin plots for each feature group by region using Plotly
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+# Calculate relative contributions (percentages) for each unit
+# Normalize grouped coefficients to percentages for each unit
+n_neurons = grouped_coefs.shape[1]
+grouped_coefs_pct = np.zeros_like(grouped_coefs)
+
+for unit_idx in range(n_neurons):
+    unit_total = np.sum(grouped_coefs[:, unit_idx])
+    if unit_total > 0:
+        grouped_coefs_pct[:, unit_idx] = (grouped_coefs[:, unit_idx] / unit_total) * 100
+    else:
+        grouped_coefs_pct[:, unit_idx] = 0
+
+# Get relative contributions by region
+ofc_coefs_pct = grouped_coefs_pct[:, ofc_indices]
+acx_coefs_pct = grouped_coefs_pct[:, acx_indices]
+
+# Filter to only features we want to plot
+features_to_plot = ['stimulus', 'category', 'licks', 'outcome', 'previous_outcome', 'tone_onset', 'outcome_onset']
+features_to_plot = [f for f in features_to_plot if f in grouped_feature_names]
+
+colors = {'ACx': '#4A90E2', 'OFC': '#E74C3C'}  # Blue for ACx, Red for OFC
+
+feature_labels = {
+    'stimulus': 'Stimulus ID',
+    'category': 'Category',
+    'licks': 'Licks',
+    'outcome': 'Outcome',
+    'previous_outcome': 'Previous Outcome',
+    'tone_onset': 'Tone Onset',
+    'outcome_onset': 'Outcome Onset'
+}
+
+# Create subplots
+fig = make_subplots(
+    rows=1, 
+    cols=len(features_to_plot),
+    subplot_titles=[feature_labels.get(f, f) for f in features_to_plot],
+    shared_yaxes=True,
+    horizontal_spacing=0.05
+)
+
+for col_idx, feature in enumerate(features_to_plot):
+    # Get feature index
+    feat_idx = grouped_feature_names.index(feature)
+    
+    # Get relative contributions for this feature by region
+    acx_data = acx_coefs_pct[feat_idx, :].flatten()
+    ofc_data = ofc_coefs_pct[feat_idx, :].flatten()
+    
+    # Plot half violins using plotly
+    # ACx on left (negative side)
+    if len(acx_data) > 0:
+        fig.add_trace(
+            go.Violin(
+                y=acx_data,
+                x=[col_idx] * len(acx_data),
+                name='ACx',
+                side='negative',
+                box_visible=True,
+                meanline_visible=True,
+                fillcolor=colors['ACx'],
+                line_color=colors['ACx'],
+                opacity=0.6,
+                showlegend=(col_idx == 0),  # Only show legend for first subplot
+                legendgroup='ACx'
+            ),
+            row=1, col=col_idx+1
+        )
+    
+    # OFC on right (positive side)
+    if len(ofc_data) > 0:
+        fig.add_trace(
+            go.Violin(
+                y=ofc_data,
+                x=[col_idx] * len(ofc_data),
+                name='OFC',
+                side='positive',
+                box_visible=True,
+                meanline_visible=True,
+                fillcolor=colors['OFC'],
+                line_color=colors['OFC'],
+                opacity=0.6,
+                showlegend=(col_idx == 0),  # Only show legend for first subplot
+                legendgroup='OFC'
+            ),
+            row=1, col=col_idx+1
+        )
+
+# Update layout
+fig.update_layout(
+    title={
+        'text': 'Distribution of Relative Contributions by Region<br><sub>Excluding Spike History</sub>',
+        'x': 0.5,
+        'xanchor': 'center',
+        'font': {'size': 16, 'family': 'sans-serif'}
+    },
+    height=600,
+    showlegend=True,
+    violinmode='overlay',
+    violingroupgap=0,
+    violingap=0,
+    font=dict(family='sans-serif', size=11)
+)
+
+# Update y-axis label (only on first subplot)
+fig.update_yaxes(title_text='Relative Contribution (%)', row=1, col=1)
+
+# Update x-axes to remove tick labels
+for col_idx in range(1, len(features_to_plot) + 1):
+    fig.update_xaxes(showticklabels=False, row=1, col=col_idx)
+
+# Save plot as HTML file in the GLM folder (same directory as this script)
+script_dir = os.path.dirname(os.path.abspath(__file__)) if '__file__' in globals() else os.getcwd()
+output_path = os.path.join(script_dir, "partial_contributions_by_region.html")
+fig.write_html(output_path)
+print(f"Plot saved to: {output_path}")
+
+#%% Time to react: Find basis with maximum absolute coefficient for each feature
+# Ensure we have region indices
+if 'acx_indices' not in locals() or 'ofc_indices' not in locals():
+    acx_indices = [i for i, r in enumerate(population_regions) if r == 'ACx']
+    ofc_indices = [i for i, r in enumerate(population_regions) if r == 'OFC']
+
+# Evaluate basis functions on grid to get time values
+time_event, basis_kernels_event = basis_events.evaluate_on_grid(event_window_bins)
+time_event_sec = time_event * EVENT_WINDOW_SEC
+
+time_cat, basis_kernels_cat = basis_categorical.evaluate_on_grid(acausal_window_bins)
+acausal_total_sec = ACAUSAL_BEFORE_SEC + ACAUSAL_AFTER_SEC
+time_cat_sec = time_cat * acausal_total_sec - ACAUSAL_BEFORE_SEC  # Shift so 0 is at event
+
+# Find the peak time for each basis function (time at which each basis function has maximum value)
+# For temporal (causal) basis functions
+basis_peak_times_event = np.zeros(N_BASIS_FUNCS)
+for i in range(N_BASIS_FUNCS):
+    peak_idx = np.argmax(np.abs(basis_kernels_event[:, i]))
+    basis_peak_times_event[i] = time_event_sec[peak_idx]
+
+# For categorical (acausal) basis functions
+basis_peak_times_cat = np.zeros(N_BASIS_FUNCS)
+for i in range(N_BASIS_FUNCS):
+    peak_idx = np.argmax(np.abs(basis_kernels_cat[:, i]))
+    basis_peak_times_cat[i] = time_cat_sec[peak_idx]
+
+# Extract time to react for each feature group and neuron
+# For each feature group, find which basis has the max abs coefficient, then get its time
+time_to_react = {}  # {feature_name: array of shape (n_neurons,)}
+
+for group_idx, (group_name, indices) in enumerate(zip(grouped_feature_names, grouped_coef_indices)):
+    if len(indices) == 0:
+        continue
+    
+    # Determine if this is a temporal or categorical feature
+    is_temporal = group_name in ['tone_onset', 'licks', 'outcome_onset']
+    basis_peak_times = basis_peak_times_event if is_temporal else basis_peak_times_cat
+    
+    # For each neuron, find the basis with max abs coefficient
+    neuron_times = np.zeros(n_neurons)
+    
+    for neuron_idx in range(n_neurons):
+        # Get coefficients for this feature group and neuron
+        coefs_for_group = coef_matrix[indices, neuron_idx]
+        abs_coefs = np.abs(coefs_for_group)
+        
+        if np.max(abs_coefs) == 0:
+            # No significant coefficient, set to NaN
+            neuron_times[neuron_idx] = np.nan
+            continue
+        
+        # Find the index of the maximum absolute coefficient
+        max_idx_in_group = np.argmax(abs_coefs)
+        feature_idx_in_group = indices[max_idx_in_group]
+        feature_name = feature_names_all[feature_idx_in_group]
+        
+        # Extract basis index from feature name (e.g., "tone_onset_basis3" -> 3)
+        # Pattern: feature_name_basis{basis_idx}
+        basis_match = re.search(r'basis(\d+)$', feature_name)
+        if basis_match:
+            basis_idx = int(basis_match.group(1))
+            if 0 <= basis_idx < len(basis_peak_times):
+                neuron_times[neuron_idx] = basis_peak_times[basis_idx]
+            else:
+                neuron_times[neuron_idx] = np.nan
+        else:
+            neuron_times[neuron_idx] = np.nan
+    
+    time_to_react[group_name] = neuron_times
+
+# Filter to only features we want to plot
+features_to_plot_time = ['stimulus', 'category', 'licks', 'outcome', 'previous_outcome', 'tone_onset', 'outcome_onset']
+features_to_plot_time = [f for f in features_to_plot_time if f in time_to_react]
+
+# Create matplotlib figure with boxplots for time to react
+fig_time, axes_time = plt.subplots(1, len(features_to_plot_time), figsize=(5 * len(features_to_plot_time), 6), sharey=True)
+if len(features_to_plot_time) == 1:
+    axes_time = [axes_time]
+
+for col_idx, feature in enumerate(features_to_plot_time):
+    if feature not in time_to_react:
+        continue
+    
+    ax = axes_time[col_idx]
+    
+    times_all = time_to_react[feature]
+    
+    # Get times by region
+    acx_times = times_all[acx_indices]
+    ofc_times = times_all[ofc_indices]
+    
+    # Remove NaN values
+    acx_times_clean = acx_times[~np.isnan(acx_times)]
+    ofc_times_clean = ofc_times[~np.isnan(ofc_times)]
+    
+    # Prepare data for boxplot (list of arrays)
+    box_data = []
+    if len(acx_times_clean) > 0:
+        box_data.append(acx_times_clean)
+    if len(ofc_times_clean) > 0:
+        box_data.append(ofc_times_clean)
+    
+    if len(box_data) > 0:
+        # Create boxplot with custom positions and widths
+        bp = ax.boxplot(
+            box_data,
+            positions=[1, 2] if len(box_data) == 2 else ([1] if len(acx_times_clean) > 0 else [2]),
+            widths=0.6,  # Large box width
+            patch_artist=True,
+            showmeans=True,  # Show mean
+            meanline=True,  # Mean as line
+            showfliers=True  # Show outliers
+        )
+        
+        # Color the boxes
+        box_colors = []
+        if len(acx_times_clean) > 0:
+            box_colors.append(colors['ACx'])
+        if len(ofc_times_clean) > 0:
+            box_colors.append(colors['OFC'])
+        
+        for patch, color in zip(bp['boxes'], box_colors):
+            patch.set_facecolor(color)
+            patch.set_alpha(0.7)
+            patch.set_edgecolor(color)
+            patch.set_linewidth(2)
+        
+        # Style the other elements
+        for element in ['whiskers', 'fliers', 'means', 'medians', 'caps']:
+            if element in bp:
+                for item in bp[element]:
+                    if element == 'fliers':
+                        item.set_markerfacecolor(box_colors[0] if len(box_colors) > 0 else 'black')
+                        item.set_markeredgecolor(box_colors[0] if len(box_colors) > 0 else 'black')
+                    else:
+                        item.set_color(box_colors[0] if len(box_colors) > 0 else 'black')
+                        item.set_linewidth(2)
+    
+    ax.set_title(feature_labels.get(feature, feature), fontsize=12, fontweight='bold')
+    ax.set_xticks([1, 2] if len(box_data) == 2 else ([1] if len(acx_times_clean) > 0 else [2]))
+    ax.set_xticklabels(['ACx' if len(acx_times_clean) > 0 else '', 'OFC' if len(ofc_times_clean) > 0 else ''][:len(box_data)])
+    ax.set_ylabel('Time to React (s)' if col_idx == 0 else '')
+    ax.grid(True, alpha=0.3, axis='y')
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+
+plt.suptitle('Time to React by Feature and Region\n(Time at which maximum absolute coefficient occurs)', 
+             fontsize=14, fontweight='bold')
+plt.tight_layout()
+
+# Save plot
+output_path_time = os.path.join(script_dir, "time_to_react_by_region.png")
+fig_time.savefig(output_path_time, dpi=300, bbox_inches='tight')
+print(f"Time to react plot saved to: {output_path_time}")
+plt.show()
+
+#%%
