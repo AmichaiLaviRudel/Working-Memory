@@ -58,6 +58,11 @@ def load_probe_spikes(
     probe_path : str
         Path to the probe directory
     """
+
+    # base_path = r"Z:\Shared\Amichai\NPXL\Recs\group7\catgt_G7A3_novice_2b_4t_g0"
+    # imec_name = 'imec1'
+    # region_name = 'OFC'
+    
     # Extract recording name without 'catgt_' prefix for subdirectory naming
     base_name = base_path.split('\\')[-1]
     rec_name = base_name.replace('catgt_', '') if base_name.startswith('catgt_') else base_name
@@ -66,12 +71,16 @@ def load_probe_spikes(
     # Load spike data
     spike_times = np.load(f"{probe_path}\\{imec_name}_ks4\\spike_times_sec_adj.npy")
     spike_clusters = np.load(f"{probe_path}\\{imec_name}_ks4\\spike_clusters.npy")
-    unit_labels = pd.read_csv(f"{probe_path}\\bombcell\\unit_labels.tsv", sep="\t")
+    unit_labels_df = pd.read_csv(f"{probe_path}\\bombcell\\unit_labels.tsv", sep="\t")
 
-    # Create unit type map
+    # Create unit type map: map cluster ID to unit type label
     unit_type_map = {}
-    for unit_id, row in unit_labels.iterrows():
-        label_raw = row.iloc[0]
+    for unit_id, row in unit_labels_df.iterrows():
+        # Get the unit type label (could be from UnitType column or first column)
+        if "UnitType" in unit_labels_df.columns:
+            label_raw = row["UnitType"]
+        else:
+            label_raw = row.iloc[0]  # Use first column if UnitType doesn't exist
         
         # Handle both numeric and string formats
         if isinstance(label_raw, (int, float, np.integer, np.floating)):

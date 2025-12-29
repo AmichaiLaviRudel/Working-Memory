@@ -19,6 +19,7 @@ from colors import (
     REGION_COLORS, FEATURE_COLORS, GRADIENT_COLORS, CONNECTIVITY_CMAP,
     get_feature_color, get_coefficient_colors, PLOTLY_REGION_COLORS, PLOTLY_FEATURE_LABELS
 )
+from typing import Tuple, Optional
 
 
 # ============================================================================
@@ -842,6 +843,255 @@ def plot_time_to_react_boxplot(
     
     fig.savefig(output_path, dpi=300, bbox_inches='tight')
     print(f"Time to react plot saved to: {output_path}")
+    
+    return fig
+
+
+# ============================================================================
+# Peri-Event Raster and PETH Plots
+# ============================================================================
+
+def find_units_with_high_temporal_coefficients(
+    coef_matrix: np.ndarray,
+    X_columns: List[str],
+    temporal_feature_name: str,
+    population_ids: np.ndarray,
+    top_n: int = 3
+) -> List[Tuple[int, float]]:
+    """
+    Find units with highest absolute coefficients for a temporal feature.
+    
+    Parameters
+    ----------
+    coef_matrix : np.ndarray
+        Coefficient matrix from GLM (n_features, n_neurons)
+    X_columns : list
+        Column names from design matrix
+    temporal_feature_name : str
+        Name of temporal feature (e.g., 'tone_onset', 'licks', 'outcome_onset')
+    population_ids : np.ndarray
+        Array of neuron IDs
+    top_n : int
+        Number of top units to return
+        
+    Returns
+    -------
+    list
+        List of tuples (unit_id, max_coef_value) for top N units
+    """
+    # Find all feature indices for this temporal feature
+    feature_indices = [i for i, col in enumerate(X_columns) 
+                      if col.startswith(f"{temporal_feature_name}_basis")]
+    
+    if len(feature_indices) == 0:
+        print(f"No features found for {temporal_feature_name}")
+        return []
+    
+    # Get coefficients for this feature across all neurons
+    feature_coefs = coef_matrix[feature_indices, :]  # Shape: (n_basis, n_neurons)
+    
+    # Find maximum absolute coefficient for each neuron
+    max_abs_coefs = np.max(np.abs(feature_coefs), axis=0)  # Shape: (n_neurons,)
+    
+    # Get top N units
+    top_indices = np.argsort(max_abs_coefs)[::-1][:top_n]
+    
+    top_units = [(population_ids[idx], max_abs_coefs[idx]) for idx in top_indices]
+    
+    return top_units
+
+
+def plot_perievent_raster_peth(
+    spikes: nap.TsGroup,
+    event_times: np.ndarray,
+    unit_id: int,
+    feature_name: str,
+    window: Tuple[float, float] = (-1.0, 3.0),
+    bin_size: float = 0.01,
+    tone_onset: Optional[np.ndarray] = None,
+    category: Optional[np.ndarray] = None,
+    outcome: Optional[np.ndarray] = None
+) -> plt.Figure:
+    """
+    Plot peri-event raster and PETH for a single unit, split by category and outcome.
+    
+    Parameters
+    ----------
+    spikes : nap.TsGroup
+        Spike data for all units
+    event_times : np.ndarray
+        Event times to align to
+    unit_id : int
+        ID of unit to plot
+    feature_name : str
+        Name of the temporal feature (for title)
+    window : tuple
+        Time window around events (start, end) in seconds
+    bin_size : float
+        Bin size for PETH in seconds
+    tone_onset : np.ndarray, optional
+        Tone onset times (for matching events to categories/outcomes)
+    category : np.ndarray, optional
+        Category labels ('Go' or 'NoGo') for each tone onset
+    outcome : np.ndarray, optional
+        Outcome labels (e.g., 'Hit', 'FA', 'Miss', 'CR') for each tone onset
+        
+    Returns
+    -------
+    plt.Figure
+        Figure with raster and PETH plots split by condition
+    """
+    # Get spike times for this unit
+    if unit_id not in spikes:
+        print(f"Unit {unit_id} not found in spikes")
+        return None
+    
+    unit_spikes = spikes[unit_id]
+    
+    # Match events to categories and outcomes if provided
+    event_categories = None
+    event_outcomes = None
+    
+    if tone_onset is not None and category is not None:
+        # Match each event to nearest tone onset to get category
+        event_categories = []
+        for event_time in event_times:
+            if len(tone_onset) > 0:
+                nearest_idx = np.argmin(np.abs(tone_onset - event_time))
+                if np.abs(tone_onset[nearest_idx] - event_time) < 0.1:  # Within 100ms
+                    event_categories.append(category[nearest_idx])
+                else:
+                    event_categories.append(None)
+            else:
+                event_categories.append(None)
+        event_categories = np.array(event_categories)
+    
+    if tone_onset is not None and outcome is not None:
+        # Match each event to nearest tone onset to get outcome
+        event_outcomes = []
+        for event_time in event_times:
+            if len(tone_onset) > 0:
+                nearest_idx = np.argmin(np.abs(tone_onset - event_time))
+                if np.abs(tone_onset[nearest_idx] - event_time) < 0.1:  # Within 100ms
+                    event_outcomes.append(outcome[nearest_idx])
+                else:
+                    event_outcomes.append(None)
+            else:
+                event_outcomes.append(None)
+        event_outcomes = np.array(event_outcomes)
+    
+    # Determine if we should split by conditions
+    has_category = event_categories is not None and np.any(event_categories != None) and len(event_categories) > 0
+    has_outcome = event_outcomes is not None and np.any(event_outcomes != None) and len(event_outcomes) > 0
+    
+    # Create conditions for splitting
+    if has_category and has_outcome:
+        # Split by both category and outcome
+        outcomes_lower = np.char.lower(event_outcomes.astype(str))
+        conditions = {
+            'Go-Hit': (event_categories == 'Go') & (outcomes_lower == 'hit'),
+            'Go-FA': (event_categories == 'Go') & ((outcomes_lower == 'false alarm') | (outcomes_lower == 'fa')),
+            'NoGo-Hit': (event_categories == 'NoGo') & (outcomes_lower == 'hit'),
+            'NoGo-CR': (event_categories == 'NoGo') & ((outcomes_lower == 'cr') | (outcomes_lower == 'correct rejection')),
+        }
+        # Filter out empty conditions
+        conditions = {k: v for k, v in conditions.items() if np.any(v)}
+        n_conditions = len(conditions)
+    elif has_category:
+        # Split by category only
+        conditions = {
+            'Go': event_categories == 'Go',
+            'NoGo': event_categories == 'NoGo',
+        }
+        conditions = {k: v for k, v in conditions.items() if np.any(v)}
+        n_conditions = len(conditions)
+    elif has_outcome:
+        # Split by outcome only
+        outcomes_lower = np.char.lower(event_outcomes.astype(str))
+        conditions = {
+            'Hit': outcomes_lower == 'hit',
+            'FA': (outcomes_lower == 'false alarm') | (outcomes_lower == 'fa'),
+            'Miss': outcomes_lower == 'miss',
+            'CR': (outcomes_lower == 'cr') | (outcomes_lower == 'correct rejection'),
+        }
+        conditions = {k: v for k, v in conditions.items() if np.any(v)}
+        n_conditions = len(conditions)
+    else:
+        # No splitting - plot all together
+        conditions = {'All': np.ones(len(event_times), dtype=bool)}
+        n_conditions = 1
+    
+    # Create figure with subplots for each condition
+    # Each condition gets one row with 2 columns (raster + PETH)
+    fig, axes = plt.subplots(n_conditions, 2, figsize=(14, 4 * n_conditions), 
+                            sharex='col', sharey=False)
+    
+    if n_conditions == 1:
+        axes = axes.reshape(1, -1)
+    
+    time_bins = np.arange(window[0], window[1] + bin_size, bin_size)
+    
+    for cond_idx, (cond_name, cond_mask) in enumerate(conditions.items()):
+        cond_event_times = event_times[cond_mask]
+        
+        if len(cond_event_times) == 0:
+            continue
+        
+        ax_raster = axes[cond_idx, 0]
+        ax_peth = axes[cond_idx, 1]
+        
+        peth_counts = np.zeros(len(time_bins) - 1)
+        
+        # Compute both raster and PETH
+        for i, event_time in enumerate(cond_event_times):
+            event_window = nap.IntervalSet(start=event_time + window[0], 
+                                          end=event_time + window[1])
+            spikes_in_window = unit_spikes.restrict(event_window)
+            
+            if len(spikes_in_window) > 0:
+                relative_times = spikes_in_window.t - event_time
+                
+                # Add to raster plot
+                ax_raster.scatter(relative_times, np.ones(len(relative_times)) * i,
+                                s=10, c='black', marker='|', linewidths=0.5)
+                
+                # Add to PETH counts
+                counts, _ = np.histogram(relative_times, bins=time_bins)
+                peth_counts += counts
+        
+        # Raster plot
+        ax_raster.axvline(0, color='red', linestyle='--', linewidth=2, alpha=0.7, label='Event')
+        ax_raster.set_ylabel('Trial Number', fontsize=10)
+        if cond_idx == 0:
+            ax_raster.set_title(f'Raster: {cond_name} (n={len(cond_event_times)})', 
+                              fontsize=11, fontweight='bold')
+        else:
+            ax_raster.set_title(f'{cond_name} (n={len(cond_event_times)})', 
+                              fontsize=11, fontweight='bold')
+        ax_raster.grid(True, alpha=0.3, axis='x')
+        ax_raster.set_ylim(-0.5, len(cond_event_times) - 0.5)
+        
+        # PETH plot
+        firing_rate = peth_counts / (len(cond_event_times) * bin_size) if len(cond_event_times) > 0 else peth_counts
+        bin_centers = (time_bins[:-1] + time_bins[1:]) / 2
+        
+        ax_peth.plot(bin_centers, firing_rate, color='tab:blue', linewidth=2, label='Firing Rate')
+        plot_gradient_area(ax_peth, bin_centers, firing_rate, 'tab:blue')
+        
+        ax_peth.axvline(0, color='red', linestyle='--', linewidth=2, alpha=0.7)
+        ax_peth.set_ylabel('Firing Rate (Hz)', fontsize=10)
+        if cond_idx == 0:
+            ax_peth.set_title('PETH', fontsize=11, fontweight='bold')
+        ax_peth.grid(True, alpha=0.3)
+        
+        if cond_idx == n_conditions - 1:
+            ax_peth.set_xlabel('Time from Event (s)', fontsize=11)
+    
+    # Overall title
+    fig.suptitle(f'Peri-Event Analysis: Unit {unit_id} - {feature_name}', 
+                fontsize=14, fontweight='bold', y=0.995)
+    
+    plt.tight_layout(rect=[0, 0, 1, 0.99])
     
     return fig
 

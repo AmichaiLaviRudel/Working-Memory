@@ -83,7 +83,7 @@ HISTORY_ACAUSAL_AFTER_SEC = 1   # seconds after spike
 N_POPULATION = 300
 
 # Parameter to control whether to include spike history
-INCLUDE_SPIKE_HISTORY = True
+INCLUDE_SPIKE_HISTORY = False
 # Note: When True, creates ALL-TO-ALL connectivity - each neuron's spike history 
 #       features are included and can affect ALL neurons via PopulationGLM coefficients
 

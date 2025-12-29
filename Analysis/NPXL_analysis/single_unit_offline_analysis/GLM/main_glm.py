@@ -42,14 +42,15 @@ from plotting import (
     plot_partial_contributions, plot_basis_and_kernels,
     plot_connectivity_matrix, plot_connectivity_breakdown,
     plot_contributions_by_region_plotly, plot_time_to_react_boxplot,
-    smooth_and_fill
+    smooth_and_fill, find_units_with_high_temporal_coefficients,
+    plot_perievent_raster_peth
 )
 
 # Configure fonts and plot style
 configure_fonts()
 plt.style.use(nmo.styles.plot_style)
 
-
+#%%
 # ============================================================================
 # 1. LOAD DATA
 # ============================================================================
@@ -57,6 +58,8 @@ print("=" * 60)
 print("LOADING DATA")
 print("=" * 60)
 
+BASE_PATH =  r"Z:\Shared\Amichai\NPXL\Recs\group7\catgt_G7A2_novice_2b_4t_g1"
+INCLUDE_SPIKE_HISTORY = False
 # Load spikes from all probes
 spikes, probe_path_acx, probe_path_ofc = load_all_probes(BASE_PATH)
 
@@ -67,7 +70,7 @@ print(f"\nFiltered to {len(spikes)} good units with rate >= {RATE_THRESHOLD} Hz"
 # Load behavioral events
 licks, tone_onset, stimuli_outcome_df = load_events(BASE_PATH, probe_path_acx)
 
-
+#%%
 # ============================================================================
 # 2. CREATE FEATURES
 # ============================================================================
@@ -214,6 +217,27 @@ fig = plot_partial_contributions(
 plt.tight_layout()
 plt.show()
 
+#%% Plot basis functions and kernels
+acausal_total_sec = ACAUSAL_BEFORE_SEC + ACAUSAL_AFTER_SEC
+fig = plot_basis_and_kernels(
+    glm_basis.coef_,
+    list(X.columns),
+    list(temporal_features.columns),
+    list(categorical_features.columns),
+    basis_events,
+    basis_categorical,
+    basis_history,
+    event_window_bins,
+    EVENT_WINDOW_SEC,
+    acausal_window_bins,
+    ACAUSAL_BEFORE_SEC,
+    acausal_total_sec,
+    history_window_bins,
+    HISTORY_WINDOW_SEC,
+    N_BASIS_FUNCS
+)
+plt.show()
+
 
 # ============================================================================
 # 7. POPULATION GLM
@@ -279,7 +303,7 @@ model_pop.fit(X_ep_pop, y_ep_pop)
 pop_score = model_pop.score(X_ep_pop, y_ep_pop, score_type='pseudo-r2-Cohen')
 print(f"Population GLM Cohen's pseudo-R2: {pop_score:.4f}")
 
-
+#%%
 # ============================================================================
 # 8. POPULATION VISUALIZATIONS
 # ============================================================================
@@ -322,7 +346,7 @@ ofc_indices = [i for i, r in enumerate(population_regions) if r == 'OFC']
 print(f"\nACx neurons: {len(acx_indices)}")
 print(f"OFC neurons: {len(ofc_indices)}")
 
-
+#%%
 # ============================================================================
 # 9. CONNECTIVITY ANALYSIS (if spike history included)
 # ============================================================================
@@ -380,13 +404,15 @@ if INCLUDE_SPIKE_HISTORY and n_history_features > 0:
     )
     plt.show()
 
-
+#%%
 # ============================================================================
 # 10. FEATURE CONTRIBUTION ANALYSIS
 # ============================================================================
 print("\n" + "=" * 60)
 print("ANALYZING FEATURE CONTRIBUTIONS BY REGION")
 print("=" * 60)
+
+coef_matrix = np.asarray(model_pop.coef_)
 
 # Group features
 feature_names_all = list(X_ep_pop.columns)
@@ -442,6 +468,180 @@ output_path = os.path.join(script_dir, "partial_contributions_by_region.html")
 plot_contributions_by_region_plotly(
     grouped_coefs_pct, grouped_feature_names, acx_indices, ofc_indices, output_path
 )
+
+#%%
+# ============================================================================
+# 11. TIME TO REACT ANALYSIS
+# ============================================================================
+print("\n" + "=" * 60)
+print("ANALYZING TIME TO REACT")
+print("=" * 60)
+
+import re
+
+# Evaluate basis functions on grid to get time values
+time_event, basis_kernels_event = basis_events.evaluate_on_grid(event_window_bins)
+time_event_sec = time_event * EVENT_WINDOW_SEC
+
+time_cat, basis_kernels_cat = basis_categorical.evaluate_on_grid(acausal_window_bins)
+acausal_total_sec = ACAUSAL_BEFORE_SEC + ACAUSAL_AFTER_SEC
+time_cat_sec = time_cat * acausal_total_sec - ACAUSAL_BEFORE_SEC
+
+# Find the peak time for each basis function
+basis_peak_times_event = np.zeros(N_BASIS_FUNCS)
+for i in range(N_BASIS_FUNCS):
+    peak_idx = np.argmax(np.abs(basis_kernels_event[:, i]))
+    basis_peak_times_event[i] = time_event_sec[peak_idx]
+
+basis_peak_times_cat = np.zeros(N_BASIS_FUNCS)
+for i in range(N_BASIS_FUNCS):
+    peak_idx = np.argmax(np.abs(basis_kernels_cat[:, i]))
+    basis_peak_times_cat[i] = time_cat_sec[peak_idx]
+
+# Extract time to react for each feature group and neuron
+time_to_react = {}
+feature_names_all = list(X_ep_pop.columns)
+
+for group_idx, (group_name, indices) in enumerate(zip(grouped_feature_names, grouped_coef_indices)):
+    if len(indices) == 0:
+        continue
+    
+    # Determine if this is a temporal or categorical feature
+    is_temporal = group_name in ['tone_onset', 'licks', 'outcome_onset']
+    basis_peak_times = basis_peak_times_event if is_temporal else basis_peak_times_cat
+    
+    # For each neuron, find the basis with max abs coefficient
+    neuron_times = np.zeros(n_neurons)
+    
+    for neuron_idx in range(n_neurons):
+        # Get coefficients for this feature group and neuron
+        coefs_for_group = coef_matrix[indices, neuron_idx]
+        abs_coefs = np.abs(coefs_for_group)
+        
+        if np.max(abs_coefs) == 0:
+            neuron_times[neuron_idx] = np.nan
+            continue
+        
+        # Find the index of the maximum absolute coefficient
+        max_idx_in_group = np.argmax(abs_coefs)
+        feature_idx_in_group = indices[max_idx_in_group]
+        feature_name = feature_names_all[feature_idx_in_group]
+        
+        # Extract basis index from feature name
+        basis_match = re.search(r'basis(\d+)$', feature_name)
+        if basis_match:
+            basis_idx = int(basis_match.group(1))
+            if 0 <= basis_idx < len(basis_peak_times):
+                neuron_times[neuron_idx] = basis_peak_times[basis_idx]
+            else:
+                neuron_times[neuron_idx] = np.nan
+        else:
+            neuron_times[neuron_idx] = np.nan
+    
+    time_to_react[group_name] = neuron_times
+
+# Plot time to react
+output_path_time = os.path.join(script_dir, "time_to_react_by_region.png")
+plot_time_to_react_boxplot(time_to_react, acx_indices, ofc_indices, output_path_time)
+plt.show()
+
+#%%
+# ============================================================================
+# 12. PERI-EVENT RASTER AND PETH FOR HIGH COEFFICIENT UNITS
+# ============================================================================
+print("\n" + "=" * 60)
+print("PLOTTING PERI-EVENT RASTER AND PETH")
+print("=" * 60)
+
+# Temporal features to analyze
+temporal_features_to_plot = ['tone_onset', 'licks', 'outcome_onset']
+
+# Get coefficient matrix from population GLM
+coef_matrix_pop = np.asarray(model_pop.coef_)
+
+# For each temporal feature, find top units and plot
+for temp_feat in temporal_features_to_plot:
+    print(f"\nFinding units with high coefficients for {temp_feat}...")
+    
+    # Find top units for this feature
+    top_units = find_units_with_high_temporal_coefficients(
+        coef_matrix_pop,
+        list(X_ep_pop.columns),
+        temp_feat,
+        population_ids,
+        top_n=3
+    )
+    
+    if len(top_units) == 0:
+        print(f"  No units found for {temp_feat}")
+        continue
+    
+    print(f"  Top units for {temp_feat}:")
+    for unit_id, coef_val in top_units:
+        print(f"    Unit {unit_id}: max |coef| = {coef_val:.4f}")
+    
+    # Get event times for this feature
+    if temp_feat == 'tone_onset':
+        event_times = tone_onset
+    elif temp_feat == 'licks':
+        event_times = licks
+    elif temp_feat == 'outcome_onset':
+        event_times = outcome_time
+    else:
+        continue
+    
+    # Filter out invalid event times
+    event_times = event_times[~np.isnan(event_times)]
+    event_times = event_times[event_times > 0]
+    
+    if len(event_times) == 0:
+        print(f"  No valid event times for {temp_feat}")
+        continue
+    
+    # Get category and outcome information for matching events
+    # data_df was created in create_categorical_features and contains category_ID and outcome_ID
+    category_array = None
+    outcome_array = None
+    
+    if temp_feat == 'tone_onset':
+        # For tone_onset, we can directly use the category and outcome from data_df
+        # data_df has the same length as tone_onset
+        category_array = data_df['category_ID'].values if 'data_df' in locals() else None
+        outcome_array = data_df['outcome_ID'].values if 'data_df' in locals() else None
+    elif temp_feat in ['licks', 'outcome_onset']:
+        # For licks and outcome_onset, we need to match to nearest tone_onset
+        # The plotting function will handle this matching
+        category_array = data_df['category_ID'].values if 'data_df' in locals() else None
+        outcome_array = data_df['outcome_ID'].values if 'data_df' in locals() else None
+    
+    # Plot for each top unit
+    for unit_id, coef_val in top_units:
+        # Check if unit is in the filtered spikes (not just population)
+        if unit_id in spikes:
+            print(f"  Plotting peri-event raster and PETH for Unit {unit_id}...")
+            fig = plot_perievent_raster_peth(
+                spikes,
+                event_times,
+                unit_id,
+                temp_feat,
+                window=(EPOCH_START, EPOCH_END),
+                bin_size=BIN_SIZE,
+                tone_onset=tone_onset if temp_feat != 'tone_onset' else None,
+                category=category_array,
+                outcome=outcome_array
+            )
+            
+            if fig is not None:
+                # Save figure
+                output_path_peth = os.path.join(
+                    script_dir, 
+                    f"perievent_{temp_feat}_unit{unit_id}.png"
+                )
+                fig.savefig(output_path_peth, dpi=300, bbox_inches='tight')
+                print(f"    Saved to: {output_path_peth}")
+                plt.show()
+        else:
+            print(f"  Unit {unit_id} not found in filtered spikes")
 
 
 print("\n" + "=" * 60)

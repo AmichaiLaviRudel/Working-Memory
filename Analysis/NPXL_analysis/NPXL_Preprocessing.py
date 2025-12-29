@@ -89,11 +89,12 @@ def load_cluster_info(working_dir, data_dirs):
     # working_dir, data_dirs = current_ks_folder, ks4_data_dir 
     # The bombcell folder is inside the working_dir (imec*_ks4)
     label_dir = os.path.join(working_dir, "bombcell", "unit_labels.tsv").replace("\\", "/")
-    if os.path.isfile(label_dir):
-        return pd.read_csv(label_dir, sep='\t')
-    elif "cluster_bc_unitType.tsv" in os.listdir(data_dirs):
+    try:
+        data = pd.read_csv(label_dir, sep='\t')
+    except Exception:
         data = pd.read_csv(os.path.join(data_dirs, "cluster_bc_unitType.tsv").replace("\\", "/"), sep='\t')
-        # save the data to the working_dir
+        return data
+    if data.columns[0] == "unitID":
         data_to_bc = data.copy()
         data_to_bc.columns = ["unitID", "UnitType"]
         data_to_bc.index = data_to_bc["unitID"]
@@ -107,9 +108,7 @@ def load_cluster_info(working_dir, data_dirs):
             'NON-SOMA': 3
         }
         data_to_bc['UnitType'] = data_to_bc['UnitType'].map(unit_type_mapping)
-        
-        data_to_bc.to_csv(label_dir, sep='\t', index=False)
-        return data
+        return data_to_bc
     elif "cluster_info.tsv" in os.listdir(data_dirs):
         label_dir = os.path.join(data_dirs, "cluster_info.tsv")
         if os.path.isfile(label_dir):
