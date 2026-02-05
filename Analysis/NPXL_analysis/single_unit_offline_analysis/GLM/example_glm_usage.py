@@ -6,6 +6,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 import pynapple as nap
+from datetime import datetime
 
 import nemos as nmo
 
@@ -39,7 +40,7 @@ matplotlib.rcParams['figure.titlesize'] = 14
 # imec0 = ACx (Auditory Cortex)
 # imec1 = OFC (Orbitofrontal Cortex)
 
-base_path = r"Z:\Shared\Amichai\NPXL\Recs\group5\catGTGroup5\catgt_G5A3_2b_4t_new2_g0"
+base_path = r"Z:/Shared/Amichai/NPXL/Recs/group5\catGTGroup5\catgt_G5A3_1b_4t_new2_g0"
 
 
 def load_probe_spikes(base_path, imec_name, region_name):
@@ -160,7 +161,7 @@ print(f"By unit type: {pd.Series(all_unit_types).value_counts().to_dict()}")
 
 #%% Parameters
 # Minimum average firing rate threshold (Hz) for selecting units
-RATE_TH = 1
+RATE_TH = 0
 
 # Bin size for binning spike counts and predictors (in seconds)
 BIN_SIZE = 0.01
@@ -207,8 +208,8 @@ INCLUDE_SPIKE_HISTORY = True  # Set to False to exclude spike history
 #       features are included and can affect ALL neurons via PopulationGLM coefficients
 
 #%% filtering
-spikes = spikes.getby_category("unit_type")["good"]
-spikes = spikes.getby_threshold("rate", RATE_TH)
+# spikes = spikes.getby_category("unit_type")["good"]
+# spikes = spikes.getby_threshold("rate", RATE_TH)
 
 
 # %% 
@@ -224,7 +225,10 @@ stimuli_outcome_df = pd.read_csv(os.path.join(probe_path_acx, "analysis_output",
 stimulus = np.round(stimuli_outcome_df["stimulus"].values.astype(float), 2)
 outcome_str = stimuli_outcome_df["outcome"].astype(str).str.lower().values
 outcome_time_bins = (stimuli_outcome_df['outcome_time'] ).values.astype(float) 
-outcome_time = np.nan_to_num((outcome_time_bins) * PREROCEESING_BIN_SIZE + tone_onset, nan=0)
+outcome_time = (outcome_time_bins) * PREROCEESING_BIN_SIZE + tone_onset
+# If outcome_time is NaN, set it to tone_onset + 2 seconds
+nan_mask = np.isnan(outcome_time)
+outcome_time[nan_mask] = tone_onset[nan_mask] + 2.0
 previous_outcome = np.roll(outcome_str, 1)
 previous_outcome[0] = '0'
 # Category: Go (1) vs NoGo (0)
@@ -236,6 +240,28 @@ data = pd.DataFrame({"stimulus_ID": stimulus,
                     "category_ID": category,
                     "outcome_ID": outcome_str, 
                     "previous_outcome": previous_outcome})
+
+
+categorical_features_for_saving = nap.TsdFrame(
+    t=tone_onset,
+    d=data.to_numpy(),
+    columns=data.columns,
+)
+
+#%%
+count_of_go_trials = len(data[data["category_ID"] == "Go"])
+count_of_nogo_trials = len(data[data["category_ID"] == "NoGo"])
+print(f"Count of Go trials: {count_of_go_trials}")
+print(f"Count of NoGo trials: {count_of_nogo_trials}")
+
+count_of_hits = len(data[data["outcome_ID"] == "hit"])
+count_of_misses = len(data[data["outcome_ID"] == "miss"])
+count_of_correct_rejects = len(data[data["outcome_ID"] == "correct_reject"])
+count_of_false_alarms = len(data[data["outcome_ID"] == "false_alarm"])
+print(f"Count of hits: {count_of_hits}")
+print(f"Count of misses: {count_of_misses}")
+print(f"Count of correct rejects: {count_of_correct_rejects}")
+print(f"Count of false alarms: {count_of_false_alarms}")
 
 #%%
 formula = "C(stimulus_ID) + category_ID + outcome_ID + previous_outcome"
@@ -280,6 +306,236 @@ temporal_features = nap.TsdFrame(
     columns=["tone_onset", "licks", "outcome_onset"],
 )
 
+#%%
+# Build epochs starting at each tone onset
+start = tone_onset - EPOCH_START
+end = tone_onset + EPOCH_END  # 3 seconds after tone onset
+epochs = nap.IntervalSet(start=start, end=end)
+
+# Save data to standard file formats
+save_dir = os.path.join(base_path, "raw_data")
+os.makedirs(save_dir, exist_ok=True)
+
+# Save units (TsGroup) - save spike times for each unit
+units_dict = {}
+units_info_list = []
+
+for unit_id, unit_spikes in spikes.items():
+    spike_times = unit_spikes.times()
+    if len(spike_times) > 0:
+        units_dict[unit_id] = spike_times
+        
+        # Get unit metadata
+        unit_info = {
+            "unit_id": unit_id,
+            "n_spikes": len(spike_times),
+            "mean_firing_rate": len(spike_times) / max_time if max_time > 0 else 0,
+        }
+        
+        # Add metadata from TsGroup if available
+        try:
+            region_info = spikes.get_info("region")
+            unit_info["region"] = region_info[unit_id] if region_info is not None and unit_id < len(region_info) else "unknown"
+        except:
+            unit_info["region"] = "unknown"
+            
+        try:
+            unit_type_info = spikes.get_info("unit_type")
+            unit_info["unit_type"] = unit_type_info[unit_id] if unit_type_info is not None and unit_id < len(unit_type_info) else "unknown"
+        except:
+            unit_info["unit_type"] = "unknown"
+            
+        units_info_list.append(unit_info)
+
+np.save(os.path.join(save_dir, "units_spike_times.npy"), units_dict, allow_pickle=True)
+print(f"Saved units spike times: {len(units_dict)} units")
+
+# Save units info as CSV
+units_info_df = pd.DataFrame(units_info_list)
+units_info_df = units_info_df[["unit_id", "region", "unit_type", "n_spikes", "mean_firing_rate"]]
+units_info_df.to_csv(os.path.join(save_dir, "units_info.csv"), index=False)
+print(f"Saved units info: {len(units_info_df)} units")
+
+
+# Save temporal_features (TsdFrame) as DataFrame
+temporal_df = pd.DataFrame(
+    data=temporal_features.values,
+    index=temporal_features.t,
+    columns=temporal_features.columns
+)
+temporal_df.to_csv(os.path.join(save_dir, "temporal_features.csv"))
+print(f"Saved temporal_features: shape {temporal_df.shape}")
+
+# Save categorical_features_for_saving (TsdFrame) as DataFrame (preserving string values)
+categorical_df = pd.DataFrame(
+    data=categorical_features_for_saving.values,
+    index=categorical_features_for_saving.t,
+    columns=categorical_features_for_saving.columns
+)
+# Reconstruct original string values
+categorical_df["stimulus_ID"] = stimulus
+categorical_df["category_ID"] = category
+categorical_df["outcome_ID"] = outcome_str
+categorical_df["previous_outcome"] = previous_outcome
+categorical_df.to_csv(os.path.join(save_dir, "categorical_features.csv"))
+print(f"Saved categorical_features: shape {categorical_df.shape}")
+
+# Save metadata
+# Count units by brain area (region)
+region_info = spikes.get_info("region")  # list of region labels per unit
+n_units_by_region = pd.Series(region_info).value_counts().to_dict()  # e.g. {"ACx": 120, "OFC": 95}
+
+# Count units by type (good, mua, noise, etc.)
+unit_type_info = spikes.get_info("unit_type")  # list of unit type labels per unit
+n_units_by_type = pd.Series(unit_type_info).value_counts().to_dict()  # e.g. {"good": 150, "mua": 50, "noise": 20}
+
+# Count outcomes (task summary)
+outcome_counts = pd.Series(outcome_str).value_counts().to_dict()  # e.g. {"hit": 200, "miss": 50, "correct_reject": 150, "false_alarm": 30}
+
+# Count unique stimuli and get stimulus summary
+n_unique_stimuli = len(np.unique(stimulus))
+stimulus_counts = pd.Series(stimulus).value_counts().to_dict()  # count of each stimulus frequency
+
+metadata = {
+    "recording_name": rec_name,
+    "base_path": base_path,
+    "save_timestamp": datetime.now().isoformat(),
+    "n_units_by_region": n_units_by_region,
+    "n_units_by_type": n_units_by_type,
+    "task_summary": {
+        "outcome_counts": outcome_counts,
+        "n_unique_stimuli": n_unique_stimuli,
+        "stimulus_counts": stimulus_counts,
+    },
+    "parameters": {
+        "BIN_SIZE": BIN_SIZE,
+        "LOW_BOUNDARY_TH": LOW_BOUNDARY_TH,
+        "HIGH_BOUNDARY_TH": HIGH_BOUNDARY_TH,
+    },
+    "data_shapes": {
+        "temporal_features": list(temporal_df.shape),
+        "categorical_features": list(categorical_df.shape),
+    },
+    "temporal_features_columns": list(temporal_df.columns),
+    "categorical_features_columns": list(categorical_df.columns),
+    "recording_duration_seconds": float(max_time),
+    "n_tone_onsets": len(tone_onset),
+}
+
+import json
+with open(os.path.join(save_dir, "metadata.json"), "w") as f:
+    json.dump(metadata, f, indent=2)
+print(f"Saved metadata")
+
+# Create README file
+readme_content = f"""# Time Series Data
+
+This directory contains time series data from the recording.
+
+## Recording Information
+- **Recording Name**: {rec_name}
+- **Base Path**: {base_path}
+- **Save Timestamp**: {metadata['save_timestamp']}
+- **Recording Duration**: {max_time:.2f} seconds
+- **Number of Units**: {len(units_dict)}
+- **Number of Tone Onsets**: {len(tone_onset)}
+
+## Files Description
+
+### 1. `units_spike_times.npy`
+- **Format**: NumPy array (dictionary, requires `allow_pickle=True` to load)
+- **Content**: Dictionary mapping unit IDs to spike times (in seconds)
+- **Structure**: `{{unit_id: np.array([spike_times])}}`
+- **Usage**: 
+  ```python
+  import numpy as np
+  units_dict = np.load('units_spike_times.npy', allow_pickle=True).item()
+  spike_times_unit_0 = units_dict[0]  # Get spike times for unit 0
+  ```
+
+### 2. `temporal_features.csv`
+- **Format**: CSV file
+- **Content**: Binned temporal event counts
+- **Columns**:
+  - `tone_onset`: Tone onset events aligned to the bin time axis
+  - `licks`: Licks count aligned to the bin time axis
+  - `outcome_onset`: Outcome onset aligned to the bin time axis
+- **Index**: Time in seconds (bin centers)
+- **Bin Size**: {BIN_SIZE} seconds
+- **Shape**: {temporal_df.shape[0]} time bins × {temporal_df.shape[1]} features
+- **Usage**:
+  ```python
+  import pandas as pd
+  temporal_df = pd.read_csv('temporal_features.csv', index_col=0)
+  ```
+
+### 3. `categorical_features.csv`
+- **Format**: CSV file
+- **Content**: Categorical trial-level features aligned to tone onsets
+- **Columns**:
+  - `stimulus_ID`: Stimulus frequency/ID (float)
+  - `category_ID`: Trial category - "Go" or "NoGo" (string)
+  - `outcome_ID`: Trial outcome (string, e.g., "hit", "miss", "correct_reject", "false_alarm")
+  - `previous_outcome`: Outcome of the previous trial (string)
+- **Index**: Tone onset times in seconds
+- **Shape**: {categorical_df.shape[0]} trials × {categorical_df.shape[1]} features
+- **Usage**:
+  ```python
+  import pandas as pd
+  categorical_df = pd.read_csv('categorical_features.csv', index_col=0)
+  ```
+
+### 4. `metadata.json`
+- **Format**: JSON file
+- **Content**: Analysis parameters, data shapes, and recording information
+- **Usage**:
+  ```python
+  import json
+  with open('metadata.json', 'r') as f:
+      metadata = json.load(f)
+  ```
+
+## Analysis Parameters
+
+- **Bin Size (BIN_SIZE)**: {BIN_SIZE} seconds - Temporal binning resolution
+- **Category Boundaries**: 
+  - Low: {LOW_BOUNDARY_TH}
+  - High: {HIGH_BOUNDARY_TH}
+  - Stimuli below low or above high are categorized as "Go", others as "NoGo"
+
+## Data Relationships
+
+- **Temporal features** are binned at {BIN_SIZE}s resolution across the entire recording
+- **Categorical features** are aligned to tone onset times (one row per trial)
+- **Units spike times** are in absolute time (seconds from recording start)
+- All time values are in seconds
+
+## Notes
+
+- Spike times are stored as numpy arrays for each unit
+- Temporal features use a common time base (binned)
+- Categorical features preserve original string values for readability
+- The index in CSV files represents time in seconds
+"""
+
+with open(os.path.join(save_dir, "README.md"), "w") as f:
+    f.write(readme_content)
+print(f"Saved README.md")
+
+print(f"\nAll data saved to: {save_dir}")
+
+
+#%% try and load the units_spike_times.npy
+units_dict = np.load(os.path.join(save_dir, "units_spike_times.npy"), allow_pickle=True).item()
+print(f"Loaded units spike times: {len(units_dict)} units")
+
+# try and load the temporal_features.csv
+temporal_df = pd.read_csv(os.path.join(save_dir, "temporal_features.csv"), index_col=0)
+print(f"Loaded temporal features: shape {temporal_df.shape}")
+
+# try and load the categorical_features.csv
+categorical_df = pd.read_csv(os.path.join(save_dir, "categorical_features.csv"), index_col=0)
+
 #%% spikecount
 unit_ids = list(spikes.keys())
 spike_count = spikes.count(BIN_SIZE, ep=full_ep)
@@ -290,10 +546,10 @@ spike_count = nap.TsdFrame(
     columns=unit_ids,
 )
 
-#%% Build epochs starting at each tone onset
-start = tone_onset - EPOCH_START
-end = tone_onset + EPOCH_END # 3 seconds after tone onset
-epochs = nap.IntervalSet(start=start, end=end)
+#%% epochs already defined above for NWB save
+#%%
+spike_count_in_epoch = spike_count.restrict(full_ep)
+
 
 
 # %%
@@ -932,7 +1188,8 @@ for feature_name in categorical_feature_names:
         
         # Column 2: Reconstructed kernel with gradient area
         ax2 = fig.add_subplot(gs[row_idx, 1])
-        # Create gradient area plot
+        # Create gradient 
+        # area plot
         n_gradient_layers = 15
         for i in range(n_gradient_layers):
             y_bottom = reconstructed_kernel * (i / n_gradient_layers)

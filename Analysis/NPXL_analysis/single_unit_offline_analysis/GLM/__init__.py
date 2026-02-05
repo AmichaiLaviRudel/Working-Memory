@@ -31,7 +31,15 @@ from . import config
 from . import colors
 from . import loading
 from . import design_matrix
-from . import plotting
+
+# NOTE:
+# `plotting.py` currently relies on non-package (script-style) imports.
+# Importing it unconditionally breaks `import Analysis....GLM` which is needed
+# by the Streamlit app. Keep it best-effort here to avoid hard failures.
+try:
+    from . import plotting  # type: ignore
+except Exception:  # pragma: no cover
+    plotting = None  # type: ignore
 
 __version__ = "1.0.0"
 __all__ = ['config', 'colors', 'loading', 'design_matrix', 'plotting']

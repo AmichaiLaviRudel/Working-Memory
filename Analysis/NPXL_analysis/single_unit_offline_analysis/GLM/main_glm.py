@@ -58,7 +58,7 @@ print("=" * 60)
 print("LOADING DATA")
 print("=" * 60)
 
-BASE_PATH =  r"Z:\Shared\Amichai\NPXL\Recs\group7\catgt_G7A2_novice_2b_4t_g1"
+BASE_PATH =  r"Z:\Shared\Amichai\NPXL\Recs\group5\catGTGroup5\catgt_G5A3_1b_4t_new2_g0"
 INCLUDE_SPIKE_HISTORY = False
 # Load spikes from all probes
 spikes, probe_path_acx, probe_path_ofc = load_all_probes(BASE_PATH)
@@ -84,7 +84,7 @@ categorical_features, data_df, outcome_time = create_categorical_features(
     LOW_BOUNDARY_THRESHOLD, HIGH_BOUNDARY_THRESHOLD
 )
 print(f"Categorical features: {categorical_features.shape}")
-
+#%%
 # Create temporal features
 temporal_features, full_ep = create_temporal_features(
     tone_onset, licks, outcome_time, BIN_SIZE
@@ -618,6 +618,10 @@ for temp_feat in temporal_features_to_plot:
     for unit_id, coef_val in top_units:
         # Check if unit is in the filtered spikes (not just population)
         if unit_id in spikes:
+            # Get region info for this unit
+            region_info = spikes.get_info('region')
+            unit_region = region_info[unit_id] if unit_id in region_info.index else None
+            
             print(f"  Plotting peri-event raster and PETH for Unit {unit_id}...")
             fig = plot_perievent_raster_peth(
                 spikes,
@@ -628,7 +632,8 @@ for temp_feat in temporal_features_to_plot:
                 bin_size=BIN_SIZE,
                 tone_onset=tone_onset if temp_feat != 'tone_onset' else None,
                 category=category_array,
-                outcome=outcome_array
+                outcome=outcome_array,
+                region=unit_region
             )
             
             if fig is not None:

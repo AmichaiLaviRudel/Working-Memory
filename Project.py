@@ -107,7 +107,6 @@ def current_project_overview(existing_projects, selected_project, path, types):
                 ),
             },
         )
-        st.divider()
 
         col1, col2, col3 = st.columns([30, 70, 25])
         with col3:
@@ -128,7 +127,61 @@ def current_project_overview(existing_projects, selected_project, path, types):
                 with c2:
                     if st.button("Cancel", key="save_denied"):
                         st.rerun()
+        st.divider()
+        st.markdown("### Project Metrics")
+
+        # add st.metrics to the project overview
+        col1, col2, col3,col4 = st.columns(4)
+        
+        with col2:
+            st.metric(
+                label="Number of Sessions",
+                value=len(st_project_data["SessionDate"].unique()),
+                help="Number of sessions in the project",
+            )
+        with col1:
+            st.metric(
+                label="Number of Animals",
+                value=st_project_data["MouseName"].nunique(),
+                help="Number of animals in the project",
+            )
+        with col3:
+            st.metric(
+                label="Number of Recordings",
+                value=st_project_data["Recording"].sum(),
+                help="Number of recordings in the project",
+            )
+        with col4:
+            if current_description["DOB"].notna().any():
+                try:
+                    dob = pd.to_datetime(current_description["DOB"].iloc[0])
+                    last_session = pd.to_datetime(st_project_data["SessionDate"].max())
+                    if pd.notna(dob) and pd.notna(last_session):
+                        mice_age = last_session - dob
+                        # Convert timedelta to days (numeric) or string format
+                        if isinstance(mice_age, pd.Series):
+                            mice_age_days = int(mice_age.iloc[0].days) if len(mice_age) > 0 and pd.notna(mice_age.iloc[0].days) else None
+                        else:
+                            mice_age_days = int(mice_age.days) if hasattr(mice_age, 'days') and pd.notna(mice_age.days) else None
+                        
+                        if mice_age_days is not None:
+                            st.metric(
+                                label="Mice age",
+                                value=f"{mice_age_days} days",
+                                help="Days since birth to last session",
+                            )
+                        else:
+                            st.write("Unable to calculate age")
+                    else:
+                        st.markdown(":red-background[Please add the DOB to the project description]")
+                except (ValueError, TypeError) as e:
+                    st.markdown(":red-background[Please add the DOB to the project description]")
+            else:
+                st.markdown(":red-background[Please add the DOB to the project description]")
         return st_project_data
+
+
+
     except Exception as e:  # noqa: BLE001
         st.error(f"Something went wrong in the project overview.\n\n{e}")
         st.text(traceback.format_exc())
@@ -197,6 +250,19 @@ def analysis(project_data: pd.DataFrame, analysis_type: str) -> None:
 existing_projects = pd.read_csv(os.path.join(st.session_state.user_path, "projects_list.csv"))
 project_list = st.session_state.project_list
 
+# Global utilities view (not per-project)
+view_mode = st.sidebar.radio(
+    "View",
+    options=["Project", "Global dataset"],
+    key="project_view_mode",
+)
+
+if view_mode == "Global dataset":
+    from global_dataset_page import render_global_dataset_page
+
+    render_global_dataset_page()
+    st.stop()
+
 # Sidebar project selection
 st.session_state.selected_project = st.sidebar.radio(
     "Select Project", project_list, key="select_project"
@@ -258,13 +324,14 @@ if any(t.lower() == "educage" for t in project_types):
 
 if any(t.lower() == "behavior-bpod gui" for t in project_types):
     from load_data.load_bpod_data import main as run_bpod_loader
-
+    st.write(data_dir)
     if st.button("Load / update Bpod data"):
         if not data_dir:
             st.error("Please set DataDir for this project in projects_list.csv")
         else:
             try:
-                csv_path = run_bpod_loader(data_dir)
+                group_number =st.session_state.selected_project.split(" ")[1]
+                csv_path = run_bpod_loader(data_dir, group_number)
                 st.success(f"Bpod data updated: {csv_path}")
             except Exception as e:  # noqa: BLE001
                 st.error(f"Bpod data loader failed.\\n\\n{e}")

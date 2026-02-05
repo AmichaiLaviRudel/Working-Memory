@@ -2,10 +2,13 @@ import scipy.io
 import pandas as pd
 import numpy as np
 import os as os
+import shutil
 from tqdm import tqdm
 import re as re
 import json
 import sys
+from pathlib import Path
+from datetime import datetime, timedelta
 from tkinter import Tk, filedialog
 from typing import Any, Dict, List, Tuple, Optional
 
@@ -14,12 +17,20 @@ from typing import Any, Dict, List, Tuple, Optional
 # Low-level MAT loading and parsing
 # =============================================================================
 
-def load_mat_file(file_path: str) -> Tuple[pd.DataFrame, pd.DataFrame, Any, Any, Any, Any, List[np.ndarray], np.ndarray, Any, Any, Any, Any, bool]:
+def load_mat_file(file_path: str) -> Tuple[pd.DataFrame, pd.DataFrame, Any, Any, Any, Any, List[np.ndarray], np.ndarray, Any, Any, Any, Any, bool, Optional[np.ndarray]]:
     """Load a single .mat Bpod file and extract per-trial data.
 
     The logic is unchanged from the original script; only typing was added.
     """
-    mat_contents = scipy.io.loadmat(file_path)
+    try:
+        mat_contents = scipy.io.loadmat(file_path)
+    except Exception as e:
+        print(f"[WARN] Failed to load .mat file {file_path}: {e}")
+        raise
+    
+    # Check if SessionData exists
+    if "SessionData" not in mat_contents:
+        raise KeyError(f"File {file_path} does not contain 'SessionData' key - may not be a valid Bpod session file")
 
     # Check if FRA is in file path or in the directory path
     file_dir = os.path.dirname(file_path) if os.path.dirname(file_path) else ""
@@ -56,6 +67,7 @@ def load_mat_file(file_path: str) -> Tuple[pd.DataFrame, pd.DataFrame, Any, Any,
                 tones_per_class,
                 boundaries,
                 recs,
+                None,  # OutcomeName not available for FRA files
             )
         except (KeyError, ValueError, IndexError):
             # Not actually an FRA file, fall through to regular processing
@@ -72,6 +84,13 @@ def load_mat_file(file_path: str) -> Tuple[pd.DataFrame, pd.DataFrame, Any, Any,
     # Extract 'TrialTypes' and 'RawEvents'
     trial_types = session_data_content["TrialTypes"][0]
     raw_events = session_data_content["RawEvents"][0, 0]
+    
+    # Extract 'OutcomeName' if available
+    outcome_names: Optional[np.ndarray] = None
+    try:
+        outcome_names = session_data_content["OutcomeName"][0]
+    except (KeyError, IndexError):
+        pass  # OutcomeName not available, will use calculated outcomes
 
     count_recs = 0
     recs = False
@@ -197,6 +216,7 @@ def load_mat_file(file_path: str) -> Tuple[pd.DataFrame, pd.DataFrame, Any, Any,
         tones_per_class,
         boundaries,
         recs,
+        outcome_names,
     )
 
 
@@ -228,6 +248,8 @@ def create_single_row_with_outcome(
     tones_per_class: Any,
     boundaries: Any,
     recs: bool,
+    outcome_names: Optional[np.ndarray] = None,
+    group_name: str = "",
 ) -> pd.DataFrame:
     file_name = os.path.basename(file_path)
     mouse_name = file_name.split("_")[0]
@@ -270,12 +292,33 @@ def create_single_row_with_outcome(
 
         trial_types_list.append(trial_type_str)
 
-        if trial_type_str == "Go":
-            outcome = "Hit" if reward else "Miss"
-        elif trial_type_str == "NoGo":
-            outcome = "False Alarm" if punishment else "CR"
+        # Use OutcomeName from SessionData if available, otherwise calculate
+        if outcome_names is not None and i < len(outcome_names):
+            try:
+                outcome = outcome_names[i]
+                # Handle numpy array/string conversion
+                if isinstance(outcome, np.ndarray):
+                    outcome = outcome.item() if outcome.size > 0 else None
+                if outcome is None or (isinstance(outcome, str) and len(outcome) == 0):
+                    raise ValueError("Empty outcome")
+                # Convert to string if needed
+                outcome = str(outcome).strip()
+            except (ValueError, IndexError, AttributeError):
+                # Fall back to calculated outcome
+                if trial_type_str == "Go":
+                    outcome = "Hit" if reward else "Miss"
+                elif trial_type_str == "NoGo":
+                    outcome = "False Alarm" if punishment else "CR"
+                else:
+                    outcome = "Unknown"
         else:
-            outcome = "Unknown"
+            # Calculate outcome from trial type and rewards/punishments
+            if trial_type_str == "Go":
+                outcome = "Hit" if reward else "Miss"
+            elif trial_type_str == "NoGo":
+                outcome = "False Alarm" if punishment else "CR"
+            else:
+                outcome = "Unknown"
 
         outcomes_list.append(outcome)
 
@@ -298,6 +341,8 @@ def create_single_row_with_outcome(
         "Unique_Stimuli_Values": Unique_Stimuli_Values,
         "Tones_per_class": tones_per_class,
         "N_Boundaries": boundaries,
+        "groupID": group_name,
+        "Setup": "Bpod",
     }
 
     combined_df = pd.DataFrame([combined_data])
@@ -326,25 +371,197 @@ def save_combined_data_to_df(df: pd.DataFrame, combined_row_df: pd.DataFrame) ->
     return pd.concat([df, combined_row_df], ignore_index=True)
 
 
-def find_mat_files_in_session_data(directory: str) -> List[str]:
+def extract_subject_id_from_path(file_path: str) -> Optional[str]:
+    """Extract subject ID (e.g., G7A1) from file path or name."""
+    subject_regex = re.compile(r"G\d+A\d+", re.IGNORECASE)
+    path = Path(file_path)
+    for part in [path.name] + [p.name for p in path.parents]:
+        m = subject_regex.search(part)
+        if m:
+            return m.group(0).upper()
+    return None
+
+
+def infer_datetime_from_bpod_file(file_path: str) -> Optional[datetime]:
+    """
+    Infer full session datetime for a Bpod .mat file.
+    Preferred layout: {id}_{protocol}_{YYYYMMDD}_{HHMMSS}.mat
+    Example: G7A1_FRA_20251112_102435.mat
+    Falls back to file modification time if pattern doesn't match.
+    """
+    path = Path(file_path)
+    stem = path.stem
+    
+    # Strict pattern for the documented format
+    m = re.match(
+        r"^(?P<id>G\d+A\d+)_(?P<protocol>[A-Za-z0-9]+)_(?P<ymd>20\d{2}\d{2}\d{2})_(?P<hms>\d{6})$",
+        stem,
+    )
+    if m:
+        ymd = m.group("ymd")
+        hms = m.group("hms")
+        try:
+            y = int(ymd[0:4])
+            mon = int(ymd[4:6])
+            d = int(ymd[6:8])
+            h = int(hms[0:2])
+            mi = int(hms[2:4])
+            s = int(hms[4:6])
+            return datetime(y, mon, d, h, mi, s)
+        except ValueError:
+            pass
+    
+    # Fallback: use file modification time
+    try:
+        mtime = os.path.getmtime(file_path)
+        return datetime.fromtimestamp(mtime)
+    except OSError:
+        return None
+
+
+def session_label_from_datetime(session_dt: datetime, *, bin_seconds: int = 90) -> str:
+    """
+    Compute a session folder label from a datetime, quantized into bins
+    of `bin_seconds`. This ensures behavior and ephys sessions that occur
+    within the same ~90s window share the same session folder.
+    """
+    seconds = session_dt.hour * 3600 + session_dt.minute * 60 + session_dt.second
+    bin_index = seconds // bin_seconds
+    label_seconds = bin_index * bin_seconds
+    h = label_seconds // 3600
+    rem = label_seconds % 3600
+    m = rem // 60
+    s = rem % 60
+    return f"{h:02d}-{m:02d}-{s:02d}"
+
+
+def find_mat_files_in_session_data(directory: str, organize: bool = True) -> List[str]:
+    """
+    Find .mat files in session data directory and optionally move them to organized structure.
+    
+    Args:
+        directory: Source directory to search for .mat files
+        organize: If True, move files to organized structure (Z:\\Shared\\Amichai\\Data)
+    
+    Returns:
+        List of paths to .mat files (from organized structure if moved, otherwise from source)
+    """
+    organized_root = Path(r"Z:\Shared\Amichai\Data")
     mat_files: List[str] = []
+    files_moved = 0
+    files_skipped = 0
+    
+    # Find files in source directory
+    source_files: List[str] = []
     for root, dirs, files in os.walk(directory):  # noqa: B007
         if "Session Data" in root and "GNG" in os.path.dirname(root) and "Original_Files" not in root:
             for file in files:
-                if file.endswith(".mat"):
-                    mat_files.append(os.path.join(root, file))
+                if file.endswith(".mat") and file != "DefaultSettings.mat":
+                    source_files.append(os.path.join(root, file))
+    
+    if not organize:
+        # Return source files without moving
+        return source_files
+    
+    # Move files to organized structure
+    organized_root.mkdir(parents=True, exist_ok=True)
+    
+    for mat_file_path in source_files:
+        mat_file = Path(mat_file_path)
+        
+        # Extract metadata
+        subject_id = extract_subject_id_from_path(str(mat_file))
+        if subject_id is None:
+            files_skipped += 1
+            continue
+        
+        session_dt = infer_datetime_from_bpod_file(str(mat_file))
+        if session_dt is None:
+            files_skipped += 1
+            continue
+        
+        # Skip files that are less than 90 minutes old (recently modified/created)
+        time_diff = datetime.now() - session_dt
+        if time_diff < timedelta(minutes=90):
+            files_skipped += 1
+            continue
+        
+        # Compute destination path: [Root]/[Subject_ID]/[YYYY-MM-DD]/[Session_Label]/behavior/
+        date_str = session_dt.date().isoformat()
+        session_label = session_label_from_datetime(session_dt)
+        dest_dir = organized_root / subject_id / date_str / session_label / "behavior"
+        dest_file = dest_dir / mat_file.name
+        
+        # Skip if destination already exists
+        if dest_file.exists():
+            # File already organized, add to return list
+            mat_files.append(str(dest_file))
+            files_skipped += 1
+            continue
+        
+        # Move the file
+        try:
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(mat_file), str(dest_file))
+            mat_files.append(str(dest_file))
+            files_moved += 1
+        except (OSError, shutil.Error) as e:
+            print(f"[WARN] Failed to move {mat_file}: {e}")
+            files_skipped += 1
+            # Add source file to return list if move failed
+            mat_files.append(str(mat_file))
+    
+    if files_moved > 0 or files_skipped > 0:
+        print(f"Moved {files_moved} files to organized structure, skipped {files_skipped} files")
+    
     return mat_files
 
 
-def is_processed(file_path: str) -> bool:
-    processed_flag = file_path + ".done"
-    return os.path.exists(processed_flag)
+def find_mat_files_in_organized_structure(group_number: str) -> List[str]:
+    """
+    Search for .mat files in the organized data structure (Z:\\Shared\\Amichai\\Data)
+    for a specific group number.
+    
+    Args:
+        group_number: Group number as string (e.g., "1", "5")
+    
+    Returns:
+        List of paths to .mat files found in folders matching G{group_number}A* pattern
+    """
+    organized_root = r"Z:\Shared\Amichai\Data"
+    mat_files: List[str] = []
+    
+    if not os.path.exists(organized_root):
+        return mat_files
+    
+    # Pattern to match subject folders: G{group_number}A{animal_number}
+    # e.g., G1A1, G1A2, G5A1, etc.
+    pattern = re.compile(rf"^G{group_number}A\d+$", re.IGNORECASE)
+    
+    # Walk through the organized structure
+    for root, dirs, files in os.walk(organized_root):  # noqa: B007
+        # Check if current directory name matches the group pattern
+        current_dir = os.path.basename(root)
+        if pattern.match(current_dir):
+            # Found a subject folder for this group, search for .mat files
+            for file in files:
+                if file.endswith(".mat") and file != "DefaultSettings.mat":
+                    mat_files.append(os.path.join(root, file))
+        else:
+            # Check parent directories in the path
+            path_parts = root.split(os.sep)
+            for part in path_parts:
+                if pattern.match(part):
+                    # Found a matching subject folder in the path, search for .mat files
+                    for file in files:
+                        if file.endswith(".mat") and file != "DefaultSettings.mat":
+                            full_path = os.path.join(root, file)
+                            if full_path not in mat_files:  # Avoid duplicates
+                                mat_files.append(full_path)
+                    break
+    
+    return mat_files
 
-
-def mark_as_processed(file_path: str) -> None:
-    processed_flag = file_path + ".done"
-    with open(processed_flag, "w") as f:
-        f.write("Processed")
 
 
 # =============================================================================
@@ -391,55 +608,64 @@ def choose_directory(default_path: str) -> str:
 # Public processing API
 # =============================================================================
 
-def process_bpod_directory(directory_path: str) -> str:
+def process_bpod_directory(directory_path: str, group_number: str) -> str:
     """Process all Bpod .mat files under the given directory and update the per-group CSV.
 
     Returns the path to the updated CSV file.
     """
     group_name, csv_path = get_csv_path(directory_path)
 
-    # Load or initialize CSV
-    if os.path.exists(csv_path):
-        df = pd.read_csv(csv_path)
-    else:
-        df = pd.DataFrame(columns=["Checkbox"])
+    # Always start with fresh DataFrame (overwrite previous CSV)
+    df = pd.DataFrame(columns=["Checkbox"])
 
-        # Add the group to the project list if it does not exist yet
-        project_list_path = r"Z:\Shared\Amichai\Code\DB\users_data\Amichai\projects_list.csv"
-        project_list = pd.read_csv(project_list_path)
+    # Add the group to the project list if it does not exist yet
+    project_list_path = r"Z:\Shared\Amichai\Code\DB\users_data\Amichai\projects_list.csv"
+    project_list = pd.read_csv(project_list_path)
 
-        if group_name not in project_list["Project Name"].values:
-            new_project = pd.DataFrame(
-                {
-                    "Project Name": [group_name],
-                    "Project Type": ["['Behavior-Bpod GUI']"],
-                    "Project Description": ["Automatically added group"],
-                }
-            )
-            project_list = pd.concat([project_list, new_project], ignore_index=True)
-            project_list.to_csv(project_list_path, index=False)
-
-    mat_files_list = find_mat_files_in_session_data(directory_path)
-
+    if group_name not in project_list["Project Name"].values:
+        new_project = pd.DataFrame(
+            {
+                "Project Name": [group_name],
+                "Project Type": ["['Behavior-Bpod GUI']"],
+                "Project Description": ["Automatically added group"],
+            }
+        )
+        project_list = pd.concat([project_list, new_project], ignore_index=True)
+        project_list.to_csv(project_list_path, index=False)
+    
+    # First, move files from session data to organized structure
+    print(f"Organizing files from {directory_path}...")
+    find_mat_files_in_session_data(directory_path, organize=True)
+    
+    # Then, find files in the organized structure for this group
+    print(f"Searching for files in organized structure for Group {group_number}...")
+    mat_files_list = find_mat_files_in_organized_structure(group_number)
+    
     for mat_file in tqdm(mat_files_list, desc="Processing .mat files"):
-        if is_processed(mat_file):
+        try:
+            (
+                trial_types_df,
+                raw_events_df,
+                session_date,
+                session_time,
+                trial_settings,
+                notes,
+                licks,
+                states,
+                stimuli,
+                Unique_Stimuli_Values,
+                tones_per_class,
+                boundaries,
+                recs,
+                outcome_names,
+            ) = load_mat_file(mat_file)
+        except (KeyError, ValueError, IndexError, OSError) as e:
+            print(f"[WARN] Skipping file {mat_file}: {e}")
+            continue
+        except Exception as e:
+            print(f"[WARN] Unexpected error processing {mat_file}: {e}")
             continue
 
-        (
-            trial_types_df,
-            raw_events_df,
-            session_date,
-            session_time,
-            trial_settings,
-            notes,
-            licks,
-            states,
-            stimuli,
-            Unique_Stimuli_Values,
-            tones_per_class,
-            boundaries,
-            recs,
-        ) = load_mat_file(mat_file)
 
         # Skip short or fake sessions
         if len(trial_types_df) < 50 or "Fake" in mat_file:
@@ -459,9 +685,10 @@ def process_bpod_directory(directory_path: str) -> str:
             tones_per_class,
             boundaries,
             recs,
+            outcome_names,
+            group_name,
         )
         df = save_combined_data_to_df(df, combined_row_df)
-        mark_as_processed(mat_file)
 
     # Final cleanup and sort
     df = df.dropna(subset=["SessionDate"])
@@ -473,7 +700,7 @@ def process_bpod_directory(directory_path: str) -> str:
     return csv_path
 
 
-def main(directory_path: Optional[str] = None) -> str:
+def main(directory_path: Optional[str] = None, group_number: Optional[str] = None) -> str:
     """Main entry point used by CLI and Streamlit.
 
     If directory_path is None, fall back to the original Tk-based chooser flow.
@@ -496,7 +723,7 @@ def main(directory_path: Optional[str] = None) -> str:
     if directory_path is None:
         raise ValueError("No directory_path provided or selected.")
 
-    return process_bpod_directory(directory_path)
+    return process_bpod_directory(directory_path, group_number)
 
 
 if __name__ == "__main__":

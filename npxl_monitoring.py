@@ -34,7 +34,7 @@ st_project_data = st.data_editor(
 
 with st.expander("Utilities", expanded=False):
     st.subheader("Date Calculator")
-    col1, col2 = st.columns(2)#אני ילד כאפותתתתתתתתת#
+    col1, col2 = st.columns(2)
     
     with col1:
         start_date = st.date_input("Start Date", value=None, key="date_calc_start")
@@ -272,76 +272,45 @@ if 'Checkbox' in st_project_data.columns and st_project_data['Checkbox'].any():
     st.subheader("Analysis")
     for idx, row in st_project_data[st_project_data['Checkbox'] == True].iterrows():
         current_dir = row.get('current_dir', None)
-        if current_dir and isinstance(current_dir, str):
-            analysis_output_dirs = []
-            for root, dirs, files in os.walk(current_dir):
-                for d in dirs:
-                    if d == "analysis_output":
-                        analysis_output_dirs.append(os.path.join(root, d))
-    
-    main_recording_dir = current_dir
-    # Initialize variables for sharing between tabs
-    selected_folder = None
-    event_windows_matrix = None
-    stimuli_outcome_df = None
-    spike_matrix = None
-    
-    folder_options = ["imec0", "imec1"]
-    folder_labels = ["ACx (imec0)", "OFC (imec1)"]
-    
+        if not current_dir or not isinstance(current_dir, str):
+            continue
+        
+        # Find all analysis_output directories
+        analysis_output_dirs = []
+        for root, dirs, files in os.walk(current_dir):
+            for d in dirs:
+                if d == "analysis_output":
+                    analysis_output_dirs.append(os.path.join(root, d))
+        
+        main_recording_dir = current_dir
+        # Initialize variables for sharing between tabs
+        selected_folder = None
+        event_windows_matrix = None
+        stimuli_outcome_df = None
+        spike_matrix = None
+        
+        folder_options = ["imec0", "imec1"]
+        folder_labels = ["ACx (imec0)", "OFC (imec1)"]
+        
+        selected_label = st.selectbox(
+            "Select analysis output folder",
+            options=folder_labels,
+            key=f"selectbox_analysis_output_{idx}"
+        )
 
-    selected_label = st.selectbox(
-        "Select analysis output folder",
-        options=folder_labels,
-        key=f"selectbox_analysis_output_{idx}"
-    )
+        # Determine which folder to select based on the chosen label (imec0 or imec1)
+        if selected_label == "ACx (imec0)":
+            # Search for a directory containing 'imec0' in analysis_output_dirs
+            prob_folder = next((d for d in analysis_output_dirs if "imec0" in d), None)
+        else:
+            # Otherwise, search for 'imec1'
+            prob_folder = next((d for d in analysis_output_dirs if "imec1" in d), None)
+        st.session_state[f"selected_analysis_output_{idx}"] = selected_label
 
-    # Determine which folder to select based on the chosen label (imec0 or imec1)
-    if selected_label == "ACx (imec0)":
-        # Search for a directory containing 'imec0' in analysis_output_dirs
-        prob_folder = next((d for d in analysis_output_dirs if "imec0" in d), None)
-    else:
-        # Otherwise, search for 'imec1'
-        prob_folder = next((d for d in analysis_output_dirs if "imec1" in d), None)
-    st.session_state[f"selected_analysis_output_{idx}"] = selected_label
+        st.badge("Behavior Analysis")
+        # Create 4 Streamlit tabs for analysis
+        single_unit_tab, population_tab, advanced_tab, multi_tab = st.tabs(["Single Unit", "Population", "Population Adv.", "Multi"])
 
-
-    st.badge("Behavior Analysis")
-    # Create 4 Streamlit tabs for analysis
-    single_unit_tab, population_tab, advanced_tab, multi_tab = st.tabs(["Single Unit", "Population", "Population Adv.", "Multi"])
-
-
-    with single_unit_tab:
-        st.write("### Single Unit Analysis")
-        single_unit_analysis_panel(selected_recording_dir=main_recording_dir, selected_area = selected_label, raw_folder=prob_folder)
-
-
-        #     with population_tab:
-        #         st.write("### Population Analysis")
-        #         if selected_folder and event_windows_matrix is not None and stimuli_outcome_df is not None and metadata is not None:
-        #             # Pass metadata instead of window_size*3
-        #             plot_population_heatmap(event_windows_matrix, stimuli_outcome_df, metadata)
-        #             st.divider()
-        #             st.subheader("Best Stimulus Across Units")
-        #             plot_best_stimulus_panel(event_windows_matrix, stimuli_outcome_df, metadata)
-                    
-        #         else:
-        #             st.warning("Event windows data not available for population analysis")
-            
-        #     with advanced_tab:
-        #         st.write("### Advanced Population Analysis")
-        #         if selected_folder and event_windows_matrix is not None and stimuli_outcome_df is not None and metadata is not None:
-        #             advanced_population_analysis_panel(event_windows_matrix, stimuli_outcome_df, metadata, time_axis_from_load)
-        #         else:
-        #             st.warning("Event windows data not available for advanced analysis")
-            
-        #     with multi_tab:
-        #         st.write("### Multi Analysis")
-        #         st.write("Coming soon")
-        #     if FRA_session:
-        #         with fra_tab:
-        #             st.write("### FRA Analysis")
-        #             st.write("Coming soon")
-        # else:
-        #     analysis_output_dirs = []
-
+        with single_unit_tab:
+            st.write("### Single Unit Analysis")
+            single_unit_analysis_panel(selected_recording_dir=main_recording_dir, selected_area=selected_label, raw_folder=prob_folder)

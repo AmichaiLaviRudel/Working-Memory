@@ -910,7 +910,8 @@ def plot_perievent_raster_peth(
     bin_size: float = 0.01,
     tone_onset: Optional[np.ndarray] = None,
     category: Optional[np.ndarray] = None,
-    outcome: Optional[np.ndarray] = None
+    outcome: Optional[np.ndarray] = None,
+    region: Optional[str] = None
 ) -> plt.Figure:
     """
     Plot peri-event raster and PETH for a single unit, split by category and outcome.
@@ -1087,9 +1088,12 @@ def plot_perievent_raster_peth(
         if cond_idx == n_conditions - 1:
             ax_peth.set_xlabel('Time from Event (s)', fontsize=11)
     
-    # Overall title
-    fig.suptitle(f'Peri-Event Analysis: Unit {unit_id} - {feature_name}', 
-                fontsize=14, fontweight='bold', y=0.995)
+    # Overall title with region info
+    title = f'Peri-Event Analysis: Unit {unit_id}'
+    if region:
+        title += f' ({region})'
+    title += f' - {feature_name}'
+    fig.suptitle(title, fontsize=14, fontweight='bold', y=0.995)
     
     plt.tight_layout(rect=[0, 0, 1, 0.99])
     

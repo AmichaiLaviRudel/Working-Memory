@@ -51,7 +51,6 @@ def d_prime(selected_data, index=0, t=10, plot=False, filter_fa_equal_hit=None):
             # On any issue, fall back to unfiltered data
             data_for_rates = selected_data
             rate_index = index
-
     rates, frac = licking_rate(data_for_rates, index=rate_index, t=t, plot=False)
     
 
@@ -676,6 +675,27 @@ def classifier_metric(project_data, index):
     cr = np.array(response["CR"][-1:])[0]
     fa = np.array(response["FA"][-1:])[0]
 
+    # --- Early response rates (Go/NoGo) ---
+    # Why: Educage/Bpod exports often include "Early Response" trials which are
+    # not part of the confusion-matrix cumulative counts above.
+    trialtypes_raw = project_data.iloc[index].get("TrialTypes", None)
+    outcomes_raw = project_data.iloc[index].get("Outcomes", None)
+    trialtypes_arr = to_array(trialtypes_raw)
+    outcomes_arr = to_array(outcomes_raw)
+
+    early_mask = np.array(
+        ["early response" in str(o).lower() for o in outcomes_arr],
+        dtype=bool,
+    )
+    trialtypes_norm = np.array([str(t).strip() for t in trialtypes_arr], dtype=object)
+    go_mask = np.array([str(t).strip().lower() == "go" for t in trialtypes_norm], dtype=bool)
+    nogo_mask = np.array([str(t).strip().lower().replace("-", "").replace(" ", "") == "nogo" for t in trialtypes_norm], dtype=bool)
+
+    n_go = int(np.sum(go_mask))
+    n_nogo = int(np.sum(nogo_mask))
+    early_go_n = int(np.sum(early_mask & go_mask))
+    early_nogo_n = int(np.sum(early_mask & nogo_mask))
+
     d = d_prime(project_data, index, t=10)
     # Compute rates
     hit_rate = hit / (hit + miss)
@@ -825,6 +845,10 @@ def classifier_metric(project_data, index):
         st.altair_chart(confusion_chart, use_container_width = False)
     with col2:
         st.altair_chart(roc_chart + diagonal, use_container_width = False)
+    with col3:
+        st.subheader("Early response")
+        st.metric("Early-Go trials", f"{early_go_n}/{n_go}", help="Count of Early Response outcomes in Go trials")
+        st.metric("Early-NoGo trials", f"{early_nogo_n}/{n_nogo}", help="Count of Early Response outcomes in NoGo trials")
 
     return class_metric_df
 

@@ -7,7 +7,7 @@ import pynapple as nap
 # Data Paths
 # ============================================================================
 
-BASE_PATH = r"Z:\Shared\Amichai\NPXL\Recs\group5\catGTGroup5\catgt_G5A3_2b_4t_new2_g0"
+BASE_PATH = r"Z:\\Shared\\Amichai\\NPXL\\Recs\\group7\\catgt_G7A2_novice_2b_4t_g1"
 
 
 # ============================================================================
@@ -15,7 +15,7 @@ BASE_PATH = r"Z:\Shared\Amichai\NPXL\Recs\group5\catGTGroup5\catgt_G5A3_2b_4t_ne
 # ============================================================================
 
 # Minimum average firing rate threshold (Hz) for selecting units
-RATE_THRESHOLD = 1
+RATE_THRESHOLD = 10
 
 
 # ============================================================================
@@ -80,7 +80,7 @@ HISTORY_ACAUSAL_AFTER_SEC = 1   # seconds after spike
 # ============================================================================
 
 # Number of neurons to include in population analysis
-N_POPULATION = 300
+N_POPULATION = 1000
 
 # Parameter to control whether to include spike history
 INCLUDE_SPIKE_HISTORY = False

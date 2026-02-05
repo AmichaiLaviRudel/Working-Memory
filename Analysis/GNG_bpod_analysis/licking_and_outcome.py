@@ -1,5 +1,6 @@
 # Removed imports to avoid circular dependency
 from typing import Any
+from pathlib import Path
 from Analysis.GNG_bpod_analysis.GNG_bpod_general import (
     filter_valid_arrays,
     parse_stimuli,
@@ -20,27 +21,91 @@ import streamlit as st
 from Analysis.GNG_bpod_analysis.GNG_bpod_general import get_plotly_config
 
 
+def _read_last_reinforcement_delay_time_seconds(parameters_txt: str | Path) -> float | None:
+    """
+    Read the *last session* value of `reinforcement_delay_time` from an Educage `parameters.txt`.
+
+    Why: `parameters.txt` can contain multiple sessions separated by timestamps; we want the last one.
+    """
+    try:
+        p = Path(parameters_txt)
+        if not p.exists() or not p.is_file():
+            return None
+        text = p.read_text(encoding="utf-8", errors="ignore")
+        matches = re.findall(r"reinforcement_delay_time\s*:\s*([0-9]*\.?[0-9]+)", text, flags=re.IGNORECASE)
+        if not matches:
+            return None
+        return float(matches[-1])
+    except Exception:
+        return None
+
+
+def _find_parameters_txt_for_row(project_data: pd.DataFrame, index: int) -> Path | None:
+    """
+    Try to locate an Educage `parameters.txt` near the current session, best-effort.
+
+    We intentionally keep this permissive and fast: if we can't find it, caller falls back.
+    """
+    candidate_cols = [
+        "parameters_path",
+        "ParametersPath",
+        "params_path",
+        "ParamsPath",
+        "current_dir",
+        "CurrentDir",
+        "FilePath",
+        "file_path",
+        "path",
+    ]
+    for col in candidate_cols:
+        if col not in project_data.columns:
+            continue
+        val = project_data.iloc[index].get(col, None)
+        if not val or not isinstance(val, str):
+            continue
+        try:
+            p = Path(val)
+        except Exception:
+            continue
+
+        candidates: list[Path] = []
+        if p.is_dir():
+            candidates.extend([p / "parameters.txt", p.parent / "parameters.txt"])
+        else:
+            candidates.extend([p.parent / "parameters.txt", p.parent.parent / "parameters.txt"])
+
+        for c in candidates:
+            if c.exists() and c.is_file():
+                return c
+
+    return None
+
+
 def responses(selected_data, index=0):
     """Compute responses"""
     # Extract the outcomes list (make sure it's in list format, not a string)
     outcomes = selected_data["Outcomes"].values[index]
-
     # If outcomes is a string representing a list, use ast.literal_eval to convert it
     outcomes_list = ast.literal_eval(outcomes)
-    
     # Check if we have valid data
     if not outcomes_list or len(outcomes_list) == 0:
         # Return empty DataFrame with proper structure
         return pd.DataFrame({"Hit": [], "CR": [], "FA": [], "Miss": [], "Catch - No Response": [], "Catch - Response": []})
 
     # Define all unique outcomes in the list
+    # Note: "Correct Reject" is treated the same as "CR" and not calculated separately
     unique_outcomes = {'Hit', 'CR', 'False Alarm', 'Miss', 'Catch - No Response', 'Catch - Response'}
     # Dictionary to store cumulative counts for each outcome
     cumulative_counts = {}
     # Calculate cumulative counts for each unique outcome
     for outcome_type in unique_outcomes:
-        # Create a binary array for the current outcome type
-        binary_outcome = np.array([1 if outcome == outcome_type else 0 for outcome in outcomes_list])
+        # Special handling: treat both "CR" and "Correct Reject" as "CR"
+        if outcome_type == "CR":
+            # Create a binary array that matches either "CR" or "Correct Reject"
+            binary_outcome = np.array([1 if (outcome == "CR" or outcome == "Correct Reject") else 0 for outcome in outcomes_list])
+        else:
+            # Create a binary array for the current outcome type
+            binary_outcome = np.array([1 if outcome == outcome_type else 0 for outcome in outcomes_list])
 
         # Calculate the cumulative sum for this outcome type
         cumulative_sum = np.cumsum(binary_outcome)
@@ -51,7 +116,7 @@ def responses(selected_data, index=0):
     # Create a DataFrame for responses
     responses = pd.DataFrame({
         "Hit":  cumulative_counts["Hit"],
-        "CR":   cumulative_counts["CR"],
+        "CR":   cumulative_counts["CR"],  # Includes both "CR" and "Correct Reject"
         "FA":   cumulative_counts["False Alarm"],  # Corrected the label to match 'False Alarm'
         "Miss": cumulative_counts["Miss"],
         "Catch - No Response": cumulative_counts["Catch - No Response"],
@@ -307,10 +372,21 @@ def process_and_plot_lick_data(project_data, index, plot=False, filter_early_res
         response_window_end = round(states_array[index_end_trial,1][0][1] - tone_onset,3)
         response_window_end = max(response_window_end,reinforsment_delay_end+2)
     except Exception as e:
+        # Fallback for datasets without Bpod state timing (e.g. Educage exports).
+        # Prefer using Educage parameters.txt (last session) when available.
         stim_dur = 0.3
         reinforsment_delay_dur = 0.001
         response_window_dur = 2
-        reinforsment_delay_end = stim_dur + reinforsment_delay_dur
+
+        params_path = _find_parameters_txt_for_row(project_data, index)
+        reinforcement_delay_time = _read_last_reinforcement_delay_time_seconds(params_path) if params_path else None
+
+        # User request: use reinforcement_delay_time as reinforsment_delay_end (absolute time, sec)
+        if reinforcement_delay_time is not None:
+            reinforsment_delay_end = float(reinforcement_delay_time)
+        else:
+            reinforsment_delay_end = stim_dur + reinforsment_delay_dur
+
         response_window_end = response_window_dur+reinforsment_delay_end
         response_window_end = max(response_window_end,reinforsment_delay_end+3)
 

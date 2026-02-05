@@ -1,12 +1,14 @@
 import plotly.graph_objects as go
 import numpy as np
 from scipy import stats
+from scipy.ndimage import gaussian_filter1d
 from sklearn.metrics import roc_auc_score, roc_curve
 import pandas as pd
 import os
 import streamlit as st
 import streamlit.components.v1 as components
 from functools import lru_cache
+import json
             
 # Import single unit metrics functions from single_unit_offline_analysis
 from Analysis.NPXL_analysis.single_unit_offline_analysis.single_unit_metrics import (
@@ -356,6 +358,196 @@ def plot_unit_psth(
     return psth_fig, psth_metrics, False
 
 
+def plot_tuning_curves_heatmap(selectivity_df, use_log_scale=True, normalize_per_unit=True):
+    """
+    Create a heatmap of all units' tuning curves, sorted by best frequency (lowest first).
+    
+    Parameters:
+    -----------
+    selectivity_df : pd.DataFrame
+        DataFrame containing tuning curve data with columns:
+        - tuning_curve_stimuli: list or JSON string of stimulus frequencies
+        - tuning_curve: list or JSON string of firing rates
+        - best_stimulus: best frequency for each unit
+        - unit_idx: unit index
+    use_log_scale : bool, optional
+        If True, use log scale for x-axis (default: True)
+    normalize_per_unit : bool, optional
+        If True, normalize each unit's curve to [0, 1] (default: True)
+        If False, use raw firing rates
+    
+    Returns:
+    --------
+    go.Figure
+        Plotly figure with heatmap of all tuning curves
+    """
+    def _parse_value(val):
+        """Parse value from JSON string, Python list string, or return as-is."""
+        if pd.isna(val) or val == '' or val == '[]':
+            return None
+        if isinstance(val, str):
+            try:
+                return json.loads(val)
+            except json.JSONDecodeError:
+                try:
+                    return eval(val)
+                except Exception:
+                    return None
+        return val
+    
+    # Collect all valid tuning curves
+    tuning_data = []
+    for idx, row in selectivity_df.iterrows():
+        if 'tuning_curve_stimuli' not in row or 'tuning_curve' not in row:
+            continue
+        
+        stimuli = _parse_value(row['tuning_curve_stimuli'])
+        curve = _parse_value(row['tuning_curve'])
+        best_stim = row.get('best_stimulus', None)
+        unit_idx = row.get('unit_idx', idx)
+        
+        if stimuli is None or curve is None:
+            continue
+        if not isinstance(stimuli, (list, tuple, np.ndarray)) or not isinstance(curve, (list, tuple, np.ndarray)):
+            continue
+        if len(stimuli) == 0 or len(curve) == 0 or len(stimuli) != len(curve):
+            continue
+        
+        # Convert to numpy arrays
+        stimuli_arr = np.array(stimuli)
+        curve_arr = np.array(curve)
+        
+        # Filter out invalid values
+        valid_mask = np.isfinite(stimuli_arr) & np.isfinite(curve_arr) & (stimuli_arr > 0 if use_log_scale else True)
+        if np.sum(valid_mask) == 0:
+            continue
+        
+        tuning_data.append({
+            'unit_idx': unit_idx,
+            'stimuli': stimuli_arr[valid_mask],
+            'curve': curve_arr[valid_mask],
+            'best_stimulus': best_stim if pd.notna(best_stim) else np.max(stimuli_arr[valid_mask])
+        })
+    
+    if len(tuning_data) == 0:
+        return None
+    
+    # Sort by best_stimulus (ascending - lowest first)
+    tuning_data.sort(key=lambda x: x['best_stimulus'] if x['best_stimulus'] is not None else float('inf'))
+    
+    # Find common stimulus range for interpolation
+    all_stimuli = np.concatenate([d['stimuli'] for d in tuning_data])
+    min_stim = np.min(all_stimuli)
+    max_stim = np.max(all_stimuli)
+    
+    # Create common x-axis (150 points for better resolution)
+    if use_log_scale:
+        x_common = np.logspace(np.log10(min_stim), np.log10(max_stim), 150)
+    else:
+        x_common = np.linspace(min_stim, max_stim, 150)
+    
+    # Interpolate all curves to common x-axis and optionally normalize
+    heatmap_matrix = []
+    unit_indices = []
+    best_frequencies = []
+    
+    for d in tuning_data:
+        # Interpolate to common x-axis
+        curve_interp = np.interp(x_common, d['stimuli'], d['curve'])
+        # Apply Gaussian smoothing for cleaner appearance
+        curve_smooth = gaussian_filter1d(curve_interp, sigma=1.0)
+        
+        if normalize_per_unit:
+            # Normalize to [0, 1] for each curve
+            curve_min = np.min(curve_smooth)
+            curve_max = np.max(curve_smooth)
+            if curve_max > curve_min:
+                curve_norm = (curve_smooth - curve_min) / (curve_max - curve_min)
+            else:
+                curve_norm = np.zeros_like(curve_smooth)
+            curve_norm = np.maximum(curve_norm, 0)
+            heatmap_matrix.append(curve_norm)
+        else:
+            # Use raw firing rates
+            curve_smooth = np.maximum(curve_smooth, 0)  # Ensure non-negative
+            heatmap_matrix.append(curve_smooth)
+        
+        unit_indices.append(d['unit_idx'])
+        best_frequencies.append(d['best_stimulus'])
+    
+    # Convert to numpy array (rows = units, columns = frequencies)
+    heatmap_matrix = np.array(heatmap_matrix)
+    
+    # Get boundaries from session state if available
+    try:
+        import streamlit as st
+        low_boundary = None
+        high_boundary = None
+        if hasattr(st, 'session_state'):
+            if hasattr(st.session_state, "low_boundary"):
+                low_boundary = st.session_state.low_boundary
+            if hasattr(st.session_state, "high_boundary"):
+                high_boundary = st.session_state.high_boundary
+    except ImportError:
+        low_boundary = None
+        high_boundary = None
+    
+    # Create customdata matrix for hover (best frequency for each unit)
+    customdata_matrix = np.tile(np.array(best_frequencies)[:, np.newaxis], (1, len(x_common)))
+    
+    # Create figure with heatmap
+    fig = go.Figure(data=go.Heatmap(
+        z=heatmap_matrix,
+        x=x_common,
+        y=[f"Unit {uid}" for uid in unit_indices],  # Simplified labels
+        colorscale='Viridis',
+        colorbar=dict(
+            title="Normalized Response" if normalize_per_unit else "Firing Rate (spikes/s)"
+        ),
+        hovertemplate='Unit: %{y}<br>Frequency: %{x:.2f} kHz<br>Response: %{z:.3f}<br>Best Freq: %{customdata:.2f} kHz<extra></extra>',
+        customdata=customdata_matrix
+    ))
+    
+    # Add dashed white lines at boundaries
+    if low_boundary is not None:
+        fig.add_vline(
+            x=low_boundary,
+            line_dash="dash",
+            line_color="white",
+            line_width=2,
+            opacity=0.8
+        )
+    if high_boundary is not None:
+        fig.add_vline(
+            x=high_boundary,
+            line_dash="dash",
+            line_color="white",
+            line_width=2,
+            opacity=0.8
+        )
+    
+    # Update layout
+    fig.update_layout(
+        title="Tuning Curves Heatmap (Sorted by Best Frequency - Lowest First)",
+        xaxis_title="Frequency (kHz)" + (" [log scale]" if use_log_scale else ""),
+        xaxis=dict(
+            type="log" if use_log_scale else "linear",
+            showgrid=False
+        ),
+        yaxis=dict(
+            showgrid=False,
+            autorange='reversed',  # Top unit = lowest best frequency
+            showticklabels=False  # Remove y-axis labels
+        ),
+        plot_bgcolor='white',
+        paper_bgcolor='white',
+        margin=dict(l=60, r=40, t=60, b=60),  # Reduced left margin since no y labels
+        height=min(800, max(400, 400 + len(tuning_data) * 3))  # Limit to screen height, min 400px
+    )
+    
+    return fig
+
+
 def check_analysis_output_exists(selected_folder):
     """
     Check if analysis_output folder exists and contains data.
@@ -513,6 +705,7 @@ def single_unit_analysis_panel(selected_recording_dir=None, selected_area=None, 
         st.subheader("Unit Selection")
         unit_col1, unit_col2 = st.columns(2)
         
+        row = None  # Initialize row to avoid UnboundLocalError
         with unit_col1:
             if units_metrics_df_sorted is not None and sorted_pvals is not None:
                 unit_rank = st.slider(
@@ -523,6 +716,26 @@ def single_unit_analysis_panel(selected_recording_dir=None, selected_area=None, 
                 row = units_metrics_df_sorted.iloc[unit_rank]
                 unit_idx = int(row["unit_idx"]) if "unit_idx" in row else unit_rank
                 current_pval = sorted_pvals[unit_rank]
+            elif units_metrics_df_sorted is not None:
+                # If we have sorted df but no pvals, use first row
+                unit_rank = st.slider(
+                    "Unit Rank", 
+                    0, len(units_metrics_df_sorted) - 1, 0,
+                    help="Select unit by rank"
+                )
+                row = units_metrics_df_sorted.iloc[unit_rank]
+                unit_idx = int(row["unit_idx"]) if "unit_idx" in row else unit_rank
+                current_pval = np.nan
+            elif units_metrics_df is not None:
+                # Fallback to unsorted dataframe
+                unit_rank = st.slider(
+                    "Unit Rank", 
+                    0, len(units_metrics_df) - 1, 0,
+                    help="Select unit by rank"
+                )
+                row = units_metrics_df.iloc[unit_rank]
+                unit_idx = int(row["unit_idx"]) if "unit_idx" in row else unit_rank
+                current_pval = np.nan
             else:
                 unit_rank = 0
                 unit_idx = 0
@@ -534,7 +747,7 @@ def single_unit_analysis_panel(selected_recording_dir=None, selected_area=None, 
         # Visualization Section
         st.subheader("Visualizations")
         
-        if units_metrics_df is not None:
+        if units_metrics_df is not None and row is not None:
             # Create two columns: PSTH plot (from saved HTML) and metrics table from units_metrics_df
             viz_col1, viz_col2 = st.columns(2)
             
@@ -544,7 +757,8 @@ def single_unit_analysis_panel(selected_recording_dir=None, selected_area=None, 
                 html_outcome_path = None
                 html_choice_path = None
                 # plot psth by tone
-                if "psth_tone_path" in units_metrics_df_sorted.columns:
+                df_to_check = units_metrics_df_sorted if units_metrics_df_sorted is not None else units_metrics_df
+                if "psth_tone_path" in df_to_check.columns:
                     if pd.notna(row.get("psth_tone_path", None)):
                         html_tone_path = normalize_workspace_path(row["psth_tone_path"])
                 if html_tone_path and os.path.exists(html_tone_path):
@@ -558,9 +772,9 @@ def single_unit_analysis_panel(selected_recording_dir=None, selected_area=None, 
                 else:
                     st.info("No saved tone PSTH plot found for this unit.")
                 # plot psth by choice
-                if "psth_choice_path" in units_metrics_df_sorted.columns:
-                        if pd.notna(row.get("psth_choice_path", None)):
-                            html_choice_path = normalize_workspace_path(row["psth_choice_path"])
+                if "psth_choice_path" in df_to_check.columns:
+                    if pd.notna(row.get("psth_choice_path", None)):
+                        html_choice_path = normalize_workspace_path(row["psth_choice_path"])
                 if html_choice_path and os.path.exists(html_choice_path):
                     try:
                         with open(html_choice_path, "r", encoding="utf-8") as f:
@@ -572,7 +786,7 @@ def single_unit_analysis_panel(selected_recording_dir=None, selected_area=None, 
                 else:
                     st.info("No saved choice PSTH plot found for this unit.")
                 # plot psth by outcome
-                if "psth_outcome_path" in units_metrics_df_sorted.columns:
+                if "psth_outcome_path" in df_to_check.columns:
                     if pd.notna(row.get("psth_outcome_path", None)):
                         html_outcome_path = normalize_workspace_path(row["psth_outcome_path"])
                 if html_outcome_path and os.path.exists(html_outcome_path):
@@ -685,6 +899,21 @@ def single_unit_analysis_panel(selected_recording_dir=None, selected_area=None, 
                         if 'choice_coding' in selectivity_df.columns:
                             st.metric("Choice Coding", selectivity_df['choice_coding'].sum())
                     
+                    # Heatmap of all tuning curves
+                    st.subheader("Tuning Curves Heatmap")
+                    if 'tuning_curve_stimuli' in selectivity_df.columns and 'tuning_curve' in selectivity_df.columns:
+                        try:
+                            normalize_heatmap = st.checkbox("Normalize per unit", value=True, key="normalize_heatmap")
+                            heatmap_fig = plot_tuning_curves_heatmap(selectivity_df, use_log_scale=True, normalize_per_unit=normalize_heatmap)
+                            if heatmap_fig is not None:
+                                st.plotly_chart(heatmap_fig, use_container_width=True)
+                            else:
+                                st.info("No valid tuning curve data available for heatmap.")
+                        except Exception as e:
+                            st.warning(f"Could not create heatmap: {e}")
+                    else:
+                        st.info("Tuning curve data not available in selectivity metrics.")
+                    
                     # Unit selection
                     st.subheader("Unit Selection")
                     if 'unit_idx' in selectivity_df.columns:
@@ -755,8 +984,20 @@ def single_unit_analysis_panel(selected_recording_dir=None, selected_area=None, 
             else:
                 st.warning("Selectivity metrics file not found in analysis output.")
         
-    # with tab3:
-    #     st.header("Generalized Linear Model Analysis")
+    with tab3:
+        st.header("Generalized Linear Model Analysis")
+        if not selected_recording_dir or not isinstance(selected_recording_dir, str):
+            st.warning("No recording directory selected.")
+        else:
+            # Streamlit GLM panel (PopulationGLM + per-unit visualizations)
+            from Analysis.NPXL_analysis.single_unit_offline_analysis.GLM.glm_streamlit_panel import (
+                glm_analysis_panel,
+            )
+
+            glm_analysis_panel(
+                base_path=selected_recording_dir,
+                selected_area=selected_area or "",
+            )
         
     #     if not has_analysis_data:
     #         st.warning("⚠️ Analysis output not found. Please run the offline analysis first.")

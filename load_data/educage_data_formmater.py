@@ -203,6 +203,14 @@ def run_educage_formatter(source_path: str, out_csv: str) -> str:
     tones_per_class = grouped["level"].apply(_parse_level_tones)
     n_boundaries = grouped["level"].apply(_parse_level_boundaries)
 
+    # Compute unique stimuli values per session (sorted unique values from Stimuli list)
+    def _unique_stimuli(stim_list: Any) -> str:
+        try:
+            unique_vals = sorted(set(v for v in stim_list if v is not None and not (isinstance(v, float) and pd.isna(v))))
+            return "[" + " ".join(f"{float(v):.3f}" for v in unique_vals) + "]"
+        except Exception:
+            return ""
+
     grouped_out = (
         grouped.assign(Tones_per_class=tones_per_class, N_Boundaries=n_boundaries)
         .rename(
@@ -214,36 +222,56 @@ def run_educage_formatter(source_path: str, out_csv: str) -> str:
                 "score": "Outcomes",
                 "stim_name": "Stimuli",
                 "licks": "Licks",
-                "start_time": "StartTime",
+                "start_time": "SessionTime",
             }
         )
-        .assign(FilePath=path1)
+        .assign(
+            FilePath=path1,
+            Checkbox=False,  # Unchecked by default
+            States="",
+            WaterConsumption="",
+            Recording=False,
+            groupID=Path(path1).parent.name,  # Project name from parent folder
+            Setup="Educage",  # Project type
+        )
         .query("n_trials >= 10")
-        [
-            [
-                "MouseName",
-                "SessionDate",
-                "TrialTypes",
-                "Outcomes",
-                "Stimuli",
-                "Licks",
-                "StartTime",
-                "Notes",
-                "FilePath",
-                "Tones_per_class",
-                "N_Boundaries",
-            ]
-        ]
     )
 
-    # Sort final dataframe by combined datetime (SessionDate + first StartTime if available)
+    # Compute Unique_Stimuli_Values from Stimuli before formatting
+    grouped_out["Unique_Stimuli_Values"] = grouped_out["Stimuli"].apply(_unique_stimuli)
+
+    # Reorder columns to match expected output format
+    grouped_out = grouped_out[
+        [
+            "Checkbox",
+            "MouseName",
+            "SessionDate",
+            "SessionTime",
+            "TrialTypes",
+            "States",
+            "Outcomes",
+            "Stimuli",
+            "Licks",
+            "WaterConsumption",
+            "FilePath",
+            "Notes",
+            "Recording",
+            "Unique_Stimuli_Values",
+            "Tones_per_class",
+            "N_Boundaries",
+            "groupID",
+            "Setup",
+        ]
+    ]
+
+    # Sort final dataframe by combined datetime (SessionDate + first SessionTime if available)
     def _first_start_time(lst: Any) -> Any:
         try:
             return lst[0] if isinstance(lst, list) and len(lst) > 0 else None
         except Exception:
             return None
 
-    _first_times = grouped_out["StartTime"].apply(_first_start_time) if "StartTime" in grouped_out.columns else None
+    _first_times = grouped_out["SessionTime"].apply(_first_start_time) if "SessionTime" in grouped_out.columns else None
     if _first_times is not None:
         _sort_dt = pd.to_datetime(
             grouped_out["SessionDate"].astype(str) + " " + _first_times.astype(str), errors="coerce"
