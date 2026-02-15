@@ -342,7 +342,7 @@ def create_single_row_with_outcome(
         "Tones_per_class": tones_per_class,
         "N_Boundaries": boundaries,
         "groupID": group_name,
-        "Setup": "Bpod",
+        "Setup": "Rig",
     }
 
     combined_df = pd.DataFrame([combined_data])

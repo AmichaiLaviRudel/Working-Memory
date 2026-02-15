@@ -258,6 +258,110 @@ def extract_performance_metrics(project_data: pd.DataFrame, index: int) -> Dict[
     }
 
 
+# Default 2B boundaries when running offline (no Streamlit session state)
+_DEFAULT_LOW_BOUNDARY = 0.983
+_DEFAULT_HIGH_BOUNDARY = 1.525
+
+
+def extract_psychometric_fit_metrics(
+    df: pd.DataFrame,
+    idx: int,
+    *,
+    low_boundary: float = _DEFAULT_LOW_BOUNDARY,
+    high_boundary: float = _DEFAULT_HIGH_BOUNDARY,
+) -> Dict[str, Any]:
+    """
+    Compute Weibull/sigmoid psychometric fit metrics for one session (offline, no Streamlit).
+
+    Uses same pipeline as psychometric_curve: preprocess_stimuli_outcomes -> compute_lick_rate
+    -> psychometric_fitting. Returns x0 (or x0_low/x0_high for 2B), slopes at boundaries,
+    R², and fit type for storage in the global dataset CSV.
+
+    Args:
+        df: DataFrame with Stimuli, Outcomes, N_Boundaries (and optionally Notes).
+        idx: Row index.
+        low_boundary, high_boundary: Boundary frequencies (kHz) for N_Boundaries==2.
+
+    Returns:
+        Dict with keys: Psychometric_x0, Psychometric_x0_low, Psychometric_x0_high,
+        Psychometric_slope_low, Psychometric_slope_high, Psychometric_r_squared, Psychometric_fit_type.
+        Missing/invalid fits yield np.nan or empty string for fit_type.
+    """
+    from Analysis.GNG_bpod_analysis.licking_and_outcome import preprocess_stimuli_outcomes, compute_lick_rate
+    from Analysis.GNG_bpod_analysis.psychometric_curves import psychometric_fitting
+
+    out: Dict[str, Any] = {
+        "Psychometric_x0": np.nan,
+        "Psychometric_x0_low": np.nan,
+        "Psychometric_x0_high": np.nan,
+        "Psychometric_slope_low": np.nan,
+        "Psychometric_slope_high": np.nan,
+        "Psychometric_r_squared": np.nan,
+        "Psychometric_fit_type": "",
+    }
+
+    if "Stimuli" not in df.columns or "Outcomes" not in df.columns or "N_Boundaries" not in df.columns:
+        return out
+
+    try:
+        stimuli, outcomes = preprocess_stimuli_outcomes(df, idx)
+        if len(stimuli) == 0 or len(outcomes) == 0:
+            return out
+        unique_stimuli, lick_rates, catch_stimuli, catch_lick_rates = compute_lick_rate(stimuli, outcomes)
+        unique_stimuli = np.concatenate((unique_stimuli, catch_stimuli))
+        lick_rates = np.concatenate((lick_rates, catch_lick_rates))
+    except Exception:
+        return out
+
+    n_b = df.iloc[idx].get("N_Boundaries", 1)
+    try:
+        n_b = int(n_b) if np.isfinite(n_b) else 1
+    except (TypeError, ValueError):
+        n_b = 1
+    if n_b not in (1, 2):
+        n_b = 1
+
+    # Skip TA / Discrimination sessions (no psychometric curve)
+    notes = df.iloc[idx].get("Notes", "") or ""
+    if "TA" in str(notes) or "Discrimination" in str(notes):
+        return out
+
+    if len(unique_stimuli) < 3:
+        return out
+
+    try:
+        model_boundaries, slopes_mid, _, _x_fit, _y_fit, fit_info = psychometric_fitting(
+            unique_stimuli,
+            lick_rates,
+            N_Boundaries=n_b,
+            log2_x=False,
+            return_fit_info=True,
+            low_boundary=low_boundary,
+            high_boundary=high_boundary,
+        )
+    except Exception:
+        return out
+
+    def safe_scalar(arr: Any, i: int = 0) -> float:
+        if isinstance(arr, np.ndarray) and len(arr) > i and np.isfinite(arr[i]):
+            return float(arr[i])
+        return np.nan
+
+    out["Psychometric_r_squared"] = fit_info.get("r_squared", np.nan)
+    out["Psychometric_fit_type"] = fit_info.get("model", "") or ""
+
+    if n_b == 1:
+        out["Psychometric_x0"] = safe_scalar(model_boundaries, 0)
+        out["Psychometric_slope_low"] = safe_scalar(slopes_mid, 0)
+    else:
+        out["Psychometric_x0_low"] = safe_scalar(model_boundaries, 0)
+        out["Psychometric_x0_high"] = safe_scalar(model_boundaries, 1)
+        out["Psychometric_slope_low"] = safe_scalar(slopes_mid, 0)
+        out["Psychometric_slope_high"] = safe_scalar(slopes_mid, 1)
+
+    return out
+
+
 def compute_metrics_for_loaded_data(
     df: pd.DataFrame,
     output_path: Optional[str] = None,
@@ -280,6 +384,9 @@ def compute_metrics_for_loaded_data(
         - Hit_Rate, False_Alarm_Rate, d_prime
         - Early_Go_N, Early_NoGo_N, Early_Go_Rate, Early_NoGo_Rate
         - N_Go, N_NoGo
+        - Psychometric_x0, Psychometric_x0_low, Psychometric_x0_high
+        - Psychometric_slope_low, Psychometric_slope_high
+        - Psychometric_r_squared, Psychometric_fit_type
     """
     # Columns that will be added/updated
     metric_columns = [
@@ -287,30 +394,40 @@ def compute_metrics_for_loaded_data(
         "Hit_Rate", "False_Alarm_Rate", "d_prime",
         "Early_Go_N", "Early_NoGo_N", "Early_Go_Rate", "Early_NoGo_Rate",
         "N_Go", "N_NoGo",
+        "Psychometric_x0", "Psychometric_x0_low", "Psychometric_x0_high",
+        "Psychometric_slope_low", "Psychometric_slope_high",
+        "Psychometric_r_squared", "Psychometric_fit_type",
     ]
-    
-    # Initialize metric columns with NaN if they don't exist
+
+    # Initialize metric columns with NaN/empty if they don't exist
     for col in metric_columns:
         if col not in df.columns:
-            df[col] = np.nan
-    
+            df[col] = "" if col == "Psychometric_fit_type" else np.nan
+
     total = len(df)
     for idx in range(total):
         mouse_name = df.iloc[idx].get("MouseName", f"row_{idx}")
-        
+
         if progress_callback:
             progress_callback(idx + 1, total, str(mouse_name))
-        
+
         try:
             metrics = extract_performance_metrics(df, idx)
-            # Update row with computed metrics
             for key, value in metrics.items():
                 if key in df.columns:
                     df.at[df.index[idx], key] = value
         except Exception as e:
             print(f"[WARN] Failed to compute metrics for row {idx} ({mouse_name}): {e}")
-            # Leave NaN values for failed rows
             continue
+
+        # Psychometric fit metrics (offline Weibull/sigmoid: x0, slopes, R², fit type)
+        try:
+            psych = extract_psychometric_fit_metrics(df, idx)
+            for key, value in psych.items():
+                if key in df.columns:
+                    df.at[df.index[idx], key] = value
+        except Exception as e:
+            print(f"[WARN] Failed to compute psychometric fit for row {idx} ({mouse_name}): {e}")
     
     # Save to CSV if output path provided
     if output_path:

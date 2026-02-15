@@ -30,6 +30,47 @@ OUTCOME_COLOR_MAP = {
     "Miss": COLOR_MISS,
 }
 
+# ─── Setup Colors (Rig, Educage, etc.) ─────────────────────────
+# Distinct from GROUP_COLORS to avoid confusion when comparing by Setup vs Group
+COLOR_RIG = "#00838F"       # Dark Cyan/Teal - distinct from standard blues
+COLOR_EDUCAGE = "#AD1457"   # Deep Magenta/Rose - distinct from standard orange/red
+
+SETUP_COLOR_MAP = {
+    "Rig": COLOR_RIG,
+    "Bpod": COLOR_RIG,      # Legacy mapping
+    "Educage": COLOR_EDUCAGE,
+}
+
+# Fallback colors for additional setups
+SETUP_FALLBACK_COLORS = ["#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#7f7f7f"]
+
+def get_setup_color(setup_name: str, index: int = 0) -> str:
+    """Get color for a setup, with fallback for unknown setups."""
+    if setup_name in SETUP_COLOR_MAP:
+        return SETUP_COLOR_MAP[setup_name]
+    return SETUP_FALLBACK_COLORS[index % len(SETUP_FALLBACK_COLORS)]
+
+
+# Fallback colors for groups (more distinct colors for many groups)
+GROUP_COLORS = [
+    "#1f77b4",  # Blue
+    "#ff7f0e",  # Orange
+    "#2ca02c",  # Green
+    "#d62728",  # Red
+    "#9467bd",  # Purple
+    "#8c564b",  # Brown
+    "#e377c2",  # Pink
+    "#7f7f7f",  # Gray
+    "#bcbd22",  # Yellow-Green
+    "#17becf",  # Teal
+    "#393b79",  # Dark Indigo
+    "#637939",  # Olive
+]
+
+def get_group_color(group_name: str, index: int = 0) -> str:
+    """Get color for a group by index."""
+    return GROUP_COLORS[index % len(GROUP_COLORS)]
+
 # ─── Go/NoGo Stimulus Color Palettes ─────────────────────────────
 # Green shades for Go stimuli
 GO_COLORS = [
@@ -140,21 +181,28 @@ LEGEND_FONT_SIZE = 16
 TICK_FONT_SIZE = 16
 
 
-def apply_standard_font_sizes(fig):
+def apply_standard_font_sizes(fig, transparent_bg=True):
     """
-    Apply global font sizes to a Plotly figure:
+    Apply global font sizes and styling to a Plotly figure:
     - Title
     - Axis labels
     - Legend
     - Tick labels
+    - Transparent background (for SVG export)
     """
     try:
         # Base font for general text (axis labels, annotations without explicit font, etc.)
-        fig.update_layout(
+        layout_opts = dict(
             font=dict(size=LABEL_FONT_SIZE),
             title=dict(font=dict(size=TITLE_FONT_SIZE)),
             legend=dict(font=dict(size=LEGEND_FONT_SIZE)),
         )
+        # Apply transparent background for clean SVG exports
+        if transparent_bg:
+            layout_opts['paper_bgcolor'] = 'rgba(0,0,0,0)'
+            layout_opts['plot_bgcolor'] = 'rgba(0,0,0,0)'
+        
+        fig.update_layout(**layout_opts)
         # Axes: labels and ticks
         fig.update_xaxes(
             title_font=dict(size=LABEL_FONT_SIZE),

@@ -15,28 +15,30 @@ from Analysis.GNG_bpod_analysis.GNG_bpod_general import (
 from statsmodels.stats.multitest import multipletests
 from scipy.stats import ttest_rel, ttest_ind, wilcoxon
 
-def remove_outlier_sessions(project_data, d_prime_threshold=1.0, t=10, show_details=False):
+def remove_outlier_sessions(project_data, d_prime_threshold=1.0, hit_rate_threshold=0.6, t=10, show_details=False):
     """
-    Remove outlier sessions based on d-prime threshold.
+    Remove outlier sessions based on d-prime and hit rate thresholds.
     
     Parameters:
     - project_data: DataFrame containing session data
     - d_prime_threshold: Minimum mean d-prime value to keep a session (default: 1.0)
+    - hit_rate_threshold: Minimum hit rate to keep a session (default: 0.6)
     - t: Time bin parameter for d-prime calculation (default: 10)
     - show_details: If True, display a table with d-prime values for all sessions (default: False)
     
     Returns:
-    - filtered_data: DataFrame with only sessions meeting the d-prime threshold
+    - filtered_data: DataFrame with only sessions meeting both thresholds
     - removed_sessions: DataFrame with sessions that were removed
     
     Example usage:
-        # Filter sessions with d-prime >= 1.0
-        filtered_data, removed = remove_outlier_sessions(project_data, d_prime_threshold=1.0)
+        # Filter sessions with d-prime >= 1.0 and hit rate >= 0.6
+        filtered_data, removed = remove_outlier_sessions(project_data, d_prime_threshold=1.0, hit_rate_threshold=0.6)
         
         # Use filtered data in plotting
         plot_psychometric_curves_with_boundaries(filtered_data, N_Boundaries=2)
     """
     from Analysis.GNG_bpod_analysis.metric import d_prime
+    from Analysis.GNG_bpod_analysis.licking_and_outcome import licking_rate
     
     valid_indices = []
     removed_indices = []
@@ -53,32 +55,49 @@ def remove_outlier_sessions(project_data, d_prime_threshold=1.0, t=10, show_deta
             else:
                 mean_d_prime = np.nanmean(d)
             
+            # Calculate hit rate for this session using licking_rate
+            try:
+                _, frac = licking_rate(project_data, index=idx, t=t, plot=False)
+                frac = frac.dropna(how="all").astype(float)
+                hr = frac["Go"] / 100  # Convert percentage to proportion
+                if len(hr) == 0 or np.all(np.isnan(hr)):
+                    mean_hit_rate = 0.0
+                else:
+                    mean_hit_rate = np.nanmean(hr)
+            except Exception:
+                mean_hit_rate = 0.0
+            
             # Get session metadata for reporting
             mouse_name = project_data.loc[idx, 'MouseName'] if 'MouseName' in project_data.columns else 'Unknown'
             session_date = project_data.loc[idx, 'SessionDate'] if 'SessionDate' in project_data.columns else 'Unknown'
+            
+            # Session passes if both thresholds are met
+            passes_filter = (mean_d_prime >= d_prime_threshold) and (mean_hit_rate >= hit_rate_threshold)
             
             session_info.append({
                 'Index': idx,
                 'MouseName': mouse_name,
                 'SessionDate': session_date,
                 "d_prime": mean_d_prime,
-                'Kept': mean_d_prime >= d_prime_threshold
+                "hit_rate": mean_hit_rate,
+                'Kept': passes_filter
             })
             
-            # Keep session if d-prime meets threshold
-            if mean_d_prime >= d_prime_threshold:
+            # Keep session if both thresholds are met
+            if passes_filter:
                 valid_indices.append(idx)
             else:
                 removed_indices.append(idx)
                 
         except Exception as e:
-            print(f"Error calculating d-prime for session {idx}: {e}")
+            print(f"Error calculating metrics for session {idx}: {e}")
             removed_indices.append(idx)
             session_info.append({
                 'Index': idx,
                 'MouseName': 'Error',
                 'SessionDate': 'Error',
                 "d_prime": np.nan,
+                "hit_rate": np.nan,
                 'Kept': False
             })
     
@@ -86,7 +105,7 @@ def remove_outlier_sessions(project_data, d_prime_threshold=1.0, t=10, show_deta
     removed_sessions = project_data.loc[removed_indices].reset_index(drop=True)
     
     # Log the filtering results
-    st.info(f"Sessions kept: {len(valid_indices)} | Sessions removed: {len(removed_indices)} (d' < {d_prime_threshold})")
+    st.info(f"Sessions kept: {len(valid_indices)} | Sessions removed: {len(removed_indices)} (d' < {d_prime_threshold} or HR < {hit_rate_threshold:.0%})")
     
     # Optionally show detailed table
     if show_details:
@@ -240,7 +259,8 @@ def add_boundary_lines(fig, n_bd, common_stimuli, label=None):
 
 
 def plot_psychometric_curves_with_boundaries(project_data, N_Boundaries, n_indices=2, 
-                                            filter_outliers=False, d_prime_threshold=1.0, t=10):
+                                            filter_outliers=False, d_prime_threshold=1.0, 
+                                            hit_rate_threshold=0.6, t=10, key_suffix=""):
     """
     Plots psychometric curves for individual trials in grayscale and an average curve in blue.
 
@@ -248,15 +268,18 @@ def plot_psychometric_curves_with_boundaries(project_data, N_Boundaries, n_indic
     - project_data: DataFrame containing preprocessed data.
     - N_Boundaries: Number of boundaries (0, 1, or 2)
     - n_indices: Number of last sessions to include per mouse
-    - filter_outliers: Whether to filter out sessions with low d-prime (default: False)
+    - filter_outliers: Whether to filter out sessions with low d-prime or hit rate (default: False)
     - d_prime_threshold: Minimum d-prime threshold for keeping sessions (default: 1.0)
+    - hit_rate_threshold: Minimum hit rate threshold for keeping sessions (default: 0.6)
     - t: Time bin parameter for d-prime calculation (default: 10)
+    - key_suffix: Unique suffix for Streamlit widget keys (default: "")
     """
     # Apply outlier filtering if requested
     if filter_outliers:
         project_data, removed_sessions = remove_outlier_sessions(
             project_data, 
-            d_prime_threshold=d_prime_threshold, 
+            d_prime_threshold=d_prime_threshold,
+            hit_rate_threshold=hit_rate_threshold,
             t=t,
             show_details=False
         )
@@ -266,7 +289,7 @@ def plot_psychometric_curves_with_boundaries(project_data, N_Boundaries, n_indic
 
     fig = go.Figure()
     normalize_avg = st.checkbox("Normalize average response", value=False, 
-                                key=f"normalize_avg_{N_Boundaries}_{n_indices}")
+                                key=f"normalize_avg_{N_Boundaries}_{n_indices}{key_suffix}")
     
     # Handle comparison case (N_Boundaries == 0)
     if N_Boundaries == 0:
@@ -349,7 +372,7 @@ def plot_psychometric_curves_with_boundaries(project_data, N_Boundaries, n_indic
             
             fig.update_layout(
                 title="Psychometric Curves: One vs Two Boundaries",
-                xaxis=dict(title="Stimulus Value [kHz] <br> (log scale)", type="log", showgrid=True),
+                xaxis=dict(title="Frequency [kHz] (log)", type="log", showgrid=True),
                 yaxis=dict(title="Lick Rate (%)", range=[-5, 110]),
                 legend=dict(x=1.01, y=0.99, bgcolor="rgba(255,255,255,0.4)"),
                 margin=dict(l=40, r=40, t=60, b=40),
@@ -437,7 +460,7 @@ def plot_psychometric_curves_with_boundaries(project_data, N_Boundaries, n_indic
     fig.update_layout(
         title=title,
         xaxis=dict(
-            title="Stimulus Value [kHz] <br> (log scale)", 
+            title="Frequency [kHz] (log)", 
             type="log",
             tickmode="array", 
             tickvals=tickvals,

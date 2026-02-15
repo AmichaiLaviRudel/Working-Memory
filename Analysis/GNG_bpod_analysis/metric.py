@@ -1317,3 +1317,260 @@ def d_prime_for_stim_pairs(selected_data, index=0, stim_pairs=None, t=10, plot=T
 
     return out_df
 
+
+def multi_animal_pairwise_dprime(project_data, t=10, compare_platforms=False, 
+                                  filter_successful=False, dprime_threshold=1.0):
+    """
+    Multi-animal pairwise d' analysis - boxplots of d' by distance from boundary.
+    
+    Parameters:
+    - project_data: DataFrame with session data
+    - t: Bin size for d' calculation
+    - compare_platforms: If True, show side-by-side comparison between Rig and Educage
+    - filter_successful: If True, only include sessions where overall d' >= threshold
+    - dprime_threshold: Threshold for filtering successful sessions
+    
+    Returns:
+    - DataFrame with aggregated pairwise d' data
+    """
+    from Analysis.GNG_bpod_analysis.licking_and_outcome import preprocess_stimuli_outcomes
+    
+    all_results = []
+    skipped_sessions = 0
+    
+    # Get unique setups for platform comparison
+    setups = project_data["Setup"].unique() if "Setup" in project_data.columns else ["Unknown"]
+    
+    for idx in project_data.index:
+        # Filter by overall session d' if requested
+        if filter_successful:
+            try:
+                session_d = d_prime(project_data, index=project_data.index.get_loc(idx), t=t, plot=False)
+                session_d = np.asarray(session_d, dtype=float)
+                session_d = session_d[~np.isnan(session_d)]
+                mean_session_d = float(np.nanmean(session_d)) if len(session_d) > 0 else 0.0
+                if mean_session_d < dprime_threshold:
+                    skipped_sessions += 1
+                    continue
+            except Exception:
+                skipped_sessions += 1
+                continue
+        try:
+            # Get session metadata
+            setup = project_data.loc[idx, "Setup"] if "Setup" in project_data.columns else "Unknown"
+            mouse_name = project_data.loc[idx, "MouseName"] if "MouseName" in project_data.columns else "Unknown"
+            n_boundaries = int(project_data.loc[idx].get("N_Boundaries", 1))
+            
+            # Get stimuli
+            try:
+                stimuli = project_data.loc[idx, "Stimuli"]
+                if isinstance(stimuli, str):
+                    stimuli = np.fromstring(stimuli.strip("[]"), sep=" ")
+                else:
+                    stimuli = np.array(stimuli)
+            except Exception:
+                stimuli, _ = preprocess_stimuli_outcomes(project_data.reset_index(drop=True), 
+                                                         index=project_data.index.get_loc(idx))
+            
+            if len(stimuli) == 0:
+                continue
+                
+            unique_vals = np.unique(np.round(stimuli.astype(float), 6))
+            unique_vals = np.sort(unique_vals)
+            
+            if len(unique_vals) < 2:
+                continue
+            
+            # Generate stimulus pairs based on boundaries
+            stim_pairs = []
+            if n_boundaries == 1:
+                # Pair stimuli symmetrically from extremes
+                half = len(unique_vals) // 2
+                for i in range(half):
+                    stim_pairs.append((float(unique_vals[i]), float(unique_vals[-(i+1)])))
+            else:
+                # For 2 boundaries, pair across boundaries
+                low_bd = getattr(st.session_state, 'low_boundary', float(np.quantile(unique_vals, 0.33)))
+                high_bd = getattr(st.session_state, 'high_boundary', float(np.quantile(unique_vals, 0.66)))
+                
+                # Create pairs at different distances
+                for i, v1 in enumerate(unique_vals):
+                    for v2 in unique_vals[i+1:]:
+                        stim_pairs.append((float(v1), float(v2)))
+            
+            # Compute d' for each pair
+            trials_val = project_data.loc[idx, "TrialTypes"]
+            outcomes_val = project_data.loc[idx, "Outcomes"]
+            trialtypes = to_array(trials_val)
+            outcomes = to_array(outcomes_val)
+            
+            for (s1, s2) in stim_pairs:
+                # Build mask for the two stimuli
+                mask = np.isclose(stimuli, s1, atol=1e-6) | np.isclose(stimuli, s2, atol=1e-6)
+                if mask.sum() < 5:  # Need minimum trials
+                    continue
+                    
+                # Filter arrays
+                filtered_trials = trialtypes[mask]
+                filtered_outcomes = outcomes[mask]
+                
+                # Prepare a one-row DataFrame for d' function
+                df_one = project_data.loc[[idx]].copy()
+                df_one.iloc[0, df_one.columns.get_loc('TrialTypes')] = str(np.asarray(filtered_trials).tolist())
+                df_one.iloc[0, df_one.columns.get_loc('Outcomes')] = str(np.asarray(filtered_outcomes).tolist())
+                
+                # Compute d'
+                d_vals = d_prime(df_one, index=0, t=t, plot=False)
+                d_vals = np.asarray(d_vals, dtype=float)
+                d_vals = d_vals[~np.isnan(d_vals)]
+                
+                if len(d_vals) == 0:
+                    continue
+                    
+                mean_dp = float(np.nanmean(d_vals))
+                
+                # Calculate octave distance
+                lo, hi = (s1, s2) if s1 <= s2 else (s2, s1)
+                if lo > 0:
+                    octaves = np.log2(hi / lo)
+                    # Round to nearest 0.25 for grouping
+                    octave_bin = round(octaves * 4) / 4
+                else:
+                    octave_bin = np.nan
+                
+                all_results.append({
+                    'Setup': setup,
+                    'MouseName': mouse_name,
+                    'N_Boundaries': n_boundaries,
+                    'd_prime': mean_dp,
+                    'octave_distance': octave_bin,
+                    'stim_low': lo,
+                    'stim_high': hi
+                })
+                
+        except Exception as e:
+            continue
+    
+    if not all_results:
+        st.warning("No valid pairwise d' data could be computed.")
+        return pd.DataFrame()
+    
+    df_results = pd.DataFrame(all_results)
+    
+    # Create visualization
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+    
+    # Filter to valid octave distances
+    df_plot = df_results[df_results['octave_distance'].notna()].copy()
+    
+    if len(df_plot) == 0:
+        st.warning("No valid octave distances computed.")
+        return df_results
+    
+    # Get unique octave bins and sort
+    octave_bins = sorted(df_plot['octave_distance'].unique())
+    octave_labels = [f"{o:.2f}" for o in octave_bins]
+    
+    if compare_platforms and len(setups) > 1:
+        # Side-by-side comparison
+        fig = make_subplots(rows=1, cols=2, 
+                           subplot_titles=[str(s) for s in setups[:2]],
+                           horizontal_spacing=0.1)
+        
+        for col_idx, setup in enumerate(setups[:2], 1):
+            df_setup = df_plot[df_plot['Setup'] == setup]
+            
+            for i, oct_bin in enumerate(octave_bins):
+                data = df_setup[df_setup['octave_distance'] == oct_bin]['d_prime']
+                if len(data) > 0:
+                    fig.add_trace(
+                        go.Box(
+                            y=data,
+                            x=[octave_labels[i]] * len(data),
+                            name=f"{oct_bin:.2f} oct",
+                            marker_color=colors.COLOR_ACCENT if col_idx == 1 else colors.COLOR_LOW_BD,
+                            boxmean=True,
+                            showlegend=False
+                        ),
+                        row=1, col=col_idx
+                    )
+        
+        fig.update_layout(
+            title=None,
+            height=300,
+            margin=dict(l=40, r=10, t=30, b=40),
+            boxmode='group',
+            boxgap=0.05,
+            boxgroupgap=0.05
+        )
+        fig.update_xaxes(title_text="Octave Distance", row=1, col=1)
+        fig.update_xaxes(title_text="Octave Distance", row=1, col=2)
+        fig.update_yaxes(title_text="d'", row=1, col=1)
+        
+    else:
+        # Single plot with all data or colored by setup
+        fig = go.Figure()
+        
+        if "Setup" in df_plot.columns and df_plot['Setup'].nunique() > 1:
+            # Color by setup
+            for setup in df_plot['Setup'].unique():
+                df_setup = df_plot[df_plot['Setup'] == setup]
+                setup_color = colors.get_setup_color(setup)
+                
+                for i, oct_bin in enumerate(octave_bins):
+                    data = df_setup[df_setup['octave_distance'] == oct_bin]['d_prime']
+                    if len(data) > 0:
+                        fig.add_trace(go.Box(
+                            y=data,
+                            x=[octave_labels[i]] * len(data),
+                            name=setup,
+                            marker_color=setup_color,
+                            boxmean=True,
+                            legendgroup=setup,
+                            showlegend=(i == 0)
+                        ))
+        else:
+            # Single color
+            for i, oct_bin in enumerate(octave_bins):
+                data = df_plot[df_plot['octave_distance'] == oct_bin]['d_prime']
+                if len(data) > 0:
+                    fig.add_trace(go.Box(
+                        y=data,
+                        x=[octave_labels[i]] * len(data),
+                        name=f"{oct_bin:.2f} oct",
+                        marker_color=colors.COLOR_ACCENT,
+                        boxmean=True,
+                        showlegend=False
+                    ))
+        
+        fig.update_layout(
+            title=None,
+            xaxis_title="Octave Distance",
+            yaxis_title="d'",
+            height=300,
+            margin=dict(l=40, r=10, t=10, b=40),
+            boxmode='group',
+            boxgap=0.05,
+            boxgroupgap=0.05
+        )
+    
+    # Add threshold line
+    fig.add_hline(y=1.0, line_dash="dash", line_color=colors.COLOR_GRAY, 
+                  annotation_text="d'=1", annotation_position="right")
+    
+    colors.apply_standard_font_sizes(fig)
+    st.plotly_chart(fig, use_container_width=True, config=get_plotly_config('pairwise_dprime_by_octave'))
+    
+    # Show filter info
+    if filter_successful and skipped_sessions > 0:
+        st.caption(f"Filtered: {skipped_sessions} sessions excluded (d' < {dprime_threshold})")
+    
+    # Show summary stats
+    with st.expander("Summary Statistics", expanded=False):
+        summary = df_plot.groupby('octave_distance')['d_prime'].agg(['mean', 'std', 'count']).reset_index()
+        summary.columns = ['Octave Distance', 'Mean d\'', 'Std d\'', 'N']
+        st.dataframe(summary, use_container_width=True, hide_index=True)
+    
+    return df_results
+

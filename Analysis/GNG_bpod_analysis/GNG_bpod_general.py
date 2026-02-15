@@ -115,29 +115,34 @@ def to_array(val):
         return np.array([])
 
 
-def get_plotly_config(filename_prefix="plot", height=1080/2, width=1800):
+def get_plotly_config(filename_prefix="plot", height=None, width=None):
     """
     Get standardized Plotly configuration with download functionality.
     
     Parameters:
     - filename_prefix: Prefix for downloaded files
-    - height: Chart height in pixels
-    - width: Chart width in pixels
+    - height: Chart height in pixels (default: None = use rendered height)
+    - width: Chart width in pixels (default: None = use rendered/container width)
     
     Returns:
     - config: Plotly configuration dict with download options
     """
-    return {
+    config = {
         'displayModeBar': True,
         'modeBarButtonsToAdd': ['toImage'],
         'toImageButtonOptions': {
             'format': 'svg',  # Default to SVG
             'filename': filename_prefix,
-            'height': height,
-            'width': width,
-            'scale': 1
+            'scale': 1,
+            'bgcolor': 'rgba(0,0,0,0)'  # Transparent background
         }
     }
+    # Only set height/width if explicitly provided; otherwise use rendered dimensions
+    if height is not None:
+        config['toImageButtonOptions']['height'] = height
+    if width is not None:
+        config['toImageButtonOptions']['width'] = width
+    return config
 
 def filter_out_catch_and_early_response(outcomes, trialtypes):
     # Filter out 'Catch' trials

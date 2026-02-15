@@ -11,6 +11,7 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 import numpy as np
+from scipy import stats
 
 
 
@@ -27,92 +28,85 @@ def gng_bpod_analysis(project_data, index):
     tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([ "👨‍🎓Matrices", "👅 Lick Rate", "📈 Learning Curve", "👂 Psychometric Curve", "🎯 Bias Analysis", "🧠 GLM Analysis"])
 
     with tab1:
-        try:
-            classifier_metric(project_data, index)
-            d_prime(project_data, index, t=bin, plot=True)
-            d_prime_for_stim_pairs(project_data, index, stim_pairs=None, t=bin, plot=True)
-        except Exception as e:
-            st.warning(f"something went wrong with this graph :|\n\n{e}")
-            st.text(traceback.format_exc())
+        with st.expander("👨‍🎓 Matrices & d'", expanded=False):
+            try:
+                classifier_metric(project_data, index)
+                d_prime(project_data, index, t=bin, plot=True)
+                d_prime_for_stim_pairs(project_data, index, stim_pairs=None, t=bin, plot=True)
+            except Exception as e:
+                st.warning(f"something went wrong with this graph :|\n\n{e}")
+                st.text(traceback.format_exc())
 
     with tab2:
-        try:
-            licking_rate(project_data, index, t=bin)
-        except  Exception as e:
-            st.warning(f"something went wrong with this graph :|\n\n{e}")
-            st.text(traceback.format_exc())
+        with st.expander("👅 Lick Rate", expanded=False):
+            try:
+                licking_rate(project_data, index, t=bin)
+            except Exception as e:
+                st.warning(f"something went wrong with this graph :|\n\n{e}")
+                st.text(traceback.format_exc())
         st.write(st.session_state.analysis_type)
 
-        try:
-            df_go_first_licks, df_no_go_first_licks, lick_by_stimulus = process_and_plot_lick_data(
-                project_data,
-                index,
-                plot=True,
-            )
-            if st.session_state.analysis_type == 'Behavior-Bpod GUI':
-                plot_first_lick_by_stimulus(
-                    project_data,
-                    index,
-                    plot=True,
+        with st.expander("👅 Lick Data & First Lick", expanded=False):
+            try:
+                df_go_first_licks, df_no_go_first_licks, lick_by_stimulus = process_and_plot_lick_data(
+                    project_data, index, plot=True,
                 )
-                try:
-                    st.subheader("First Lick Latency Analysis")
-                    plot_first_lick_latency(
-                        project_data,
-                        index,
-                        df_go_first_licks,
-                        df_no_go_first_licks,
-                        plot=True,
-                    )
-                except Exception as e:
-                    st.warning(f"something went wrong with latency analysis :|\n\n{e}")
-                    st.text(traceback.format_exc())
-            elif st.session_state.analysis_type == 'Educage':
-                plot_n_lick_by_stimulus(
-                    project_data,
-                    index,
-                    plot=True,
-                )
+                if st.session_state.analysis_type == 'Behavior-Bpod GUI':
+                    plot_first_lick_by_stimulus(project_data, index, plot=True)
+                    try:
+                        st.subheader("First Lick Latency Analysis")
+                        plot_first_lick_latency(
+                            project_data, index, df_go_first_licks, df_no_go_first_licks, plot=True,
+                        )
+                    except Exception as e:
+                        st.warning(f"something went wrong with latency analysis :|\n\n{e}")
+                        st.text(traceback.format_exc())
+                elif st.session_state.analysis_type == 'Educage':
+                    plot_n_lick_by_stimulus(project_data, index, plot=True)
+            except Exception as e:
+                st.warning(f"something went wrong with latency analysis :|\n\n{e}")
+                st.text(traceback.format_exc())
 
-        except Exception as e:
-            st.warning(f"something went wrong with latency analysis :|\n\n{e}")
-            st.text(traceback.format_exc())
-
-        try:
-            daily_activity_single_animal(project_data, index)
-        except Exception as e:
-            st.warning(f"something went wrong with daily activity analysis :|\n\n{e}")
-            st.text(traceback.format_exc())
+        with st.expander("📊 Daily Activity", expanded=False):
+            try:
+                daily_activity_single_animal(project_data, index)
+            except Exception as e:
+                st.warning(f"something went wrong with daily activity analysis :|\n\n{e}")
+                st.text(traceback.format_exc())
 
     with tab3:
-        try:
-            learning_curve(project_data, index)
-        except  Exception as e:
-            st.warning(f"something went wrong with this graph :|\n\n{e}")
-            st.text(traceback.format_exc())
+        with st.expander("📈 Learning Curve", expanded=False):
+            try:
+                learning_curve(project_data, index)
+            except Exception as e:
+                st.warning(f"something went wrong with this graph :|\n\n{e}")
+                st.text(traceback.format_exc())
 
     with tab4:
-        try:
-            psychometric_curve(project_data, index)
-        except  Exception as e:
-            st.warning(f"something went wrong with this graph :|\n\n{e}")
-            st.text(traceback.format_exc())
+        with st.expander("👂 Psychometric Curve", expanded=False):
+            try:
+                psychometric_curve(project_data, index)
+            except Exception as e:
+                st.warning(f"something went wrong with this graph :|\n\n{e}")
+                st.text(traceback.format_exc())
 
     with tab5:
-        try:
-            n_previous_trials = st.slider("Number of previous trials to consider", 1, 10, 3, 1, help="⚡ Bias computation cached")
-            plot_bias_analysis(project_data, index, n_previous_trials=n_previous_trials, plot=True)
-        except Exception as e:
-            st.warning(f"something went wrong with bias analysis :|\n\n{e}")
-            st.text(traceback.format_exc())
+        with st.expander("🎯 Bias Analysis", expanded=False):
+            try:
+                n_previous_trials = st.slider("Number of previous trials to consider", 1, 10, 3, 1, help="⚡ Bias computation cached")
+                plot_bias_analysis(project_data, index, n_previous_trials=n_previous_trials, plot=True)
+            except Exception as e:
+                st.warning(f"something went wrong with bias analysis :|\n\n{e}")
+                st.text(traceback.format_exc())
 
     with tab6:
-        try:
-            from Analysis.GNG_bpod_analysis.licking_and_outcome import glm_licking_analysis
-            glm_licking_analysis(project_data, index, plot=True)
-        except Exception as e:
-            st.warning(f"something went wrong with GLM analysis :|\n\n{e}")
-            st.text(traceback.format_exc())
+        with st.expander("🧠 GLM Analysis", expanded=False):
+            try:
+                from Analysis.GNG_bpod_analysis.licking_and_outcome import glm_licking_analysis
+                glm_licking_analysis(project_data, index, plot=True)
+            except Exception as e:
+                st.warning(f"something went wrong with GLM analysis :|\n\n{e}")
+                st.text(traceback.format_exc())
 
 
 def gng_bpod_analysis_multi_session(project_data, index):
@@ -139,84 +133,105 @@ def gng_bpod_analysis_multi_session(project_data, index):
     tab1, tab2, tab3, tab4 = st.tabs(["👅 Lick Rate", "👨‍🎓 D Prime", "👂 Psychometric Slope", "🎯 Bias Analysis"])
 
     with tab1:
-        try:
-            st.subheader(f"Lick Rate Progression - {animal_name}")
-            lick_rate_multipule_sessions(project_data, t=bin, plot=True, animal_name = animal_name)
-        except Exception as e:
-            st.warning(f"Something went wrong with lick rate analysis :|\n\n{e}")
-            st.text(traceback.format_exc())
-        
-        try:
-            st.subheader("First Lick Latency Progression")
-            plot_first_lick_latency_multiple_sessions(project_data, animal_name=animal_name, plot=True)
-        except Exception as e:
-            st.warning(f"Something went wrong with first lick latency analysis :|\n\n{e}")
-            st.text(traceback.format_exc())
+        with st.expander("👅 Lick Rate Progression", expanded=False):
+            try:
+                lick_rate_multipule_sessions(project_data, t=bin, plot=True, animal_name=animal_name)
+            except Exception as e:
+                st.warning(f"Something went wrong with lick rate analysis :|\n\n{e}")
+                st.text(traceback.format_exc())
+
+        with st.expander("👅 First Lick Latency Progression", expanded=False):
+            try:
+                plot_first_lick_latency_multiple_sessions(project_data, animal_name=animal_name, plot=True)
+            except Exception as e:
+                st.warning(f"Something went wrong with first lick latency analysis :|\n\n{e}")
+                st.text(traceback.format_exc())
 
     with tab2:
-        try:
-            st.subheader(f"Daily Multi-Session d' Comparison - {animal_name}")
-            d_prime_multiple_sessions(project_data, t=bin, animal_name = animal_name, plot = True)
-        except Exception as e:
-            st.warning(f"Something went wrong with daily multi-session d' :|\n\n{e}")
-            st.text(traceback.format_exc())
+        with st.expander("👨‍🎓 Daily Multi-Session d' Comparison", expanded=False):
+            try:
+                d_prime_multiple_sessions(project_data, t=bin, animal_name=animal_name, plot=True)
+            except Exception as e:
+                st.warning(f"Something went wrong with daily multi-session d' :|\n\n{e}")
+                st.text(traceback.format_exc())
 
     with tab3:
         # Session filtering options
         with st.expander("🔍 Filter Outlier Sessions", expanded=False):
-            filter_outliers = st.checkbox("Remove sessions with low d-prime", value=False, 
-                                         help="Filter out sessions where mean d-prime is below threshold",
+            filter_outliers = st.checkbox("Remove sessions with low d-prime or hit rate", value=False, 
+                                         help="Filter out sessions where d-prime or hit rate is below threshold",
                                          key="filter_outliers_single")
             d_prime_threshold = 1.0
+            hit_rate_threshold = 0.6
             if filter_outliers:
                 d_prime_threshold = st.slider("d-prime threshold", 0.0, 3.0, 1.0, 0.1, 
                                              help="Sessions with d' below this value will be removed",
                                              key="d_prime_threshold_single")
+                hit_rate_threshold = st.slider("Hit rate threshold", 0.0, 1.0, 0.6, 0.05, 
+                                              help="Sessions with hit rate below this value will be removed",
+                                              key="hit_rate_threshold_single")
         
         # Filter project_data for the selected animal
         animal_data = project_data[project_data['MouseName'] == animal_name].copy()
         
         n_indices = st.slider("Number of indices to include", 1, 10, 2, 1, key="n_indices_single")
-        
-        try:
-            st.subheader(f"Psychometric Curves - {animal_name} (1 Boundary)")
-            # Show Early Response filter checkbox only once; subsequent calls reuse its value.
-            plot_psychometric_curves_with_boundaries(animal_data, N_Boundaries = 1, n_indices = n_indices, 
-                                                    filter_outliers=filter_outliers, 
-                                                    d_prime_threshold=d_prime_threshold, 
-                                                    t=bin)
-        except Exception as e:
-            st.warning(f"Something went wrong with psychometric curve analysis :|\n\n{e}")
-            st.text(traceback.format_exc())
 
-        try:
-            st.subheader(f"Psychometric Curves - {animal_name} (2 Boundaries)")
-            plot_psychometric_curves_with_boundaries(animal_data, N_Boundaries = 2, n_indices = n_indices,
-                                                    filter_outliers=filter_outliers, 
-                                                    d_prime_threshold=d_prime_threshold, 
-                                                    t=bin)
-        except Exception as e:
-            st.warning(f"Something went wrong with psychometric curve analysis :|\n\n{e}")
-            st.text(traceback.format_exc())
-        
-        try:
-            st.subheader(f"Psychometric Curves - {animal_name} (0 Boundaries)")
-            plot_psychometric_curves_with_boundaries(animal_data, N_Boundaries = 0, n_indices = n_indices,
-                                                    filter_outliers=filter_outliers, 
-                                                    d_prime_threshold=d_prime_threshold, 
-                                                    t=bin)
-        except Exception as e:
-            st.warning(f"Something went wrong with psychometric curve analysis :|\n\n{e}")
-            st.text(traceback.format_exc())
+        with st.expander("👂 Psychometric Curves (1 Boundary)", expanded=False):
+            try:
+                plot_psychometric_curves_with_boundaries(animal_data, N_Boundaries=1, n_indices=n_indices,
+                                                        filter_outliers=filter_outliers,
+                                                        d_prime_threshold=d_prime_threshold,
+                                                        hit_rate_threshold=hit_rate_threshold,
+                                                        t=bin, key_suffix="_single")
+            except Exception as e:
+                st.warning(f"Something went wrong with psychometric curve analysis :|\n\n{e}")
+                st.text(traceback.format_exc())
+
+        with st.expander("👂 Psychometric Curves (2 Boundaries)", expanded=False):
+            try:
+                plot_psychometric_curves_with_boundaries(animal_data, N_Boundaries=2, n_indices=n_indices,
+                                                        filter_outliers=filter_outliers,
+                                                        d_prime_threshold=d_prime_threshold,
+                                                        hit_rate_threshold=hit_rate_threshold,
+                                                        t=bin, key_suffix="_single")
+            except Exception as e:
+                st.warning(f"Something went wrong with psychometric curve analysis :|\n\n{e}")
+                st.text(traceback.format_exc())
+
+        with st.expander("👂 Psychometric Curves (0 Boundaries)", expanded=False):
+            try:
+                plot_psychometric_curves_with_boundaries(animal_data, N_Boundaries=0, n_indices=n_indices,
+                                                        filter_outliers=filter_outliers,
+                                                        d_prime_threshold=d_prime_threshold,
+                                                        hit_rate_threshold=hit_rate_threshold,
+                                                        t=bin, key_suffix="_single")
+            except Exception as e:
+                st.warning(f"Something went wrong with psychometric curve analysis :|\n\n{e}")
+                st.text(traceback.format_exc())
+
+        with st.expander("📈 Slope Progression", expanded=False):
+            try:
+                st.caption("Slope at boundary across sessions (extracted from fitted psychometric curves)")
+                psychometric_curve_multiple_sessions(animal_data, animal_name=animal_name, plot=True)
+            except Exception as e:
+                st.warning(f"Something went wrong with slope progression analysis :|\n\n{e}")
+                st.text(traceback.format_exc())
+
+        with st.expander("📈 Correlation log(|slope|) vs d'", expanded=False):
+            try:
+                correlation_log_slope_vs_dprime_multi_sessions(project_data, animal_name=animal_name)
+            except Exception as e:
+                st.warning(f"Something went wrong with correlation log(|slope|) vs d' analysis :|\n\n{e}")
+                st.text(traceback.format_exc())
 
     with tab4:
-        try:
-            st.subheader(f"Bias Analysis - {animal_name}")
-            n_previous_trials = st.slider("Number of previous trials to consider", 1, 10, 3, 1, key="bias_prev_trials_single")
-            bias_multiple_sessions(project_data, animal_name=animal_name, n_previous_trials=n_previous_trials)
-        except Exception as e:
-            st.warning(f"Something went wrong with bias analysis :|\n\n{e}")
-            st.text(traceback.format_exc())
+        with st.expander("🎯 Bias Analysis", expanded=False):
+            try:
+                n_previous_trials = st.slider("Number of previous trials to consider", 1, 10, 3, 1, key="bias_prev_trials_single")
+                bias_multiple_sessions(project_data, animal_name=animal_name, n_previous_trials=n_previous_trials)
+            except Exception as e:
+                st.warning(f"Something went wrong with bias analysis :|\n\n{e}")
+                st.text(traceback.format_exc())
 
 
 def gng_bpod_analysis_multi_animal(project_data, index):
@@ -240,75 +255,142 @@ def gng_bpod_analysis_multi_animal(project_data, index):
     tab1, tab2, tab3 = st.tabs(["👨‍🎓 D Prime", "👅 Lick Rate", "👂 Psychometric Slope"])
 
     with tab1:
-        try:
-            st.subheader("Multi-Animal d' Progression")
-            multi_animal_d_prime_progression(project_data)
-        except Exception as e:
-            st.warning(f"Something went wrong with multi-animal d' progression :|\n\n{e}")
-            st.text(traceback.format_exc())
+        with st.expander("📈 Multi-Animal d' Progression", expanded=False):
+            try:
+                multi_animal_d_prime_progression(project_data)
+            except Exception as e:
+                st.warning(f"Something went wrong with multi-animal d' progression :|\n\n{e}")
+                st.text(traceback.format_exc())
 
-        try:
-            st.subheader("Cumulative Number of Trials vs Daily d' Progression")
-            cumulative_number_of_trials_vs_daily_dprime(project_data, t=bin)
-        except Exception as e:
-            st.warning(f"Something went wrong with cumulative number of trials vs daily d' progression :|\n\n{e}")
-            st.text(traceback.format_exc())
+        with st.expander("📈 Cumulative Number of Trials vs Daily d'", expanded=False):
+            try:
+                cumulative_number_of_trials_vs_daily_dprime(project_data, t=bin)
+            except Exception as e:
+                st.warning(f"Something went wrong with cumulative number of trials vs daily d' progression :|\n\n{e}")
+                st.text(traceback.format_exc())
+
+        with st.expander("📈 Pairwise d' by Octave Distance", expanded=False):
+            try:
+                st.caption("d' distributions for stimulus pairs at different octave distances from boundary")
+                col_opt1, col_opt2 = st.columns(2)
+                with col_opt1:
+                    compare_platforms = st.checkbox("Compare platforms (Rig vs Educage)", 
+                                                   value=False, key="compare_platforms_dprime")
+                with col_opt2:
+                    filter_successful = st.checkbox("Only successful sessions (d' ≥ threshold)", 
+                                                   value=False, key="filter_successful_dprime")
+                dprime_thresh = 1.0
+                if filter_successful:
+                    dprime_thresh = st.slider("d' threshold", 0.5, 3.0, 1.0, 0.1, key="dprime_thresh_pairwise")
+                multi_animal_pairwise_dprime(project_data, t=bin, compare_platforms=compare_platforms,
+                                            filter_successful=filter_successful, dprime_threshold=dprime_thresh)
+            except Exception as e:
+                st.warning(f"Something went wrong with pairwise d' analysis :|\n\n{e}")
+                st.text(traceback.format_exc())
 
     with tab2:
+        with st.expander("👅 Daily Multi-Animal Lick Rate Comparison", expanded=False):
+            try:
+                daily_multi_animal_lick_rate(project_data, t=bin)
+            except Exception as e:
+                st.warning(f"Something went wrong with daily multi-animal lick rate :|\n\n{e}")
+                st.text(traceback.format_exc())
 
-        try:
-            st.subheader("Daily Multi-Animal Lick Rate Comparison")
-            daily_multi_animal_lick_rate(project_data, t=bin)
-        except Exception as e:
-            st.warning(f"Something went wrong with daily multi-animal lick rate :|\n\n{e}")
-            st.text(traceback.format_exc())
-        
-        try:
-            st.subheader("Daily Activity - Multi-Animal")
-            daily_activity_multi_animal(project_data)
-        except Exception as e:
-            st.warning(f"Something went wrong with daily activity analysis :|\n\n{e}")
-            st.text(traceback.format_exc())
+        with st.expander("📊 Daily Activity - Multi-Animal", expanded=False):
+            try:
+                daily_activity_multi_animal(project_data)
+            except Exception as e:
+                st.warning(f"Something went wrong with daily activity analysis :|\n\n{e}")
+                st.text(traceback.format_exc())
         
     with tab3:
         # Session filtering options
         with st.expander("🔍 Filter Outlier Sessions", expanded=False):
-            filter_outliers = st.checkbox("Remove sessions with low d-prime", value=False, 
-                                         help="Filter out sessions where mean d-prime is below threshold",
+            filter_outliers = st.checkbox("Remove sessions with low d-prime or hit rate", value=False, 
+                                         help="Filter out sessions where d-prime or hit rate is below threshold",
                                          key="filter_outliers_multi")
             d_prime_threshold = 1.0
+            hit_rate_threshold = 0.6
             if filter_outliers:
                 d_prime_threshold = st.slider("d-prime threshold", 0.0, 3.0, 1.0, 0.1, 
                                              help="Sessions with d' below this value will be removed",
                                              key="d_prime_threshold_multi")
+                hit_rate_threshold = st.slider("Hit rate threshold", 0.0, 1.0, 0.6, 0.05, 
+                                              help="Sessions with hit rate below this value will be removed",
+                                              key="hit_rate_threshold_multi")
         
         n_indices_multi = st.slider("Number of indices to include", 1, 10, 2, 1, key="n_indices_multi")
-        
-        try:
-            # Show Early Response filter checkbox only for the first call in this section.
-            plot_psychometric_curves_with_boundaries(project_data, N_Boundaries = 1, n_indices = n_indices_multi, 
-                                                    filter_outliers=filter_outliers, 
-                                                    d_prime_threshold=d_prime_threshold, 
-                                                    t=bin)
-        except Exception as e:
-            st.warning(f"Something went wrong with multi-animal psychometric curve analysis :|\n\n{e}")
-            st.text(traceback.format_exc())
 
-        try:
-            plot_psychometric_curves_with_boundaries(project_data, N_Boundaries = 2, n_indices = n_indices_multi,
-                                                    filter_outliers=filter_outliers, 
-                                                    d_prime_threshold=d_prime_threshold, 
-                                                    t=bin)
-        except Exception as e:
-            st.warning(f"Something went wrong with multi-animal psychometric curve analysis :|\n\n{e}")
-            st.text(traceback.format_exc())
-        
-        try:
-            plot_psychometric_curves_with_boundaries(project_data, N_Boundaries = 0, n_indices = n_indices_multi,
-                                                    filter_outliers=filter_outliers, 
-                                                    d_prime_threshold=d_prime_threshold, 
-                                                    t=bin)
-        except Exception as e:
-            st.warning(f"Something went wrong with multi-animal psychometric curve analysis :|\n\n{e}")
-            st.text(traceback.format_exc())
+        with st.expander("👂 Psychometric Curves (1 Boundary)", expanded=False):
+            try:
+                plot_psychometric_curves_with_boundaries(project_data, N_Boundaries=1, n_indices=n_indices_multi,
+                                                        filter_outliers=filter_outliers,
+                                                        d_prime_threshold=d_prime_threshold,
+                                                        hit_rate_threshold=hit_rate_threshold,
+                                                        t=bin, key_suffix="_multi")
+            except Exception as e:
+                st.warning(f"Something went wrong with multi-animal psychometric curve analysis :|\n\n{e}")
+                st.text(traceback.format_exc())
 
+        with st.expander("👂 Psychometric Curves (2 Boundaries)", expanded=False):
+            try:
+                plot_psychometric_curves_with_boundaries(project_data, N_Boundaries=2, n_indices=n_indices_multi,
+                                                        filter_outliers=filter_outliers,
+                                                        d_prime_threshold=d_prime_threshold,
+                                                        hit_rate_threshold=hit_rate_threshold,
+                                                        t=bin, key_suffix="_multi")
+            except Exception as e:
+                st.warning(f"Something went wrong with multi-animal psychometric curve analysis :|\n\n{e}")
+                st.text(traceback.format_exc())
+
+        with st.expander("👂 Psychometric Curves (0 Boundaries)", expanded=False):
+            try:
+                plot_psychometric_curves_with_boundaries(project_data, N_Boundaries=0, n_indices=n_indices_multi,
+                                                        filter_outliers=filter_outliers,
+                                                        d_prime_threshold=d_prime_threshold,
+                                                        hit_rate_threshold=hit_rate_threshold,
+                                                        t=bin, key_suffix="_multi")
+            except Exception as e:
+                st.warning(f"Something went wrong with multi-animal psychometric curve analysis :|\n\n{e}")
+                st.text(traceback.format_exc())
+
+        with st.expander("📈 Multi-Animal Slope Progression", expanded=False):
+            try:
+                st.caption("Slope at boundary progression across animals and sessions")
+                n_boundaries_slope = st.radio("Number of Boundaries", [1, 2], horizontal=True, key="n_boundaries_slope_multi")
+                multi_animal_psychometric_slope_progression(project_data, N_Boundaries=n_boundaries_slope)
+            except Exception as e:
+                st.warning(f"Something went wrong with multi-animal slope progression :|\n\n{e}")
+                st.text(traceback.format_exc())
+
+        with st.expander("📈 Correlation log(|slope|) vs d' - Multi-Animal", expanded=False):
+            try:
+                correlation_log_slope_vs_dprime_multi_animal(project_data)
+            except Exception as e:
+                st.warning(f"Something went wrong with correlation log(|slope|) vs d' analysis :|\n\n{e}")
+                st.text(traceback.format_exc())
+
+        with st.expander("📏 Distance between x0 and task boundary", expanded=False):
+            st.caption("Per-session distance of fitted threshold (x0) to true boundary; In_between flags for 2B.")
+            try:
+                df_dist = distance_between_x0_and_boundary(project_data)
+                cols = [c for c in ["MouseName", "SessionDate", "N_Boundaries", "Distance_x0", "Distance_x0_low", "Distance_x0_high", "In_between_boundaries_low", "In_between_boundaries_high", "In_between_boundaries"] if c in df_dist.columns]
+                if cols:
+                    st.dataframe(df_dist[cols], use_container_width=True, hide_index=True)
+                else:
+                    st.info("Need Psychometric_x0 (or x0_low/x0_high) columns. Run 'Compute Metrics' on the global dataset.")
+            except Exception as e:
+                st.warning(f"Something went wrong :|\n\n{e}")
+                st.text(traceback.format_exc())
+
+        with st.expander("📊 Slope & distance by boundary (+ hit rate by region)", expanded=False):
+            st.caption("Long-format: slope, distance to boundary, and hit rate (overall / below low / above high) per boundary.")
+            try:
+                df_compare = compare_slope_and_distance_by_boundary(project_data)
+                if not df_compare.empty:
+                    st.dataframe(df_compare, use_container_width=True, hide_index=True)
+                else:
+                    st.info("No data. Need Psychometric_slope_* and distance columns (run 'Compute Metrics').")
+            except Exception as e:
+                st.warning(f"Something went wrong :|\n\n{e}")
+                st.text(traceback.format_exc())
