@@ -717,9 +717,8 @@ def plot_first_lick_by_stimulus(project_data, index, plot=True, filter_early_res
         project_data, index, plot=False, filter_early_response=filter_early_response
     )
     ftl_df = pd.concat([df_go, df_nogo])
-    
-    # Filter out values larger than 2 seconds
-    ftl_df = ftl_df[ftl_df["First Lick Time (s)"] <= 4]
+    # First-lick latency: restrict to 0–2.5 s
+    ftl_df = ftl_df[(ftl_df["First Lick Time (s)"] >= 0) & (ftl_df["First Lick Time (s)"] <= FIRST_LICK_LATENCY_MAX_S)]
     
     stimuli_unique = ftl_df["Stimulus ID"].unique()
     
@@ -1006,6 +1005,29 @@ def learning_curve(selected_data, index=0):
     # Display the interactive chart in Streamlit
     st.altair_chart(chart, use_container_width = True)
 
+# First-lick latency analysis: only use values in [0, 2.5] s (response window)
+FIRST_LICK_LATENCY_MAX_S = 2.5
+
+
+def wasserstein_first_lick_distributions(
+    go_times: np.ndarray, nogo_times: np.ndarray
+) -> float:
+    """
+    Wasserstein distance between Go and NoGo first-lick latency distributions.
+    Returns np.nan if either sample is empty (no binning; uses raw samples).
+    """
+    if go_times is None or nogo_times is None:
+        return np.nan
+    go_times = np.asarray(go_times, dtype=float)
+    nogo_times = np.asarray(nogo_times, dtype=float)
+    go_times = go_times[np.isfinite(go_times)]
+    nogo_times = nogo_times[np.isfinite(nogo_times)]
+    if go_times.size == 0 or nogo_times.size == 0:
+        return np.nan
+    from scipy.stats import wasserstein_distance
+    return float(wasserstein_distance(go_times, nogo_times))
+
+
 def plot_first_lick_latency(
     selected_data,
     index: int = 0,
@@ -1044,6 +1066,9 @@ def plot_first_lick_latency(
         return None
     
     df_first_licks = pd.concat([df_go_first_licks, df_no_go_first_licks])
+    # Restrict to 0–2.5 s for first-lick latency analysis
+    col = "First Lick Time (s)"
+    df_first_licks = df_first_licks[(df_first_licks[col] >= 0) & (df_first_licks[col] <= FIRST_LICK_LATENCY_MAX_S)]
     
     # Display the first lick data
     st.write("**First Lick Times by Trial:**")
@@ -1106,7 +1131,8 @@ def plot_first_lick_latency(
         yaxis=dict(
             showgrid=True,
             gridcolor=COLOR_GRAY,
-            gridwidth=0.5
+            gridwidth=0.5,
+            range=[0, FIRST_LICK_LATENCY_MAX_S]
         )
     )
     
@@ -1115,13 +1141,15 @@ def plot_first_lick_latency(
     no_go_latencies = df_first_licks[df_first_licks["Trial Type"] == "NoGo"]["First Lick Time (s)"].values
     
     if len(go_latencies) > 0 and len(no_go_latencies) > 0:
-        from scipy.stats import mannwhitneyu
-        stat, p_value = mannwhitneyu(go_latencies, no_go_latencies, alternative='two-sided')
-        
+        from scipy.stats import ks_2samp
+        ks_stat, ks_p = ks_2samp(go_latencies, no_go_latencies, alternative="two-sided")
+        w = wasserstein_first_lick_distributions(go_latencies, no_go_latencies)
+
         st.write(f"**Statistics:**")
         st.write(f"- Go trials: n={len(go_latencies)}, mean={np.mean(go_latencies):.3f}s ± {np.std(go_latencies):.3f}s")
         st.write(f"- NoGo trials: n={len(no_go_latencies)}, mean={np.mean(no_go_latencies):.3f}s ± {np.std(no_go_latencies):.3f}s")
-        st.write(f"- Mann-Whitney U test: p={p_value:.3g}")
+        st.write(f"- Kolmogorov-Smirnov: D={ks_stat:.3f}, p={ks_p:.3g}")
+        st.write(f"- Wasserstein distance (Go vs NoGo) first-lick latency: {w:.4f} s")
     
     colors.apply_standard_font_sizes(fig)
     st.plotly_chart(fig, use_container_width=True, config=get_plotly_config())
@@ -1152,12 +1180,14 @@ def plot_first_lick_latency_multiple_sessions(selected_data, animal_name="None",
         try:
             df_go_first_licks, df_no_go_first_licks, _ = process_and_plot_lick_data(selected_data, session_idx, plot=False)
             
-            go_latencies = df_go_first_licks["First Lick Time (s)"].values if not df_go_first_licks.empty else []
+            go_latencies = df_go_first_licks["First Lick Time (s)"].values if not df_go_first_licks.empty else np.array([])
+            go_latencies = go_latencies[(go_latencies >= 0) & (go_latencies <= FIRST_LICK_LATENCY_MAX_S)] if go_latencies.size else go_latencies
             go_mean = np.mean(go_latencies) if len(go_latencies) > 0 else np.nan
             go_std = np.std(go_latencies) if len(go_latencies) > 0 else np.nan
             go_count = len(go_latencies)
             
-            nogo_latencies = df_no_go_first_licks["First Lick Time (s)"].values if not df_no_go_first_licks.empty else []
+            nogo_latencies = df_no_go_first_licks["First Lick Time (s)"].values if not df_no_go_first_licks.empty else np.array([])
+            nogo_latencies = nogo_latencies[(nogo_latencies >= 0) & (nogo_latencies <= FIRST_LICK_LATENCY_MAX_S)] if nogo_latencies.size else nogo_latencies
             nogo_mean = np.mean(nogo_latencies) if len(nogo_latencies) > 0 else np.nan
             nogo_std = np.std(nogo_latencies) if len(nogo_latencies) > 0 else np.nan
             nogo_count = len(nogo_latencies)
@@ -1299,7 +1329,8 @@ def plot_first_lick_latency_multiple_sessions(selected_data, animal_name="None",
             yaxis=dict(
                 showgrid=True,
                 gridcolor=COLOR_GRAY,
-                gridwidth=0.2
+                gridwidth=0.2,
+                range=[0, FIRST_LICK_LATENCY_MAX_S]
             )
         )
         colors.apply_standard_font_sizes(fig)
@@ -1307,6 +1338,157 @@ def plot_first_lick_latency_multiple_sessions(selected_data, animal_name="None",
         
     
     return results_df
+
+
+def plot_first_lick_wasserstein_first_vs_last_day(project_data):
+    """
+    Multi-animal: compare Wasserstein(Go vs NoGo) first-lick on first day vs last day.
+    First day = first session per animal where the NoGo first-lick array is non-empty;
+    last day = last session per animal. Groups all animals together and runs paired
+    statistical comparison (Wilcoxon signed-rank).
+    """
+    from Analysis.GNG_bpod_analysis.GNG_bpod_general import get_sessions_for_animal
+    from scipy.stats import wilcoxon
+
+    animals = project_data["MouseName"].unique()
+    filter_early = get_global_early_response_filter()
+    rows = []
+
+    for animal in animals:
+        session_indices, session_dates = get_sessions_for_animal(project_data, animal)
+        if len(session_indices) == 0:
+            continue
+
+        # First day = first session with non-empty NoGo first-lick array (after 0–2.5 s filter)
+        first_idx = None
+        for idx in session_indices:
+            try:
+                _, g_nogo, _ = process_and_plot_lick_data(
+                    project_data, idx, plot=False, filter_early_response=filter_early
+                )
+                nogo_t = g_nogo["First Lick Time (s)"].values if g_nogo is not None and not g_nogo.empty else np.array([])
+                nogo_t = nogo_t[(nogo_t >= 0) & (nogo_t <= FIRST_LICK_LATENCY_MAX_S)] if nogo_t.size else nogo_t
+                if nogo_t.size > 0:
+                    first_idx = idx
+                    break
+            except Exception:
+                continue
+        if first_idx is None:
+            continue
+
+        last_idx = session_indices[-1]
+        if first_idx == last_idx:
+            continue  # need two distinct days for comparison
+
+        first_w = np.nan
+        last_w = np.nan
+        try:
+            g_go, g_nogo, _ = process_and_plot_lick_data(
+                project_data, first_idx, plot=False, filter_early_response=filter_early
+            )
+            go_t = g_go["First Lick Time (s)"].values if g_go is not None and not g_go.empty else np.array([])
+            nogo_t = g_nogo["First Lick Time (s)"].values if g_nogo is not None and not g_nogo.empty else np.array([])
+            go_t = go_t[(go_t >= 0) & (go_t <= FIRST_LICK_LATENCY_MAX_S)] if go_t.size else go_t
+            nogo_t = nogo_t[(nogo_t >= 0) & (nogo_t <= FIRST_LICK_LATENCY_MAX_S)] if nogo_t.size else nogo_t
+            first_w = wasserstein_first_lick_distributions(go_t, nogo_t)
+        except Exception:
+            pass
+        try:
+            g_go, g_nogo, _ = process_and_plot_lick_data(
+                project_data, last_idx, plot=False, filter_early_response=filter_early
+            )
+            go_t = g_go["First Lick Time (s)"].values if g_go is not None and not g_go.empty else np.array([])
+            nogo_t = g_nogo["First Lick Time (s)"].values if g_nogo is not None and not g_nogo.empty else np.array([])
+            go_t = go_t[(go_t >= 0) & (go_t <= FIRST_LICK_LATENCY_MAX_S)] if go_t.size else go_t
+            nogo_t = nogo_t[(nogo_t >= 0) & (nogo_t <= FIRST_LICK_LATENCY_MAX_S)] if nogo_t.size else nogo_t
+            last_w = wasserstein_first_lick_distributions(go_t, nogo_t)
+        except Exception:
+            pass
+
+        rows.append({
+            "MouseName": animal,
+            "first_day_wasserstein": first_w,
+            "last_day_wasserstein": last_w,
+        })
+
+    if not rows:
+        st.warning("No animals with at least 2 sessions and valid first-lick data.")
+        return
+
+    df = pd.DataFrame(rows)
+    valid = df.dropna(subset=["first_day_wasserstein", "last_day_wasserstein"])
+    if valid.empty:
+        st.warning("No animals with both first-day and last-day Wasserstein.")
+        return
+
+    # Grouped comparison: all animals together, First day vs Last day
+    first_vals = valid["first_day_wasserstein"].values
+    last_vals = valid["last_day_wasserstein"].values
+    try:
+        stat, p_value = wilcoxon(first_vals, last_vals, alternative="two-sided")
+    except Exception:
+        stat, p_value = np.nan, np.nan
+
+    st.write("**Grouped comparison (all animals)**")
+    st.write(f"- First day: n={len(first_vals)}, median={np.nanmedian(first_vals):.4f} s, mean={np.nanmean(first_vals):.4f} s")
+    st.write(f"- Last day: n={len(last_vals)}, median={np.nanmedian(last_vals):.4f} s, mean={np.nanmean(last_vals):.4f} s")
+    st.write(f"- Wilcoxon signed-rank (first vs last): statistic={stat:.4f}, p={p_value:.3g}")
+
+    # Box plot: First day vs Last day (all animals pooled)
+    fig = go.Figure()
+    fig.add_trace(go.Box(
+        y=first_vals,
+        name="First day",
+        marker_color=COLOR_GO,
+        boxpoints="all",
+    ))
+    fig.add_trace(go.Box(
+        y=last_vals,
+        name="Last day",
+        marker_color=COLOR_NOGO,
+        boxpoints="all",
+    ))
+    fig.update_layout(
+        title="First Lick Wasserstein: First Day vs Last Day (all animals)",
+        yaxis_title="Wasserstein distance (s)",
+        showlegend=True,
+        height=400,
+    )
+    colors.apply_standard_font_sizes(fig)
+    st.plotly_chart(fig, use_container_width=True, config=get_plotly_config())
+
+    # Per-animal grouped bars
+    st.write("**Per-animal values**")
+    fig2 = go.Figure()
+    x = np.arange(len(df))
+    width = 0.35
+    fig2.add_trace(go.Bar(
+        x=x - width / 2,
+        y=df["first_day_wasserstein"],
+        name="First day",
+        marker_color=COLOR_GO,
+        width=width,
+    ))
+    fig2.add_trace(go.Bar(
+        x=x + width / 2,
+        y=df["last_day_wasserstein"],
+        name="Last day",
+        marker_color=COLOR_NOGO,
+        width=width,
+    ))
+    fig2.update_layout(
+        title="First Lick Wasserstein: First Day vs Last Day (per animal)",
+        xaxis_title="Animal",
+        yaxis_title="Wasserstein distance (s)",
+        barmode="group",
+        xaxis=dict(tickvals=x, ticktext=df["MouseName"].tolist()),
+        showlegend=True,
+        height=400,
+    )
+    colors.apply_standard_font_sizes(fig2)
+    st.plotly_chart(fig2, use_container_width=True, config=get_plotly_config())
+    st.dataframe(df, use_container_width=True, hide_index=True)
+
 
 def _parse_start_times(start_times):
     """

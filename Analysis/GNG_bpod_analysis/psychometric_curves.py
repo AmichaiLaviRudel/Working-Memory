@@ -1491,12 +1491,14 @@ def _hit_rate_by_stimulus_region(project_data, idx, low_bound: float, high_bound
         return np.nan, np.nan
 
 
-def compare_slope_and_distance_by_boundary(project_data):
+def compare_slope_and_distance_by_boundary(project_data, plot: bool = False):
     """
-    Long-format comparison: slope and distance by boundary (2B: Low vs High),
+    Long-format comparison: log(|slope|) and distance by boundary (2B: Low vs High),
     with Hit_Rate per region (below low boundary / above high boundary) and overall Hit_Rate.
 
-    Returns DataFrame with columns: Boundary, Slope, Distance, Hit_Rate, Hit_Rate_below_low, Hit_Rate_above_high, ...
+    When plot=True, renders boxplots (log(|slope|), Distance, Hit_Rate by Boundary) in Streamlit.
+
+    Returns DataFrame with columns: Boundary, Slope (log(|slope|)), Distance, Hit_Rate, Hit_Rate_below_low, Hit_Rate_above_high, ...
     """
     df = distance_between_x0_and_boundary(project_data)
     low_bound, high_bound = _get_boundaries()
@@ -1517,28 +1519,36 @@ def compare_slope_and_distance_by_boundary(project_data):
         hit_rate_below_low, hit_rate_above_high = np.nan, np.nan
         if n_b == 2 and "Stimuli" in df.columns and "Outcomes" in df.columns:
             hit_rate_below_low, hit_rate_above_high = _hit_rate_by_stimulus_region(project_data, idx, low_bound, high_bound)
+        def _log_abs_slope(s):
+            if s is None or pd.isna(s) or not np.isfinite(s) or float(s) == 0:
+                return np.nan
+            return float(np.log(np.abs(float(s))))
+
         base = {"Hit_Rate": hit_rate, "Hit_Rate_below_low": hit_rate_below_low, "Hit_Rate_above_high": hit_rate_above_high, "index": idx}
-        for c in ["MouseName", "SessionDate", "N_Boundaries", "In_between_boundaries"]:
+        for c in ["MouseName", "SessionDate", "N_Boundaries", "In_between_boundaries", "Psychometric_r_squared"]:
             if c in df.columns:
                 base[c] = df.at[idx, c]
         if n_b == 1:
+            s_low = df.at[idx, "Psychometric_slope_low"] if "Psychometric_slope_low" in df.columns else np.nan
             rows.append({
                 **base,
                 "Boundary": "Single",
-                "Slope": df.at[idx, "Psychometric_slope_low"] if "Psychometric_slope_low" in df.columns else np.nan,
+                "Slope": _log_abs_slope(s_low),
                 "Distance": df.at[idx, "Distance_x0"],
             })
         else:
+            s_low = df.at[idx, "Psychometric_slope_low"] if "Psychometric_slope_low" in df.columns else np.nan
+            s_high = df.at[idx, "Psychometric_slope_high"] if "Psychometric_slope_high" in df.columns else np.nan
             rows.append({
                 **base,
                 "Boundary": "Low",
-                "Slope": df.at[idx, "Psychometric_slope_low"] if "Psychometric_slope_low" in df.columns else np.nan,
+                "Slope": _log_abs_slope(s_low),
                 "Distance": df.at[idx, "Distance_x0_low"],
             })
             rows.append({
                 **base,
                 "Boundary": "High",
-                "Slope": df.at[idx, "Psychometric_slope_high"] if "Psychometric_slope_high" in df.columns else np.nan,
+                "Slope": _log_abs_slope(s_high),
                 "Distance": df.at[idx, "Distance_x0_high"],
             })
 
@@ -1546,7 +1556,121 @@ def compare_slope_and_distance_by_boundary(project_data):
     if out.empty:
         return out
     cols = ["Boundary", "Slope", "Distance", "Hit_Rate", "Hit_Rate_below_low", "Hit_Rate_above_high"]
-    rest = [c for c in out.columns if c not in cols]
-    out = out[["Boundary"] + [c for c in cols if c in out.columns] + rest]
+    order_cols = [c for c in cols if c in out.columns]
+    rest = [c for c in out.columns if c not in order_cols]
+    out = out[order_cols + rest]
+
+    if plot and "Boundary" in out.columns:
+        from plotly.subplots import make_subplots
+
+        boundary_vals = np.asarray(out["Boundary"]).ravel()
+        boundaries = pd.unique(pd.Series(boundary_vals).dropna())
+        if len(boundaries) == 0:
+            return out
+
+        # Filters: only successful sessions (d' & Hit Rate), then Min R²
+        filter_col1, filter_col2, filter_col3 = st.columns(3)
+        with filter_col1:
+            only_successful = st.checkbox(
+                "Only successful sessions",
+                value=False,
+                help="Restrict to sessions with d' and Hit Rate above thresholds.",
+                key="compare_slope_distance_only_successful",
+            )
+        dprime_threshold = 1.0
+        hit_rate_threshold = 0.8
+        if "d_prime" in df.columns and "Hit_Rate" in df.columns:
+            with filter_col2:
+                dprime_threshold = st.number_input("Min d'", 0.0, 5.0, 1.0, 0.1, key="compare_slope_distance_dprime")
+            with filter_col3:
+                hit_rate_threshold = st.number_input("Min Hit Rate", 0.0, 1.0, 0.8, 0.05, key="compare_slope_distance_hr")
+        else:
+            only_successful = False
+
+        if only_successful and "d_prime" in df.columns and "Hit_Rate" in df.columns:
+            successful_idx = set(
+                df.index[
+                    (pd.to_numeric(df["d_prime"], errors="coerce") > dprime_threshold)
+                    & (pd.to_numeric(df["Hit_Rate"], errors="coerce") > hit_rate_threshold)
+                ]
+            )
+            out_filtered = out[out["index"].isin(successful_idx)]
+            st.caption(f"Using {len(successful_idx)} successful sessions (d' > {dprime_threshold}, Hit Rate > {hit_rate_threshold*100:.0f}%).")
+        else:
+            out_filtered = out
+
+        r2_col = "Psychometric_r_squared"
+        r2_threshold = 0.7
+        if r2_col in out_filtered.columns:
+            r2_threshold = st.number_input("Min R² (goodness of fit)", 0.0, 1.0, 0.7, 0.05, key="compare_slope_distance_r2_min")
+            out_plot = out_filtered[pd.to_numeric(out_filtered[r2_col], errors="coerce") >= r2_threshold]
+        else:
+            out_plot = out_filtered
+        if out_plot.empty:
+            st.info("No rows left after filters.")
+            return out
+        n_rows = len(out_plot.index)
+        bcol = np.asarray(out_plot["Boundary"])
+        if bcol.size > n_rows:
+            boundary_vals_1d = np.asarray(bcol).reshape(n_rows, -1)[:, 0]
+        else:
+            boundary_vals_1d = np.asarray(bcol).ravel()
+        boundary_mask_series = pd.Series(boundary_vals_1d, index=out_plot.index, dtype=object)
+        plot_boundaries = [b for b in boundaries if b in ("Low", "High")]
+        if not plot_boundaries:
+            st.info("No Low or High boundary rows to plot.")
+            return out
+        fig = make_subplots(rows=1, cols=3, subplot_titles=("log(|slope|)", "Distance", "Hit rate"), horizontal_spacing=0.08)
+        for col, (metric_key, y_label) in enumerate(
+            [("Slope", "log(|slope|)"), ("Distance", "Distance"), ("Hit_Rate", "Hit rate")], start=1
+        ):
+            for b in plot_boundaries:
+                sub = out_plot.loc[boundary_mask_series == b]
+                color = colors.COLOR_LOW_BD if b == "Low" else colors.COLOR_HIGH_BD
+                y_vals = sub[metric_key].dropna()
+                if len(y_vals) > 0:
+                    fig.add_trace(
+                        go.Box(y=y_vals, x=[str(b)] * len(y_vals), name=b, marker_color=color, showlegend=(col == 1)),
+                        row=1, col=col,
+                    )
+            fig.update_yaxes(title_text=y_label, row=1, col=col)
+        fig.update_layout(height=400, margin=dict(l=40, r=20, t=50, b=40), boxmode="group")
+        colors.apply_standard_font_sizes(fig)
+        st.plotly_chart(fig, use_container_width=True, config=get_plotly_config("compare_slope_distance_boundary"))
+
+        # Statistical analysis: Low vs High for each metric (Mann-Whitney, Bonferroni)
+        with st.expander("Statistical analysis (Low vs High)", expanded=False):
+            from statsmodels.stats.multitest import multipletests
+
+            stat_rows = []
+            p_raw_list = []
+            for metric_key, metric_label in [("Slope", "log(|slope|)"), ("Distance", "Distance"), ("Hit_Rate", "Hit rate")]:
+                low_vals = out_plot.loc[boundary_mask_series == "Low", metric_key].dropna().values
+                high_vals = out_plot.loc[boundary_mask_series == "High", metric_key].dropna().values
+                if len(low_vals) >= 3 and len(high_vals) >= 3:
+                    stat, p = stats.mannwhitneyu(low_vals, high_vals, alternative="two-sided")
+                    p_raw_list.append(p)
+                    r = 1 - (2 * stat) / (len(low_vals) * len(high_vals))
+                    stat_rows.append({
+                        "Metric": metric_label,
+                        "n (Low)": len(low_vals),
+                        "n (High)": len(high_vals),
+                        "Median (Low)": round(float(np.median(low_vals)), 4),
+                        "Median (High)": round(float(np.median(high_vals)), 4),
+                        "U": round(float(stat), 1),
+                        "p_raw": p,
+                        "r": round(r, 3),
+                    })
+            if p_raw_list:
+                _, p_adj, _, _ = multipletests(p_raw_list, method="bonferroni")
+                for i, row in enumerate(stat_rows):
+                    row["p-adj (Bonferroni)"] = f"{p_adj[i]:.4f}"
+                    p = p_adj[i]
+                    row["Sig."] = "***" if p < 0.001 else "**" if p < 0.01 else "*" if p < 0.05 else "ns"
+                st.dataframe(pd.DataFrame(stat_rows), use_container_width=True, hide_index=True)
+                st.caption("Mann-Whitney U, Low vs High. p-adj: Bonferroni across 3 metrics. *** p<0.001, ** p<0.01, * p<0.05, ns = not significant.")
+            else:
+                st.caption("Need ≥3 samples in both Low and High per metric to run tests.")
+
     return out
 

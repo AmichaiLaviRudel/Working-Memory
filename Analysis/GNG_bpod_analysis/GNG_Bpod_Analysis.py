@@ -302,6 +302,13 @@ def gng_bpod_analysis_multi_animal(project_data, index):
             except Exception as e:
                 st.warning(f"Something went wrong with daily activity analysis :|\n\n{e}")
                 st.text(traceback.format_exc())
+
+        with st.expander("📏 First Lick Wasserstein: First vs Last Day", expanded=False):
+            try:
+                plot_first_lick_wasserstein_first_vs_last_day(project_data)
+            except Exception as e:
+                st.warning(f"Something went wrong with first-lick Wasserstein comparison :|\n\n{e}")
+                st.text(traceback.format_exc())
         
     with tab3:
         # Session filtering options
@@ -386,7 +393,7 @@ def gng_bpod_analysis_multi_animal(project_data, index):
         with st.expander("📊 Slope & distance by boundary (+ hit rate by region)", expanded=False):
             st.caption("Long-format: slope, distance to boundary, and hit rate (overall / below low / above high) per boundary.")
             try:
-                df_compare = compare_slope_and_distance_by_boundary(project_data)
+                df_compare = compare_slope_and_distance_by_boundary(project_data, plot=True)
                 if not df_compare.empty:
                     st.dataframe(df_compare, use_container_width=True, hide_index=True)
                 else:

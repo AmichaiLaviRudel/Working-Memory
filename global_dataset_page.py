@@ -1,3 +1,4 @@
+import ast
 import os
 import re
 import traceback
@@ -10,6 +11,45 @@ import plotly.graph_objects as go
 from load_data.params_extraction import compute_metrics_for_loaded_data
 from Analysis.GNG_bpod_analysis.GNG_bpod_general import render_global_early_response_filter_checkbox, get_plotly_config
 from Analysis.GNG_bpod_analysis import colors as plot_colors
+
+
+# Default 2B boundaries (kHz) for region-wise stats
+_LOW_BOUNDARY = 0.983
+_HIGH_BOUNDARY = 1.525
+
+
+def _rates_by_region_2b(df: pd.DataFrame, idx, low_bound: float, high_bound: float):
+    """For one 2B session row: (hit_rate_below_low, middle_CR_rate, hit_rate_above_high)."""
+    try:
+        if "Stimuli" not in df.columns or "Outcomes" not in df.columns:
+            return np.nan, np.nan, np.nan
+        row = df.loc[idx]
+        stim_raw, out_raw = row.get("Stimuli"), row.get("Outcomes")
+        if pd.isna(stim_raw) or pd.isna(out_raw):
+            return np.nan, np.nan, np.nan
+        stimuli = np.array([float(x) for x in str(stim_raw).strip("[]\n").split()]) if isinstance(stim_raw, str) else np.asarray(stim_raw, dtype=float)
+        outcomes = np.array(ast.literal_eval(out_raw)) if isinstance(out_raw, str) else np.asarray(out_raw)
+        if len(stimuli) != len(outcomes) or len(stimuli) == 0:
+            return np.nan, np.nan, np.nan
+        out_str = np.array([str(o).strip() for o in outcomes])
+        hit = out_str == "Hit"
+        miss = out_str == "Miss"
+        cr = (out_str == "CR") | (out_str == "Correct Reject")
+        fa = out_str == "False Alarm"
+        below = stimuli < low_bound
+        middle = (stimuli >= low_bound) & (stimuli <= high_bound)
+        above = stimuli > high_bound
+        n_below = np.sum(below)
+        n_mid = np.sum(middle)
+        n_above = np.sum(above)
+        hr_below = (np.sum(hit & below) / n_below) if n_below > 0 else np.nan
+        hr_above = (np.sum(hit & above) / n_above) if n_above > 0 else np.nan
+        cr_mid = np.sum(cr & middle)
+        fa_mid = np.sum(fa & middle)
+        mid_cr_rate = (cr_mid / (cr_mid + fa_mid)) if (cr_mid + fa_mid) > 0 else np.nan
+        return float(hr_below), float(mid_cr_rate), float(hr_above)
+    except Exception:
+        return np.nan, np.nan, np.nan
 
 
 # Default path for global training CSV
@@ -171,7 +211,7 @@ def render_global_dataset_page() -> None:
                 with col_group:
                     # Group filter (groupID column)
                     # Exclude pilot/test groups by default
-                    EXCLUDED_GROUPS = {"Educage_headbar_pilot_15_12_2025", "Group 1", "Group 2", "Educage_headbar1_04_01_2026"}
+                    EXCLUDED_GROUPS = {"Educage_headbar_pilot_15_12_2025", "Group 1", "Group 2", "Group 8", "Educage_headbar1_04_01_2026"}
                     available_groups = sorted(df["groupID"].dropna().unique().tolist()) if "groupID" in df.columns else []
                     default_groups = [g for g in available_groups if g not in EXCLUDED_GROUPS]
                     if available_groups:
@@ -218,7 +258,7 @@ def render_global_dataset_page() -> None:
                         "Hit Rate threshold",
                         min_value=0.0,
                         max_value=1.0,
-                        value=0.8,
+                        value=0.75,
                         step=0.05,
                         key="dashboard_hit_rate_threshold",
                     )
@@ -701,41 +741,80 @@ def render_global_dataset_page() -> None:
                                     plot_colors.apply_standard_font_sizes(fig_psych)
                                     st.plotly_chart(fig_psych, use_container_width=True, config=get_plotly_config(f"mean_psychometric_{boundary_label}"))
                             
-                            # Statistical analysis below the columns
-                            with st.expander("Statistical Analysis (Mann-Whitney U Test)", expanded=False):
-                                stat_results = []
-                                for boundary in [1, 2]:
-                                    boundary_label = f"{boundary}B"
-                                    category_data = {}
-                                    for category in unique_categories:
-                                        data = df_plot[(df_plot[group_col] == category) & (df_plot["N_Boundaries"] == boundary)]["d_prime"].values
-                                        if len(data) > 0:
-                                            category_data[category] = data
-                                    
-                                    category_list = list(category_data.keys())
-                                    for j in range(len(category_list)):
-                                        for k in range(j + 1, len(category_list)):
-                                            cat_a, cat_b = category_list[j], category_list[k]
-                                            data_a, data_b = category_data[cat_a], category_data[cat_b]
-                                            if len(data_a) >= 3 and len(data_b) >= 3:
-                                                stat, p_value = stats.mannwhitneyu(data_a, data_b, alternative='two-sided')
-                                                n1, n2 = len(data_a), len(data_b)
-                                                effect_size = 1 - (2 * stat) / (n1 * n2)
-                                                significance = "***" if p_value < 0.001 else "**" if p_value < 0.01 else "*" if p_value < 0.05 else "ns"
-                                                stat_results.append({
-                                                    "Task": boundary_label,
-                                                    "Comparison": f"{cat_a} vs {cat_b}",
-                                                    "n1": len(data_a), "n2": len(data_b),
-                                                    "Median1": round(np.median(data_a), 2),
-                                                    "Median2": round(np.median(data_b), 2),
-                                                    "U": round(stat, 1),
-                                                    "p-value": f"{p_value:.4f}",
-                                                    "r": round(effect_size, 3),
-                                                    "Sig.": significance,
-                                                })
-                                if stat_results:
-                                    st.dataframe(pd.DataFrame(stat_results), use_container_width=True, hide_index=True)
-                                    st.caption("Significance: *** p<0.001, ** p<0.01, * p<0.05, ns = not significant")
+                            # Statistical analysis: 1B and 2B each use Low Go / Middle NoGo / High Go; Bonferroni correction
+                            with st.expander("Statistical Analysis (Mann-Whitney U, corrected)", expanded=False):
+                                from statsmodels.stats.multitest import multipletests
+
+                                # Use same "Only successful sessions" filter as psychometric section
+                                df_for_stats = df_psych
+                                low_b, high_b = _LOW_BOUNDARY, _HIGH_BOUNDARY
+                                region_metrics = [
+                                    ("Low Go", "Hit_Rate_Low_Go"),           # hit rate for stimuli < low boundary
+                                    ("Middle NoGo", "CR_Rate_Middle_NoGo"),  # CR/(CR+FA) between boundaries
+                                    ("High Go", "Hit_Rate_High_Go"),        # hit rate for stimuli > high boundary
+                                ]
+                                stat_rows: list[dict] = []
+                                p_values_raw: list[float] = []
+
+                                def add_region_comparisons(task_label: str, df_sessions: pd.DataFrame, df_source: pd.DataFrame) -> None:
+                                    if df_sessions.empty or group_col not in df_sessions.columns:
+                                        return
+                                    hr_low, mid_cr, hr_high = [], [], []
+                                    for idx in df_sessions.index:
+                                        h_l, m_c, h_h = _rates_by_region_2b(df_source, idx, low_b, high_b)
+                                        hr_low.append(h_l)
+                                        mid_cr.append(m_c)
+                                        hr_high.append(h_h)
+                                    df_sessions = df_sessions.assign(
+                                        Hit_Rate_Low_Go=hr_low,
+                                        CR_Rate_Middle_NoGo=mid_cr,
+                                        Hit_Rate_High_Go=hr_high,
+                                    )
+                                    for region_name, metric_col in region_metrics:
+                                        df_r = df_sessions[[group_col, metric_col]].dropna(subset=[metric_col])
+                                        cat_list_r = [c for c in unique_categories if (df_r[group_col] == c).sum() > 0]
+                                        for j in range(len(cat_list_r)):
+                                            for k in range(j + 1, len(cat_list_r)):
+                                                cat_a, cat_b = cat_list_r[j], cat_list_r[k]
+                                                da = df_r[df_r[group_col] == cat_a][metric_col].values
+                                                db = df_r[df_r[group_col] == cat_b][metric_col].values
+                                                if len(da) >= 3 and len(db) >= 3:
+                                                    stat, p = stats.mannwhitneyu(da, db, alternative="two-sided")
+                                                    p_values_raw.append(p)
+                                                    r = 1 - (2 * stat) / (len(da) * len(db))
+                                                    stat_rows.append({
+                                                        "Task": task_label,
+                                                        "Metric": region_name,
+                                                        "Comparison": f"{cat_a} vs {cat_b}",
+                                                        "n1": len(da), "n2": len(db),
+                                                        "Median1": round(float(np.median(da)), 2),
+                                                        "Median2": round(float(np.median(db)), 2),
+                                                        "U": round(float(stat), 1),
+                                                        "p_raw": p,
+                                                        "r": round(r, 3),
+                                                    })
+
+                                # 1B and 2B: use numeric N_Boundaries so 2 vs 2.0 / "2" don't drop 2B sessions
+                                n_bound = pd.to_numeric(df_for_stats["N_Boundaries"], errors="coerce")
+                                df_1b = df_for_stats.loc[n_bound == 1].copy()
+                                df_2b = df_for_stats.loc[n_bound == 2].copy()
+                                add_region_comparisons("1B", df_1b, df_for_stats)
+                                add_region_comparisons("2B", df_2b, df_for_stats)
+
+                                if p_values_raw:
+                                    _, p_adj, _, _ = multipletests(p_values_raw, method="bonferroni")
+                                    for i, row in enumerate(stat_rows):
+                                        row["p-adj (Bonferroni)"] = f"{p_adj[i]:.4f}"
+                                        p = p_adj[i]
+                                        row["Sig."] = "***" if p < 0.001 else "**" if p < 0.01 else "*" if p < 0.05 else "ns"
+                                    out_df = pd.DataFrame(stat_rows)
+                                    display_cols = ["Task", "Metric", "Comparison", "n1", "n2", "Median1", "Median2", "U", "p-adj (Bonferroni)", "r", "Sig."]
+                                    st.dataframe(out_df[[c for c in display_cols if c in out_df.columns]], use_container_width=True, hide_index=True)
+                                    st.caption("Metrics: Low Go = hit rate (stim < low bound); Middle NoGo = CR/(CR+FA) (between bounds); High Go = hit rate (stim > high bound). p-adj: Bonferroni across all comparisons. *** p<0.001, ** p<0.01, * p<0.05, ns = not significant.")
+                                else:
+                                    st.caption("No pairwise comparisons with ≥3 samples per group.")
+                                if df_2b.empty:
+                                    st.caption("No 2B sessions in current selection (or none with ≥3 per group per metric). Check 'Only successful sessions' and page filters (N_Boundaries).")
 
                     # Show list of subjects who achieved criteria (with all their matching sessions)
                     if n_achieved > 0:
