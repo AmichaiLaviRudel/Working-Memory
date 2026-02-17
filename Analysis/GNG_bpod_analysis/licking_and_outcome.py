@@ -8,7 +8,20 @@ from Analysis.GNG_bpod_analysis.GNG_bpod_general import (
     get_global_early_response_filter,
 )
 import Analysis.GNG_bpod_analysis.colors as colors
-from Analysis.GNG_bpod_analysis.colors import COLOR_FA, OUTCOME_COLOR_MAP, COLOR_ACCENT, COLOR_GRAY, COLOR_GO, COLOR_NOGO, COLOR_BLUE, COLOR_D_PRIME, COLOR_HIT, COLOR_CR
+from Analysis.GNG_bpod_analysis.colors import (
+    COLOR_FA,
+    OUTCOME_COLOR_MAP,
+    COLOR_ACCENT,
+    COLOR_GRAY,
+    COLOR_GO,
+    COLOR_NOGO,
+    GO_COLORS,
+    COLOR_D_PRIME,
+    COLOR_HIT,
+    COLOR_CR,
+    COLOR_LOW_BD,
+    COLOR_HIGH_BD,
+)
 
 import re
 import ast
@@ -19,6 +32,46 @@ import altair as alt
 from plotly.subplots import make_subplots
 import streamlit as st
 from Analysis.GNG_bpod_analysis.GNG_bpod_general import get_plotly_config
+from Analysis.GNG_bpod_analysis.latency_map import _zscore_by_session
+
+# Default boundaries for first-lick distance plot (match psychometric_curves fallback)
+_DEFAULT_LOW_BOUNDARY_FTL = 0.983
+_DEFAULT_HIGH_BOUNDARY_FTL = 1.525
+
+
+def _get_boundaries_ftl() -> tuple[float, float]:
+    """Return (low_boundary, high_boundary) from session state or defaults for first-lick plots."""
+    low = getattr(st.session_state, "low_boundary", _DEFAULT_LOW_BOUNDARY_FTL)
+    high = getattr(st.session_state, "high_boundary", _DEFAULT_HIGH_BOUNDARY_FTL)
+    return float(low), float(high)
+
+
+def _dist_oct_from_low_boundary(stim: float | np.ndarray, low_boundary: float) -> float | np.ndarray:
+    """Distance from low boundary in octaves: log2(stim / low_boundary). Preserves low/NoGo/high ordering."""
+    with np.errstate(divide="ignore", invalid="ignore"):
+        return np.log2(np.asarray(stim, dtype=float) / low_boundary)
+
+
+def _dist_oct_to_closest_boundary(
+    stim: float | np.ndarray,
+    low_boundary: float,
+    high_boundary: float,
+) -> float | np.ndarray:
+    """
+    Distance to the closest boundary (low or high) in octaves.
+    - stim < low: log2(low/stim) (positive).
+    - low <= stim <= high: min(log2(stim/low), log2(high/stim)) (0 at both boundaries).
+    - stim > high: log2(stim/high) (positive).
+    """
+    stim = np.asarray(stim, dtype=float)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        below = np.log2(low_boundary / stim)
+        above = np.log2(stim / high_boundary)
+        in_zone_low = np.log2(stim / low_boundary)
+        in_zone_high = np.log2(high_boundary / stim)
+        in_zone = np.minimum(in_zone_low, in_zone_high)
+    out = np.where(stim < low_boundary, below, np.where(stim > high_boundary, above, in_zone))
+    return out
 
 
 def _read_last_reinforcement_delay_time_seconds(parameters_txt: str | Path) -> float | None:
@@ -706,105 +759,563 @@ def prepare_raster_data(licks_list, trial_type, trial_stim, start_index=1):
     return pd.DataFrame(data)
 
 
-def plot_first_lick_by_stimulus(project_data, index, plot=True, filter_early_response: bool | None = None):
-    """Plot first lick times by stimulus ID."""
+def _build_first_lick_distance_df(
+    project_data: pd.DataFrame,
+    indices: list[int],
+    filter_early_response: bool,
+) -> pd.DataFrame | None:
+    """
+    Build combined first-lick DataFrame across sessions with SessionID, Dist_oct, and Latency_Z.
+    Returns None if no valid rows after filtering.
+    """
+    low_boundary, high_boundary = _get_boundaries_ftl()
+    rows = []
+    for idx in indices:
+        try:
+            df_go, df_nogo, _ = process_and_plot_lick_data(
+                project_data, idx, plot=False, filter_early_response=filter_early_response
+            )
+            part = pd.concat([df_go, df_nogo], ignore_index=True)
+            part = part[
+                (part["First Lick Time (s)"] >= 0)
+                & (part["First Lick Time (s)"] <= FIRST_LICK_LATENCY_MAX_S)
+            ]
+            if part.empty:
+                continue
+            part["SessionID"] = idx
+            rows.append(part)
+        except Exception:
+            continue
+    if not rows:
+        return None
+    ftl_df = pd.concat(rows, ignore_index=True)
+    ftl_df["Dist_oct"] = _dist_oct_from_low_boundary(
+        ftl_df["Stimulus ID"].values, low_boundary
+    )
+    ftl_df["Dist_oct_closest"] = _dist_oct_to_closest_boundary(
+        ftl_df["Stimulus ID"].values, low_boundary, high_boundary
+    )
+    ftl_df = ftl_df[np.isfinite(ftl_df["Dist_oct"]) & np.isfinite(ftl_df["Dist_oct_closest"])].copy()
+    if ftl_df.empty:
+        return None
+    # Z-score Go and NoGo separately within each session
+    ftl_df = _zscore_by_session(
+        ftl_df,
+        session_col=["SessionID", "Trial Type"],
+        latency_col="First Lick Time (s)",
+        z_col="Latency_Z",
+    )
+    return ftl_df
+
+
+def _get_phase_per_session(project_data: pd.DataFrame) -> dict[int, str]:
+    """
+    Map session row index -> Phase (Novice / 1B Expert / 2B Expert).
+
+    Criteria (per animal, sorted chronologically):
+      - Novice:    first 2 sessions with N_Boundaries == 1 AND Tones_per_class > 1.
+      - 1B Expert: last  2 sessions with N_Boundaries == 1 AND Tones_per_class >= 3.
+      - 2B Expert: last  2 sessions with N_Boundaries == 2 AND Tones_per_class >= 3.
+
+    A session CAN carry multiple phase labels (e.g. an early 1B session that is
+    both Novice and 1B Expert when the animal has very few sessions). The caller
+    explodes "|"-separated labels into multiple rows.
+    """
+    required = {"MouseName", "SessionDate", "N_Boundaries", "Tones_per_class"}
+    if required - set(project_data.columns):
+        return {}
+    # Coerce to numeric to handle string / float dtype from CSV
+    n_boundaries = pd.to_numeric(project_data["N_Boundaries"], errors="coerce")
+    tones_per_class = pd.to_numeric(project_data["Tones_per_class"], errors="coerce")
+
+    idx_to_phases: dict[int, list[str]] = {}
+
+    for _mouse, grp in project_data.groupby("MouseName", sort=False):
+        grp = grp.sort_values("SessionDate")
+        indices = grp.index.tolist()
+
+        # Novice: first 2 sessions with 1 boundary & more than 1 tone per class
+        novice_candidates = [
+            i for i in indices
+            if n_boundaries.loc[i] == 1 and tones_per_class.loc[i] > 1
+        ]
+        for idx in novice_candidates[:2]:
+            idx_to_phases.setdefault(idx, []).append("Novice")
+
+        # 1B Expert: last 2 sessions with 1 boundary & >= 3 tones per class
+        one_b_idx = [
+            i for i in indices
+            if n_boundaries.loc[i] == 1 and tones_per_class.loc[i] >= 3
+        ]
+        for idx in one_b_idx[-2:]:
+            idx_to_phases.setdefault(idx, []).append("1B Expert")
+
+        # 2B Expert: last 2 sessions with 2 boundaries & >= 3 tones per class
+        two_b_idx = [
+            i for i in indices
+            if n_boundaries.loc[i] == 2 and tones_per_class.loc[i] >= 3
+        ]
+        for idx in two_b_idx[-2:]:
+            idx_to_phases.setdefault(idx, []).append("2B Expert")
+
+    # Flatten: "|"-separated string so the caller can explode later
+    return {idx: "|".join(phases) for idx, phases in idx_to_phases.items()}
+
+
+def _build_phase_ftl_and_aggregate(
+    project_data: pd.DataFrame,
+    indices: list[int],
+    filter_early_response: bool,
+    boundary_bin_oct: float = 0.1,
+) -> tuple[pd.DataFrame | None, pd.DataFrame | None, pd.DataFrame | None]:
+    """
+    Build FTL with Phase, then aggregate Mean_Z, SEM_Z per (Phase, Dist_oct_closest).
+    X-axis is distance to closest boundary (octaves), sorted ascending.
+    Returns (ftl_with_phase, agg_grand_mean, agg_per_animal) or (None, None, None).
+    """
+    ftl_df = _build_first_lick_distance_df(project_data, indices, filter_early_response)
+    if ftl_df is None or ftl_df.empty:
+        return None, None, None
+    ftl_df = ftl_df[np.isfinite(ftl_df["Latency_Z"])].copy()
+    if ftl_df.empty:
+        return None, None, None
+
+    phase_map = _get_phase_per_session(project_data)
+    ftl_df["Phase_raw"] = ftl_df["SessionID"].map(phase_map)
+    ftl_df = ftl_df.dropna(subset=["Phase_raw"]).copy()
+    if ftl_df.empty:
+        return None, None, None
+    # Explode "|"-separated phases so a session in multiple phases
+    # contributes a row to each (e.g. Novice AND 1B Expert).
+    ftl_df["Phase"] = ftl_df["Phase_raw"].str.split("|")
+    ftl_df = ftl_df.explode("Phase")
+    ftl_df = ftl_df[ftl_df["Phase"].isin(["Novice", "1B Expert", "2B Expert"])].copy()
+    ftl_df.drop(columns=["Phase_raw"], inplace=True)
+    if ftl_df.empty:
+        return None, None, None
+
+    MAX_DIST_OCT = 0.6   # drop stimuli farther than this from any boundary
+    BIN_WIDTH_OCT = 0.05  # bin width for combining nearby distances
+
+    ftl_df = ftl_df[ftl_df["Dist_oct_closest"].abs() <= MAX_DIST_OCT].copy()
+    if ftl_df.empty:
+        return None, None, None
+
+    # Bin distances so nearby stimuli are combined
+    ftl_df["Dist_bin"] = (ftl_df["Dist_oct_closest"] / BIN_WIDTH_OCT).round(0) * BIN_WIDTH_OCT
+    ftl_df["Dist_bin"] = ftl_df["Dist_bin"].round(4)
+
+    # Add MouseName for per-animal lines
+    mouse_map = project_data["MouseName"].to_dict() if "MouseName" in project_data.columns else {}
+    ftl_df["MouseName"] = ftl_df["SessionID"].map(mouse_map)
+
+    # --- Per-animal aggregation (for individual lines) ---
+    animal_agg = (
+        ftl_df.groupby(["Phase", "Trial Type", "MouseName", "Dist_bin"], as_index=False)["Latency_Z"]
+        .mean()
+        .rename(columns={"Latency_Z": "Mean_Z", "Dist_bin": "Dist_oct_closest"})
+    )
+
+    # --- Grand mean aggregation (across all animals) ---
+    agg_rows = []
+    for (phase, ttype, dist_bin), sub in ftl_df.groupby(["Phase", "Trial Type", "Dist_bin"]):
+        z = sub["Latency_Z"].astype(float)
+        n = z.size
+        mean_z = float(np.nanmean(z)) if n else np.nan
+        sem_z = float(np.nanstd(z, ddof=1) / np.sqrt(n)) if n > 1 else np.nan
+        agg_rows.append({
+            "Phase": phase,
+            "Trial Type": ttype,
+            "Dist_oct_closest": float(dist_bin),
+            "Mean_Z": mean_z,
+            "SEM_Z": sem_z,
+            "N": n,
+        })
+    agg_df = pd.DataFrame(agg_rows)
+
+    return ftl_df, agg_df, animal_agg
+
+
+def _run_phase_latency_stats(
+    ftl_with_phase: pd.DataFrame,
+    project_data: pd.DataFrame,
+    boundary_bin_oct: float = 0.1,
+) -> tuple[str, pd.DataFrame | None]:
+    """
+    For each (Phase, Trial Type) group test whether latency near the boundary
+    differs from latency far from the boundary.
+
+    Per-animal metric: mean Latency_Z in the *closest* bin (|dist| <= boundary_bin_oct)
+    vs. mean Latency_Z in the *farthest* bin (top-quartile of |dist|).
+    Paired Wilcoxon signed-rank across animals; Bonferroni correction.
+    Returns (report_string, results_df).
+    """
+    from scipy.stats import wilcoxon, mannwhitneyu
+
+    if "MouseName" not in ftl_with_phase.columns:
+        if "MouseName" not in project_data.columns:
+            return "Statistics skipped (no MouseName).", None
+        ftl = ftl_with_phase.copy()
+        ftl["MouseName"] = ftl["SessionID"].map(project_data["MouseName"].to_dict())
+    else:
+        ftl = ftl_with_phase.copy()
+    ftl = ftl.dropna(subset=["MouseName", "Latency_Z"])
+    if ftl.empty:
+        return "No valid data for statistics.", None
+
+    phases = [p for p in ["Novice", "1B Expert", "2B Expert"] if p in ftl["Phase"].unique()]
+    trial_types = [t for t in ["Go", "NoGo"] if t in ftl["Trial Type"].unique()]
+
+    stat_rows = []
+    for phase in phases:
+        for ttype in trial_types:
+            sub = ftl[(ftl["Phase"] == phase) & (ftl["Trial Type"] == ttype)]
+            if sub.empty:
+                continue
+            sub_abs = sub["Dist_oct_closest"].abs()
+            # Closest = min |dist| bin, farthest = max |dist| bin in this group
+            min_dist = sub_abs.min()
+            max_dist = sub_abs.max()
+            if min_dist == max_dist:
+                continue
+            close_summary = (
+                sub.loc[sub_abs == min_dist]
+                .groupby("MouseName")["Latency_Z"].mean()
+            )
+            far_summary = (
+                sub.loc[sub_abs == max_dist]
+                .groupby("MouseName")["Latency_Z"].mean()
+            )
+            common = close_summary.index.intersection(far_summary.index)
+            n = len(common)
+            close_vals = close_summary.loc[common].values if n else np.array([])
+            far_vals = far_summary.loc[common].values if n else np.array([])
+
+            row = {
+                "Phase": phase,
+                "Trial Type": ttype,
+                "n_animals": n,
+                "Dist_close": float(min_dist),
+                "Dist_far": float(max_dist),
+                "Mean_Z_close": float(np.nanmean(close_vals)) if n else np.nan,
+                "Mean_Z_far": float(np.nanmean(far_vals)) if n else np.nan,
+                "statistic": np.nan,
+                "p": np.nan,
+            }
+            if n >= 2:
+                try:
+                    stat, p = wilcoxon(close_vals, far_vals, alternative="two-sided")
+                except Exception:
+                    stat, p = mannwhitneyu(close_vals, far_vals, alternative="two-sided")
+                row["statistic"] = float(stat)
+                row["p"] = float(p)
+            stat_rows.append(row)
+
+    if not stat_rows:
+        return "No groups with enough data for close-vs-far test.", None
+
+    results_df = pd.DataFrame(stat_rows)
+    # Bonferroni correction across all tests
+    n_tests = results_df["p"].notna().sum()
+    if n_tests > 1:
+        results_df["p_adj"] = results_df["p"].apply(lambda x: min(1.0, x * n_tests) if np.isfinite(x) else np.nan)
+    else:
+        results_df["p_adj"] = results_df["p"]
+    results_df["sig"] = results_df["p_adj"].apply(
+        lambda x: "***" if x < 0.001 else "**" if x < 0.01 else "*" if x < 0.05 else "ns" if np.isfinite(x) else ""
+    )
+
+    lines = [
+        "**Close vs Far from boundary** — per group, comparing the minimum and maximum |distance| bins.",
+        "Paired Wilcoxon signed-rank across animals, Bonferroni-corrected.",
+    ]
+    return "\n\n".join(lines), results_df
+
+
+def _show_phase_debug_table(
+    project_data: pd.DataFrame,
+    phase_map: dict[int, str],
+    indices: list[int],
+) -> None:
+    """Display a compact table of session -> phase assignments inside an expander."""
+    rows_for_table = []
+    for idx in indices:
+        if idx not in project_data.index:
+            continue
+        row = project_data.loc[idx]
+        phases = phase_map.get(idx, "—")
+        rows_for_table.append({
+            "Index": idx,
+            "Mouse": row.get("MouseName", "?"),
+            "Date": str(row.get("SessionDate", "?")),
+            "N_Boundaries": row.get("N_Boundaries", "?"),
+            "Tones_per_class": row.get("Tones_per_class", "?"),
+            "Notes": str(row.get("Notes", "")),
+            "Phase(s)": phases,
+        })
+    if rows_for_table:
+        debug_df = pd.DataFrame(rows_for_table)
+        with st.expander("Phase assignment per session (debug)", expanded=False):
+            st.dataframe(debug_df, use_container_width=True, hide_index=True)
+
+
+def plot_first_lick_by_distance_by_phase(
+    project_data: pd.DataFrame,
+    index: int | list[int] | None = None,
+    plot: bool = True,
+    filter_early_response: bool | None = None,
+    boundary_bin_oct: float = 0.1,
+    show_2b: bool = True,
+) -> None:
+    """
+    First-lick latency by distance to closest boundary, compared across phases.
+    X-axis: distance to closest boundary (octaves). Y-axis: Mean Z-score ± SEM.
+    """
+    if filter_early_response is None:
+        filter_early_response = get_global_early_response_filter()
+    if index is None:
+        indices = project_data.index.tolist()
+    elif isinstance(index, (int, np.integer)):
+        indices = [index]
+    else:
+        indices = list(index)
+    if not indices:
+        if plot:
+            st.warning("No sessions to plot.")
+        return
+
+    # Show phase assignment for debugging / verification
+    phase_map = _get_phase_per_session(project_data)
+    if plot:
+        _show_phase_debug_table(project_data, phase_map, indices)
+
+    ftl_df, agg_df, animal_agg = _build_phase_ftl_and_aggregate(
+        project_data, indices, filter_early_response, boundary_bin_oct=boundary_bin_oct
+    )
+    if ftl_df is None or agg_df is None or animal_agg is None:
+        if plot:
+            st.warning("No valid first-lick data for phase comparison.")
+        return
+
+    phases_to_plot = ["Novice", "1B Expert"]
+    if show_2b:
+        phases_to_plot.append("2B Expert")
+
+    # Filter to requested phases
+    ftl_df = ftl_df[ftl_df["Phase"].isin(phases_to_plot)].copy()
+    agg_df = agg_df[agg_df["Phase"].isin(phases_to_plot)].copy()
+    animal_agg = animal_agg[animal_agg["Phase"].isin(phases_to_plot)].copy()
+    if agg_df.empty:
+        if plot:
+            st.warning("No aggregated data for the selected phases.")
+        return
+
+    color_map = {"Novice": "gray", "1B Expert": COLOR_LOW_BD, "2B Expert": COLOR_HIGH_BD}
+    col_map = {"Go": 1, "NoGo": 2}
+    fig = make_subplots(
+        rows=1, cols=2,
+        shared_yaxes=True,
+        subplot_titles=["Go (Hits)", "NoGo (False Alarms)"],
+        horizontal_spacing=0.05,
+    )
+    for phase in phases_to_plot:
+        for ttype in ["Go", "NoGo"]:
+            col = col_map[ttype]
+            color = color_map.get(phase, "black")
+            # Only show legend entry once per phase (on the Go subplot)
+            show_legend = ttype == "Go"
+
+            # Individual animal lines in light gray
+            phase_ttype_animals = animal_agg[
+                (animal_agg["Phase"] == phase) & (animal_agg["Trial Type"] == ttype)
+            ]
+            for mouse, msub in phase_ttype_animals.groupby("MouseName"):
+                msub = msub.sort_values("Dist_oct_closest")
+                fig.add_trace(
+                    go.Scatter(
+                        x=msub["Dist_oct_closest"].values,
+                        y=msub["Mean_Z"].values,
+                        mode="lines",
+                        line=dict(color="lightgray", width=1),
+                        legendgroup=phase, showlegend=False,
+                        hovertext=str(mouse), hoverinfo="text+y",
+                    ),
+                    row=1, col=col,
+                )
+
+            # Grand mean (bold, colored)
+            sub = agg_df[(agg_df["Phase"] == phase) & (agg_df["Trial Type"] == ttype)].sort_values("Dist_oct_closest")
+            if sub.empty:
+                continue
+            x = sub["Dist_oct_closest"].values
+            y = sub["Mean_Z"].values
+            fig.add_trace(
+                go.Scatter(
+                    x=x, y=y, mode="lines",
+                    name=phase, legendgroup=phase, showlegend=show_legend,
+                    line=dict(color=color, width=3),
+                    marker=dict(size=5),
+                ),
+                row=1, col=col,
+            )
+
+    # Vertical line at distance = 0 on both subplots
+    for col in [1, 2]:
+        fig.add_vline(x=0, line_dash="dash", line_color=COLOR_GRAY, line_width=2, row=1, col=col)
+
+    fig.update_layout(
+        title="First Lick by Distance to Closest Boundary (by learning phase)",
+        template="simple_white",
+    )
+    fig.update_xaxes(title_text="Distance to closest boundary (oct)", row=1, col=1)
+    fig.update_xaxes(title_text="Distance to closest boundary (oct)", row=1, col=2)
+    fig.update_yaxes(title_text="First Lick Time (Z-score)", row=1, col=1)
+    if plot:
+        st.plotly_chart(fig, use_container_width=True, config=get_plotly_config())
+
+    # Statistics: close vs far from boundary, per (Phase x Trial Type)
+    report, stats_df = _run_phase_latency_stats(ftl_df, project_data, boundary_bin_oct=boundary_bin_oct)
+    if plot:
+        with st.expander("Statistics (close vs far from boundary)"):
+            st.markdown(report)
+            if stats_df is not None and not stats_df.empty:
+                fmt = {
+                    "Dist_close": "{:.2f}",
+                    "Dist_far": "{:.2f}",
+                    "Mean_Z_close": "{:.3f}",
+                    "Mean_Z_far": "{:.3f}",
+                    "statistic": "{:.2f}",
+                    "p": "{:.3g}",
+                    "p_adj": "{:.3g}",
+                }
+                st.dataframe(stats_df.style.format(fmt, na_rep="—"), use_container_width=True, hide_index=True)
+
+
+def plot_first_lick_by_stimulus(
+    project_data: pd.DataFrame,
+    index: int | list[int] | None = None,
+    plot: bool = True,
+    filter_early_response: bool | None = None,
+    normalize: bool = True,
+) -> None:
+    """
+    Plot first lick times by distance from boundary (octaves), with optional in-session Z-score.
+
+    Single-session: pass int index. Multi-session/multi-animal: pass index=None to use all rows.
+    When normalize=True (default), y-axis is First Lick Time (Z-score) per session for comparability.
+    """
     from Analysis.GNG_bpod_analysis.colors import COLOR_GO, COLOR_NOGO
+
     if filter_early_response is None:
         filter_early_response = get_global_early_response_filter()
 
-    # Get first lick data (respect Early Response filter flag)
-    df_go, df_nogo, _ = process_and_plot_lick_data(
-        project_data, index, plot=False, filter_early_response=filter_early_response
+    if index is None:
+        indices = project_data.index.tolist()
+    elif isinstance(index, (int, np.integer)):
+        indices = [index]
+    else:
+        indices = list(index)
+
+    if not indices:
+        if plot:
+            st.warning("No sessions to plot.")
+        return
+
+    ftl_df = _build_first_lick_distance_df(
+        project_data, indices, filter_early_response
     )
-    ftl_df = pd.concat([df_go, df_nogo])
-    # First-lick latency: restrict to 0–2.5 s
-    ftl_df = ftl_df[(ftl_df["First Lick Time (s)"] >= 0) & (ftl_df["First Lick Time (s)"] <= FIRST_LICK_LATENCY_MAX_S)]
-    
-    stimuli_unique = ftl_df["Stimulus ID"].unique()
-    
-    # Create figure for distribution plots
+    if ftl_df is None or ftl_df.empty:
+        if plot:
+            st.warning("No valid first-lick data after filtering.")
+        return
+
+    low_boundary, high_boundary = _get_boundaries_ftl()
+    dist_high_oct = np.log2(high_boundary / low_boundary)
+    y_col = "Latency_Z" if normalize else "First Lick Time (s)"
+    ftl_plot = ftl_df[np.isfinite(ftl_df[y_col])].copy()
+    if ftl_plot.empty:
+        if plot:
+            st.warning("No finite values to plot.")
+        return
+
+    # One box per unique distance (round to avoid float noise)
+    ftl_plot["Dist_oct_round"] = np.round(ftl_plot["Dist_oct"], 3)
+    distances_unique = np.sort(ftl_plot["Dist_oct_round"].unique())
+
     fig = go.Figure()
-    
-    # Plot distribution for each stimulus
-    for i, stim in enumerate(stimuli_unique):
-        stim_data = ftl_df[ftl_df["Stimulus ID"] == stim]["First Lick Time (s)"]
-        
-        # Determine color based on stimulus type
-        if st.session_state.low_boundary < stim < st.session_state.high_boundary:
+    for dist in distances_unique:
+        subset = ftl_plot[ftl_plot["Dist_oct_round"] == dist]
+        y_vals = subset[y_col].values
+        # Go/NoGo color from stimulus: use first stimulus in group (all same region for same dist)
+        stim_repr = subset["Stimulus ID"].iloc[0]
+        if low_boundary < stim_repr < high_boundary:
             color = COLOR_NOGO
             name_prefix = "NoGo"
         else:
             color = COLOR_GO
             name_prefix = "Go"
-        
-        # Add box plot for distribution
-        fig.add_trace(go.Box(
-            x=[stim] * len(stim_data),
-            y=stim_data,
-            name=f'{name_prefix} Stim {stim}',
-            fillcolor=None,
-            opacity=0.7,
-            line_color=color,
-            showlegend=True,
-            boxpoints='outliers',
-            jitter=0.1,
-            pointpos=0,
-        ))
-        # Add annotation under each tick with the count of stim_data
-        fig.add_annotation(
-            x=np.log10(stim),
-            y=ftl_df["First Lick Time (s)"].min() - 0.1,  # slightly below the min y
-            text=f"n={len(stim_data)}",
-            showarrow=False,
-            font=dict(
-                size=colors.LABEL_FONT_SIZE,
-                color="black"
-            ),
-            xanchor="center",
-            yanchor="top"
+        fig.add_trace(
+            go.Box(
+                x=[dist] * len(y_vals),
+                y=y_vals,
+                name=f"{name_prefix} {dist:.3f}",
+                fillcolor=None,
+                opacity=0.7,
+                line_color=color,
+                showlegend=True,
+                boxpoints="outliers",
+                jitter=0.1,
+                pointpos=0,
+            )
         )
-    
 
     fig.add_vline(
-        x=st.session_state.low_boundary,
+        x=0.0,
         line_width=2,
         line_dash="dash",
         line_color=COLOR_GRAY,
     )
     fig.add_vline(
-        x=st.session_state.high_boundary,
+        x=dist_high_oct,
         line_width=2,
         line_dash="dash",
         line_color=COLOR_GRAY,
     )
-    fig.add_hline(
-        y=0.2,
-        line_width=2,
-        line_dash="dash",
-        line_color=COLOR_GRAY,
-        annotation_text="Reinforcement Delay"
-    )
-    fig.add_hline(
-        y=2.2,
-        line_width=2,
-        line_dash="dash",
-        line_color=COLOR_GRAY,
-        annotation_text="Response Window"
-    )
+    if normalize:
+        fig.add_hline(y=0, line_width=1, line_dash="dot", line_color=COLOR_GRAY)
+        fig.add_hline(y=1, line_width=1, line_dash="dot", line_color=COLOR_GRAY)
+        fig.add_hline(y=-1, line_width=1, line_dash="dot", line_color=COLOR_GRAY)
+        yaxis_title = "First Lick Time (Z-score)"
+        title_suffix = " (Z-score per session)"
+    else:
+        fig.add_hline(
+            y=0.2,
+            line_width=2,
+            line_dash="dash",
+            line_color=COLOR_GRAY,
+            annotation_text="Reinforcement Delay",
+        )
+        fig.add_hline(
+            y=2.2,
+            line_width=2,
+            line_dash="dash",
+            line_color=COLOR_GRAY,
+            annotation_text="Response Window",
+        )
+        yaxis_title = "First Lick Time (s)"
+        title_suffix = ""
 
     fig.update_layout(
-        title="First Lick Time Distribution by Stimulus ID",
-        xaxis_title="Stimulus ID",
-        yaxis_title="First Lick Time (s)",
+        title=f"First Lick Time by Distance from Boundary{title_suffix}",
+        xaxis_title="Distance from low boundary (octaves)",
+        yaxis_title=yaxis_title,
         template="simple_white",
-        xaxis_type="log",
-        xaxis=dict(
-            tickmode='array',
-            tickvals=np.round(stimuli_unique, 2),
-            ticktext=[f"{x:.2f}" for x in stimuli_unique],
-        ),
         showlegend=False,
-        xaxis_range=np.log10([0.65, 2.4]),
+        xaxis=dict(
+            tickmode="array",
+            tickvals=distances_unique,
+            ticktext=[f"{x:.2f}" for x in distances_unique],
+        ),
     )
 
     if plot:
@@ -1009,12 +1520,44 @@ def learning_curve(selected_data, index=0):
 FIRST_LICK_LATENCY_MAX_S = 2.5
 
 
-def wasserstein_first_lick_distributions(
-    go_times: np.ndarray, nogo_times: np.ndarray
+def get_reinforcement_delay_seconds(project_data: pd.DataFrame, row_idx: int) -> float | None:
+    """
+    Return reinforcement delay in seconds for the given session (row).
+    Uses Bpod States when available, else Educage parameters.txt or default.
+    """
+    try:
+        if "States" not in project_data.columns:
+            raise ValueError("No States column")
+        states_str = project_data.iloc[row_idx]["States"]
+        pattern = r"\['(.*?)' array\(\[(.*?)\]\)\]"
+        matches = re.findall(pattern, states_str)
+        data = [(name, np.array(list(map(float, values.split(","))))) for name, values in matches]
+        states_array = np.array(data, dtype=object)
+        state_idx = np.where(states_array[:, 0] == "ReinforsmentDelay")[0]
+        if state_idx.size == 0:
+            raise ValueError("ReinforsmentDelay state not found")
+        tone_onset = states_array[state_idx[0] - 1, 1][0][0]
+        reinforsment_delay_end = round(states_array[state_idx[0], 1][0][1] - tone_onset, 3)
+        return float(reinforsment_delay_end)
+    except Exception:
+        pass
+    # Educage fallback
+    stim_dur = 0.3
+    reinforsment_delay_dur = 0.001
+    params_path = _find_parameters_txt_for_row(project_data, row_idx)
+    reinforcement_delay_time = _read_last_reinforcement_delay_time_seconds(params_path) if params_path else None
+    if reinforcement_delay_time is not None:
+        return float(reinforcement_delay_time)
+    return stim_dur + reinforsment_delay_dur
+
+
+def hellinger_first_lick_distributions(
+    go_times: np.ndarray, nogo_times: np.ndarray, n_bins: int = 15
 ) -> float:
     """
-    Wasserstein distance between Go and NoGo first-lick latency distributions.
-    Returns np.nan if either sample is empty (no binning; uses raw samples).
+    Hellinger distance between Go and NoGo first-lick latency distributions.
+    Bins samples on [0, FIRST_LICK_LATENCY_MAX_S], normalizes to probabilities,
+    then H = (1/sqrt(2)) * sqrt(sum((sqrt(p_i) - sqrt(q_i))^2)). Returns np.nan if either sample is empty.
     """
     if go_times is None or nogo_times is None:
         return np.nan
@@ -1024,8 +1567,17 @@ def wasserstein_first_lick_distributions(
     nogo_times = nogo_times[np.isfinite(nogo_times)]
     if go_times.size == 0 or nogo_times.size == 0:
         return np.nan
-    from scipy.stats import wasserstein_distance
-    return float(wasserstein_distance(go_times, nogo_times))
+    bins = np.linspace(0, FIRST_LICK_LATENCY_MAX_S, n_bins + 1)
+    p_hist, _ = np.histogram(go_times, bins=bins)
+    q_hist, _ = np.histogram(nogo_times, bins=bins)
+    p = p_hist / p_hist.sum()
+    q = q_hist / q_hist.sum()
+    # Small epsilon to avoid sqrt(0) gradient issues; renormalize
+    eps = 1e-10
+    p = (p + eps) / (p + eps).sum()
+    q = (q + eps) / (q + eps).sum()
+    H = np.sqrt(0.5 * np.sum((np.sqrt(p) - np.sqrt(q)) ** 2))
+    return float(H)
 
 
 def plot_first_lick_latency(
@@ -1143,13 +1695,25 @@ def plot_first_lick_latency(
     if len(go_latencies) > 0 and len(no_go_latencies) > 0:
         from scipy.stats import ks_2samp
         ks_stat, ks_p = ks_2samp(go_latencies, no_go_latencies, alternative="two-sided")
-        w = wasserstein_first_lick_distributions(go_latencies, no_go_latencies)
+        h = hellinger_first_lick_distributions(go_latencies, no_go_latencies)
 
         st.write(f"**Statistics:**")
         st.write(f"- Go trials: n={len(go_latencies)}, mean={np.mean(go_latencies):.3f}s ± {np.std(go_latencies):.3f}s")
         st.write(f"- NoGo trials: n={len(no_go_latencies)}, mean={np.mean(no_go_latencies):.3f}s ± {np.std(no_go_latencies):.3f}s")
         st.write(f"- Kolmogorov-Smirnov: D={ks_stat:.3f}, p={ks_p:.3g}")
-        st.write(f"- Wasserstein distance (Go vs NoGo) first-lick latency: {w:.4f} s")
+        st.write(f"- Hellinger distance (Go vs NoGo) first-lick latency: {h:.4f}")
+
+    if len(go_latencies) > 0:
+        reinforcement_delay = get_reinforcement_delay_seconds(selected_data, index)
+        if reinforcement_delay is not None:
+            mean_go = float(np.mean(go_latencies))
+            dist = abs(mean_go - reinforcement_delay)
+            st.write(f"**Convergence to reinforcement delay:**")
+            st.write(f"- Reinforcement delay: {reinforcement_delay:.3f} s")
+            st.write(f"- Mean Go first lick: {mean_go:.3f} s")
+            st.write(f"- Distance (mean Go first lick to reinforcement delay): {dist:.3f} s")
+        else:
+            st.caption("Reinforcement delay not available for this session.")
     
     colors.apply_standard_font_sizes(fig)
     st.plotly_chart(fig, use_container_width=True, config=get_plotly_config())
@@ -1340,9 +1904,9 @@ def plot_first_lick_latency_multiple_sessions(selected_data, animal_name="None",
     return results_df
 
 
-def plot_first_lick_wasserstein_first_vs_last_day(project_data):
+def plot_first_lick_hellinger_first_vs_last_day(project_data):
     """
-    Multi-animal: compare Wasserstein(Go vs NoGo) first-lick on first day vs last day.
+    Multi-animal: compare Hellinger(Go vs NoGo) first-lick on first day vs last day.
     First day = first session per animal where the NoGo first-lick array is non-empty;
     last day = last session per animal. Groups all animals together and runs paired
     statistical comparison (Wilcoxon signed-rank).
@@ -1390,7 +1954,7 @@ def plot_first_lick_wasserstein_first_vs_last_day(project_data):
             nogo_t = g_nogo["First Lick Time (s)"].values if g_nogo is not None and not g_nogo.empty else np.array([])
             go_t = go_t[(go_t >= 0) & (go_t <= FIRST_LICK_LATENCY_MAX_S)] if go_t.size else go_t
             nogo_t = nogo_t[(nogo_t >= 0) & (nogo_t <= FIRST_LICK_LATENCY_MAX_S)] if nogo_t.size else nogo_t
-            first_w = wasserstein_first_lick_distributions(go_t, nogo_t)
+            first_h = hellinger_first_lick_distributions(go_t, nogo_t)
         except Exception:
             pass
         try:
@@ -1401,14 +1965,14 @@ def plot_first_lick_wasserstein_first_vs_last_day(project_data):
             nogo_t = g_nogo["First Lick Time (s)"].values if g_nogo is not None and not g_nogo.empty else np.array([])
             go_t = go_t[(go_t >= 0) & (go_t <= FIRST_LICK_LATENCY_MAX_S)] if go_t.size else go_t
             nogo_t = nogo_t[(nogo_t >= 0) & (nogo_t <= FIRST_LICK_LATENCY_MAX_S)] if nogo_t.size else nogo_t
-            last_w = wasserstein_first_lick_distributions(go_t, nogo_t)
+            last_h = hellinger_first_lick_distributions(go_t, nogo_t)
         except Exception:
             pass
 
         rows.append({
             "MouseName": animal,
-            "first_day_wasserstein": first_w,
-            "last_day_wasserstein": last_w,
+            "first_day_hellinger": first_h,
+            "last_day_hellinger": last_h,
         })
 
     if not rows:
@@ -1416,22 +1980,22 @@ def plot_first_lick_wasserstein_first_vs_last_day(project_data):
         return
 
     df = pd.DataFrame(rows)
-    valid = df.dropna(subset=["first_day_wasserstein", "last_day_wasserstein"])
+    valid = df.dropna(subset=["first_day_hellinger", "last_day_hellinger"])
     if valid.empty:
-        st.warning("No animals with both first-day and last-day Wasserstein.")
+        st.warning("No animals with both first-day and last-day Hellinger.")
         return
 
     # Grouped comparison: all animals together, First day vs Last day
-    first_vals = valid["first_day_wasserstein"].values
-    last_vals = valid["last_day_wasserstein"].values
+    first_vals = valid["first_day_hellinger"].values
+    last_vals = valid["last_day_hellinger"].values
     try:
         stat, p_value = wilcoxon(first_vals, last_vals, alternative="two-sided")
     except Exception:
         stat, p_value = np.nan, np.nan
 
     st.write("**Grouped comparison (all animals)**")
-    st.write(f"- First day: n={len(first_vals)}, median={np.nanmedian(first_vals):.4f} s, mean={np.nanmean(first_vals):.4f} s")
-    st.write(f"- Last day: n={len(last_vals)}, median={np.nanmedian(last_vals):.4f} s, mean={np.nanmean(last_vals):.4f} s")
+    st.write(f"- First day: n={len(first_vals)}, median={np.nanmedian(first_vals):.4f}, mean={np.nanmean(first_vals):.4f}")
+    st.write(f"- Last day: n={len(last_vals)}, median={np.nanmedian(last_vals):.4f}, mean={np.nanmean(last_vals):.4f}")
     st.write(f"- Wilcoxon signed-rank (first vs last): statistic={stat:.4f}, p={p_value:.3g}")
 
     # Box plot: First day vs Last day (all animals pooled)
@@ -1439,20 +2003,24 @@ def plot_first_lick_wasserstein_first_vs_last_day(project_data):
     fig.add_trace(go.Box(
         y=first_vals,
         name="First day",
-        marker_color=COLOR_GO,
+        marker_color=COLOR_ACCENT,
         boxpoints="all",
+        jitter=0.2,              # small jitter for separation
+        pointpos=0,              # points on top of the box
     ))
     fig.add_trace(go.Box(
         y=last_vals,
         name="Last day",
-        marker_color=COLOR_NOGO,
+        marker_color=COLOR_ACCENT,
         boxpoints="all",
+        jitter=0.2,              # small jitter for separation
+        pointpos=0,              # points on top of the box
     ))
     fig.update_layout(
-        title="First Lick Wasserstein: First Day vs Last Day (all animals)",
-        yaxis_title="Wasserstein distance (s)",
-        showlegend=True,
-        height=400,
+        title="First Lick Hellinger: First Day vs Last Day (all animals)",
+        yaxis_title="Hellinger distance",
+        showlegend=False,
+        height=600,
     )
     colors.apply_standard_font_sizes(fig)
     st.plotly_chart(fig, use_container_width=True, config=get_plotly_config())
@@ -1464,22 +2032,171 @@ def plot_first_lick_wasserstein_first_vs_last_day(project_data):
     width = 0.35
     fig2.add_trace(go.Bar(
         x=x - width / 2,
-        y=df["first_day_wasserstein"],
+        y=df["first_day_hellinger"],
         name="First day",
         marker_color=COLOR_GO,
         width=width,
     ))
     fig2.add_trace(go.Bar(
         x=x + width / 2,
-        y=df["last_day_wasserstein"],
+        y=df["last_day_hellinger"],
         name="Last day",
         marker_color=COLOR_NOGO,
         width=width,
     ))
     fig2.update_layout(
-        title="First Lick Wasserstein: First Day vs Last Day (per animal)",
+        title="First Lick Hellinger: First Day vs Last Day (per animal)",
         xaxis_title="Animal",
-        yaxis_title="Wasserstein distance (s)",
+        yaxis_title="Hellinger distance",
+        barmode="group",
+        xaxis=dict(tickvals=x, ticktext=df["MouseName"].tolist()),
+        showlegend=False,
+        height=400,
+    )
+    colors.apply_standard_font_sizes(fig2)
+    st.plotly_chart(fig2, use_container_width=True, config=get_plotly_config())
+    st.dataframe(df, use_container_width=True, hide_index=True)
+
+
+def plot_go_first_lick_distance_to_reinforcement_first_vs_last_day(project_data):
+    """
+    Multi-animal: distance from mean(Go first lick) to reinforcement delay on first day vs last day.
+    First day = first session with non-empty Go first licks (0–2.5 s); last day = last session.
+    Groups all animals and runs Wilcoxon signed-rank; box plot + per-animal bars + table.
+    """
+    from Analysis.GNG_bpod_analysis.GNG_bpod_general import get_sessions_for_animal
+    from scipy.stats import wilcoxon
+
+    animals = project_data["MouseName"].unique()
+    filter_early = get_global_early_response_filter()
+    rows = []
+
+    for animal in animals:
+        session_indices, _ = get_sessions_for_animal(project_data, animal)
+        if len(session_indices) == 0:
+            continue
+
+        # First day = first session with non-empty Go first licks (0–2.5 s)
+        first_idx = None
+        for idx in session_indices:
+            try:
+                g_go, _, _ = process_and_plot_lick_data(
+                    project_data, idx, plot=False, filter_early_response=filter_early
+                )
+                go_t = g_go["First Lick Time (s)"].values if g_go is not None and not g_go.empty else np.array([])
+                go_t = go_t[(go_t >= 0) & (go_t <= FIRST_LICK_LATENCY_MAX_S)] if go_t.size else go_t
+                if go_t.size > 0:
+                    first_idx = idx
+                    break
+            except Exception:
+                continue
+        if first_idx is None:
+            continue
+
+        last_idx = session_indices[-1]
+        if first_idx == last_idx:
+            continue
+
+        first_dist = np.nan
+        last_dist = np.nan
+        try:
+            g_go, _, _ = process_and_plot_lick_data(
+                project_data, first_idx, plot=False, filter_early_response=filter_early
+            )
+            go_t = g_go["First Lick Time (s)"].values if g_go is not None and not g_go.empty else np.array([])
+            go_t = go_t[(go_t >= 0) & (go_t <= FIRST_LICK_LATENCY_MAX_S)] if go_t.size else go_t
+            mean_go = float(np.mean(go_t)) if go_t.size else np.nan
+            rd = get_reinforcement_delay_seconds(project_data, first_idx)
+            if rd is not None and not np.isnan(mean_go):
+                first_dist = abs(mean_go - rd)
+        except Exception:
+            pass
+        try:
+            g_go, _, _ = process_and_plot_lick_data(
+                project_data, last_idx, plot=False, filter_early_response=filter_early
+            )
+            go_t = g_go["First Lick Time (s)"].values if g_go is not None and not g_go.empty else np.array([])
+            go_t = go_t[(go_t >= 0) & (go_t <= FIRST_LICK_LATENCY_MAX_S)] if go_t.size else go_t
+            mean_go = float(np.mean(go_t)) if go_t.size else np.nan
+            rd = get_reinforcement_delay_seconds(project_data, last_idx)
+            if rd is not None and not np.isnan(mean_go):
+                last_dist = abs(mean_go - rd)
+        except Exception:
+            pass
+
+        rows.append({
+            "MouseName": animal,
+            "first_day_distance": first_dist,
+            "last_day_distance": last_dist,
+        })
+
+    if not rows:
+        st.warning("No animals with at least 2 sessions and valid Go first-lick data.")
+        return
+
+    df = pd.DataFrame(rows)
+    valid = df.dropna(subset=["first_day_distance", "last_day_distance"])
+    if valid.empty:
+        st.warning("No animals with both first-day and last-day distance to reinforcement delay.")
+        return
+
+    first_vals = valid["first_day_distance"].values
+    last_vals = valid["last_day_distance"].values
+    try:
+        stat, p_value = wilcoxon(first_vals, last_vals, alternative="two-sided")
+    except Exception:
+        stat, p_value = np.nan, np.nan
+
+    st.write("**Grouped comparison (all animals)**")
+    st.write(f"- First day: n={len(first_vals)}, median={np.nanmedian(first_vals):.3f} s, mean={np.nanmean(first_vals):.3f} s")
+    st.write(f"- Last day: n={len(last_vals)}, median={np.nanmedian(last_vals):.3f} s, mean={np.nanmean(last_vals):.3f} s")
+    st.write(f"- Wilcoxon signed-rank (first vs last): statistic={stat:.4f}, p={p_value:.3g}")
+
+    fig = go.Figure()
+    # Show points on top of the box, with a small jitter for better visibility
+    fig.add_trace(go.Box(
+        y=first_vals,
+        name="First day",
+        marker_color=COLOR_GO,
+        boxpoints="all",         # show all points
+        jitter=0.2,              # small jitter for separation
+        pointpos=0,              # points on top of the box
+        marker=dict(size=6),
+    ))
+    fig.add_trace(go.Box(
+        y=last_vals,
+        name="Last day",
+        marker_color=COLOR_GO,
+        boxpoints="all",
+        jitter=0.2,              # small jitter for separation
+        pointpos=0,              # points on top of the box
+        marker=dict(size=6),
+    ))
+    fig.update_layout(
+        title="Go first-lick distance to reinforcement delay: First vs Last Day (all animals)",
+        yaxis_title="Distance (s)",
+        showlegend=False,
+        height=600,
+    )
+    fig.update_layout(
+        title="Go first-lick distance to reinforcement delay: First vs Last Day (all animals)",
+        yaxis_title="Distance (s)",
+        showlegend=False,
+        height=600,
+    )
+    colors.apply_standard_font_sizes(fig)
+    st.plotly_chart(fig, use_container_width=True, config=get_plotly_config())
+
+    st.write("**Per-animal values**")
+    fig2 = go.Figure()
+    x = np.arange(len(df))
+    width = 0.35
+    fig2.add_trace(go.Bar(x=x - width / 2, y=df["first_day_distance"], name="First day", marker_color=COLOR_GO, width=width))
+    fig2.add_trace(go.Bar(x=x + width / 2, y=df["last_day_distance"], name="Last day", marker_color=COLOR_NOGO, width=width))
+    fig2.update_layout(
+        title="Go first-lick distance to reinforcement delay (per animal)",
+        xaxis_title="Animal",
+        yaxis_title="Distance (s)",
         barmode="group",
         xaxis=dict(tickvals=x, ticktext=df["MouseName"].tolist()),
         showlegend=True,

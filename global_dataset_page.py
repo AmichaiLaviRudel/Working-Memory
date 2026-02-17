@@ -854,15 +854,27 @@ def render_global_dataset_page() -> None:
                         df_filtered.insert(0, "Checkbox", False)
 
                     st.markdown("#### Select Sessions for Analysis")
-                    
+
+                    # Only include mice that achieved criteria in at least one session
+                    criteria_only = st.checkbox(
+                        "Only mice that achieved criteria",
+                        value=True,
+                        help=f"Keep only mice with ≥1 session where d' > {dprime_threshold} & Hit Rate > {hit_rate_threshold*100:.0f}%",
+                        key="criteria_mice_only",
+                    )
+                    if criteria_only and len(achieved_mice) > 0:
+                        df_for_analysis = df_filtered[df_filtered["MouseName"].isin(achieved_mice)].copy()
+                    else:
+                        df_for_analysis = df_filtered.copy()
+
                     # Show filter info including setup and group
-                    filter_info = f"Showing {len(df_filtered)} filtered sessions (N_Boundaries: {boundaries_options}, Tones_per_class: {tones_options})"
-                    if "Setup" in df_filtered.columns:
-                        setups_in_filtered = df_filtered["Setup"].dropna().unique().tolist()
+                    filter_info = f"Showing {len(df_for_analysis)} sessions from {df_for_analysis['MouseName'].nunique()} mice (N_Boundaries: {boundaries_options}, Tones_per_class: {tones_options})"
+                    if "Setup" in df_for_analysis.columns:
+                        setups_in_filtered = df_for_analysis["Setup"].dropna().unique().tolist()
                         if len(setups_in_filtered) > 0:
                             filter_info += f", Setups: {setups_in_filtered}"
-                    if "groupID" in df_filtered.columns:
-                        groups_in_filtered = df_filtered["groupID"].dropna().unique().tolist()
+                    if "groupID" in df_for_analysis.columns:
+                        groups_in_filtered = df_for_analysis["groupID"].dropna().unique().tolist()
                         if len(groups_in_filtered) > 0:
                             filter_info += f", Groups: {len(groups_in_filtered)}"
                     st.caption(filter_info)
@@ -875,10 +887,10 @@ def render_global_dataset_page() -> None:
                         "Psychometric_slope_low", "Psychometric_slope_high",
                         "Psychometric_r_squared", "Psychometric_fit_type",
                     ]
-                    available_cols = [c for c in analysis_columns if c in df_filtered.columns]
+                    available_cols = [c for c in analysis_columns if c in df_for_analysis.columns]
 
                     df_analysis_select = st.data_editor(
-                        data=df_filtered[available_cols],
+                        data=df_for_analysis[available_cols],
                         height=300,
                         use_container_width=True,
                         hide_index=True,
@@ -896,16 +908,16 @@ def render_global_dataset_page() -> None:
                         key="global_analysis_data_editor",
                     )
 
-                    # Sync checkbox selections back to filtered df
-                    df_filtered["Checkbox"] = df_analysis_select["Checkbox"].values
+                    # Sync checkbox selections back to the analysis df
+                    df_for_analysis["Checkbox"] = df_analysis_select["Checkbox"].values
 
-                    selected_indices = df_filtered.loc[df_filtered["Checkbox"] == True].index
+                    selected_indices = df_for_analysis.loc[df_for_analysis["Checkbox"] == True].index
 
                     if len(selected_indices) < 1:
                         st.info("Please select row(s) to start the analysis")
                     else:
                         # Show selection summary with setup and group breakdown
-                        selected_data = df_filtered.loc[selected_indices]
+                        selected_data = df_for_analysis.loc[selected_indices]
                         selection_msg = f"Selected {len(selected_indices)} session(s) for analysis"
                         
                         breakdown_parts = []
@@ -934,7 +946,7 @@ def render_global_dataset_page() -> None:
                                 # Single session analysis
                                 index = selected_indices[0]
                                 st.markdown("### Single Session Analysis")
-                                gng_bpod_analysis(df_filtered, index)
+                                gng_bpod_analysis(df_for_analysis, index)
                             else:
                                 # Multi-session analysis with tabs
                                 tab_single, tab_multi_animal, tab_multi_session = st.tabs([
@@ -947,7 +959,7 @@ def render_global_dataset_page() -> None:
                                     st.markdown("### Single Session Analysis")
                                     # Allow selecting one session from the selected ones
                                     session_options = {
-                                        f"{df_filtered.iloc[idx]['MouseName']} - {df_filtered.iloc[idx].get('SessionDate', 'N/A')}": idx
+                                        f"{df_for_analysis.loc[idx, 'MouseName']} - {df_for_analysis.loc[idx].get('SessionDate', 'N/A')}": idx
                                         for idx in selected_indices
                                     }
                                     selected_session = st.selectbox(
@@ -956,17 +968,17 @@ def render_global_dataset_page() -> None:
                                         key="global_single_session_select",
                                     )
                                     if selected_session:
-                                        gng_bpod_analysis(df_filtered, session_options[selected_session])
+                                        gng_bpod_analysis(df_for_analysis, session_options[selected_session])
                                 
                                 with tab_multi_animal:
                                     st.markdown("### Multi-Animal Analysis")
                                     st.caption(f"Analyzing {len(selected_indices)} selected sessions across multiple animals")
-                                    gng_bpod_analysis_multi_animal(df_filtered, selected_indices)
+                                    gng_bpod_analysis_multi_animal(df_for_analysis, selected_indices)
                                 
                                 with tab_multi_session:
                                     st.markdown("### Multi-Session Analysis")
                                     st.caption(f"Analyzing {len(selected_indices)} selected sessions")
-                                    gng_bpod_analysis_multi_session(df_filtered, selected_indices)
+                                    gng_bpod_analysis_multi_session(df_for_analysis, selected_indices)
 
                         except Exception as e:  # noqa: BLE001
                             st.error(f"Something went wrong in the analysis.\n\n{e}")
