@@ -364,10 +364,12 @@ def gng_bpod_analysis_multi_animal(project_data, index):
             else:
                 indices_phase = None
             show_2b_phase = st.checkbox("Include 2B Expert", value=True, key="show_2b_phase_multi")
+            min_n_phase = st.slider("Min trials per bin", min_value=1, max_value=50, value=5, step=1, key="min_n_phase_multi",
+                                    help="Exclude distance bins with fewer than this many trials")
             st.caption("Novice (first 2 of 1B, Tones>1), 1B Expert (last 2 of 1B, Tones≥3), 2B Expert (last 2 of 2B, Tones≥3). X = distance to closest boundary (oct).")
             if st.button("Run analysis", key="run_first_lick_phase_multi"):
                 try:
-                    plot_first_lick_by_distance_by_phase(project_data, index=indices_phase, plot=True, show_2b=show_2b_phase)
+                    plot_first_lick_by_distance_by_phase(project_data, index=indices_phase, plot=True, show_2b=show_2b_phase, min_n=min_n_phase)
                 except Exception as e:
                     st.warning(f"Something went wrong with first-lick-by-phase plot :|\n\n{e}")
                     st.text(traceback.format_exc())

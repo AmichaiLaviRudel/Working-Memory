@@ -863,9 +863,9 @@ def render_global_dataset_page() -> None:
                         key="criteria_mice_only",
                     )
                     if criteria_only and len(achieved_mice) > 0:
-                        df_for_analysis = df_filtered[df_filtered["MouseName"].isin(achieved_mice)].copy()
+                        df_for_analysis = df_filtered[df_filtered["MouseName"].isin(achieved_mice)].reset_index(drop=True)
                     else:
-                        df_for_analysis = df_filtered.copy()
+                        df_for_analysis = df_filtered.reset_index(drop=True)
 
                     # Show filter info including setup and group
                     filter_info = f"Showing {len(df_for_analysis)} sessions from {df_for_analysis['MouseName'].nunique()} mice (N_Boundaries: {boundaries_options}, Tones_per_class: {tones_options})"

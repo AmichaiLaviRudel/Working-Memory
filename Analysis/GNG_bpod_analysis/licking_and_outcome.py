@@ -964,55 +964,61 @@ def _run_phase_latency_stats(
         return "No valid data for statistics.", None
 
     phases = [p for p in ["Novice", "1B Expert", "2B Expert"] if p in ftl["Phase"].unique()]
-    trial_types = [t for t in ["Go", "NoGo"] if t in ftl["Trial Type"].unique()]
+
+    # Go trials only
+    ftl_go = ftl[ftl["Trial Type"] == "Go"]
+    if ftl_go.empty:
+        return "No Go trials for statistics.", None
+
+    # Use Dist_bin (binned distances) so all animals sharing a bin are grouped together.
+    # Fall back to Dist_oct_closest if Dist_bin wasn't computed upstream.
+    dist_col = "Dist_bin" if "Dist_bin" in ftl_go.columns else "Dist_oct_closest"
 
     stat_rows = []
     for phase in phases:
-        for ttype in trial_types:
-            sub = ftl[(ftl["Phase"] == phase) & (ftl["Trial Type"] == ttype)]
-            if sub.empty:
-                continue
-            sub_abs = sub["Dist_oct_closest"].abs()
-            # Closest = min |dist| bin, farthest = max |dist| bin in this group
-            min_dist = sub_abs.min()
-            max_dist = sub_abs.max()
-            if min_dist == max_dist:
-                continue
-            close_summary = (
-                sub.loc[sub_abs == min_dist]
-                .groupby("MouseName")["Latency_Z"].mean()
-            )
-            far_summary = (
-                sub.loc[sub_abs == max_dist]
-                .groupby("MouseName")["Latency_Z"].mean()
-            )
-            common = close_summary.index.intersection(far_summary.index)
-            n = len(common)
-            close_vals = close_summary.loc[common].values if n else np.array([])
-            far_vals = far_summary.loc[common].values if n else np.array([])
+        sub = ftl_go[ftl_go["Phase"] == phase]
+        if sub.empty:
+            continue
+        sub_abs = sub[dist_col].abs()
+        min_dist = sub_abs.min()
+        max_dist = sub_abs.max()
+        if min_dist == max_dist:
+            continue
+        close_summary = (
+            sub.loc[sub_abs == min_dist]
+            .groupby("MouseName")["Latency_Z"].mean()
+        )
+        far_summary = (
+            sub.loc[sub_abs == max_dist]
+            .groupby("MouseName")["Latency_Z"].mean()
+        )
+        common = close_summary.index.intersection(far_summary.index)
+        n = len(common)
+        close_vals = close_summary.loc[common].values if n else np.array([])
+        far_vals = far_summary.loc[common].values if n else np.array([])
 
-            row = {
-                "Phase": phase,
-                "Trial Type": ttype,
-                "n_animals": n,
-                "Dist_close": float(min_dist),
-                "Dist_far": float(max_dist),
-                "Mean_Z_close": float(np.nanmean(close_vals)) if n else np.nan,
-                "Mean_Z_far": float(np.nanmean(far_vals)) if n else np.nan,
-                "statistic": np.nan,
-                "p": np.nan,
-            }
-            if n >= 2:
-                try:
-                    stat, p = wilcoxon(close_vals, far_vals, alternative="two-sided")
-                except Exception:
-                    stat, p = mannwhitneyu(close_vals, far_vals, alternative="two-sided")
-                row["statistic"] = float(stat)
-                row["p"] = float(p)
-            stat_rows.append(row)
+        row = {
+            "Phase": phase,
+            "n_animals": n,
+            "Dist_close": float(min_dist),
+            "Dist_far": float(max_dist),
+            "Mean_Z_close": float(np.nanmean(close_vals)) if n else np.nan,
+            "Mean_Z_far": float(np.nanmean(far_vals)) if n else np.nan,
+            "statistic": np.nan,
+            "p": np.nan,
+        }
+        if n >= 2:
+            try:
+                # One-sided: H1 = close > far
+                stat, p = wilcoxon(close_vals, far_vals, alternative="greater")
+            except Exception:
+                stat, p = mannwhitneyu(close_vals, far_vals, alternative="greater")
+            row["statistic"] = float(stat)
+            row["p"] = float(p)
+        stat_rows.append(row)
 
     if not stat_rows:
-        return "No groups with enough data for close-vs-far test.", None
+        return "No phases with enough data for close-vs-far test.", None
 
     results_df = pd.DataFrame(stat_rows)
     # Bonferroni correction across all tests
@@ -1026,8 +1032,8 @@ def _run_phase_latency_stats(
     )
 
     lines = [
-        "**Close vs Far from boundary** — per group, comparing the minimum and maximum |distance| bins.",
-        "Paired Wilcoxon signed-rank across animals, Bonferroni-corrected.",
+        "**Close vs Far from boundary (Go only)** — per phase, comparing min and max |distance| bins.",
+        "One-sided Wilcoxon signed-rank (H1: close > far), Bonferroni-corrected.",
     ]
     return "\n\n".join(lines), results_df
 
@@ -1066,6 +1072,7 @@ def plot_first_lick_by_distance_by_phase(
     filter_early_response: bool | None = None,
     boundary_bin_oct: float = 0.1,
     show_2b: bool = True,
+    min_n: int = 1,
 ) -> None:
     """
     First-lick latency by distance to closest boundary, compared across phases.
@@ -1110,66 +1117,54 @@ def plot_first_lick_by_distance_by_phase(
             st.warning("No aggregated data for the selected phases.")
         return
 
+    # Drop distance bins with fewer than min_n trials
+    if min_n > 1:
+        agg_df = agg_df[agg_df["N"] >= min_n].copy()
+    if agg_df.empty:
+        if plot:
+            st.warning("No data remaining after min-N filter.")
+        return
+
     color_map = {"Novice": "gray", "1B Expert": COLOR_LOW_BD, "2B Expert": COLOR_HIGH_BD}
-    col_map = {"Go": 1, "NoGo": 2}
-    fig = make_subplots(
-        rows=1, cols=2,
-        shared_yaxes=True,
-        subplot_titles=["Go (Hits)", "NoGo (False Alarms)"],
-        horizontal_spacing=0.05,
-    )
+    # Go trials only — single plot
+    go_agg = agg_df[agg_df["Trial Type"] == "Go"]
+    fig = go.Figure()
     for phase in phases_to_plot:
-        for ttype in ["Go", "NoGo"]:
-            col = col_map[ttype]
-            color = color_map.get(phase, "black")
-            # Only show legend entry once per phase (on the Go subplot)
-            show_legend = ttype == "Go"
-
-            # Individual animal lines in light gray
-            phase_ttype_animals = animal_agg[
-                (animal_agg["Phase"] == phase) & (animal_agg["Trial Type"] == ttype)
-            ]
-            for mouse, msub in phase_ttype_animals.groupby("MouseName"):
-                msub = msub.sort_values("Dist_oct_closest")
-                fig.add_trace(
-                    go.Scatter(
-                        x=msub["Dist_oct_closest"].values,
-                        y=msub["Mean_Z"].values,
-                        mode="lines",
-                        line=dict(color="lightgray", width=1),
-                        legendgroup=phase, showlegend=False,
-                        hovertext=str(mouse), hoverinfo="text+y",
-                    ),
-                    row=1, col=col,
-                )
-
-            # Grand mean (bold, colored)
-            sub = agg_df[(agg_df["Phase"] == phase) & (agg_df["Trial Type"] == ttype)].sort_values("Dist_oct_closest")
-            if sub.empty:
-                continue
-            x = sub["Dist_oct_closest"].values
-            y = sub["Mean_Z"].values
-            fig.add_trace(
-                go.Scatter(
-                    x=x, y=y, mode="lines",
-                    name=phase, legendgroup=phase, showlegend=show_legend,
-                    line=dict(color=color, width=3),
-                    marker=dict(size=5),
-                ),
-                row=1, col=col,
+        sub = go_agg[go_agg["Phase"] == phase].sort_values("Dist_oct_closest")
+        if sub.empty:
+            continue
+        x = sub["Dist_oct_closest"].values
+        y = sub["Mean_Z"].values
+        sem = sub["SEM_Z"].values
+        color = color_map.get(phase, "black")
+        # Mean line
+        fig.add_trace(
+            go.Scatter(
+                x=x, y=y, mode="lines+markers",
+                name=phase, legendgroup=phase,
+                line=dict(color=color, width=3),
+                marker=dict(size=5),
             )
+        )
+        # SEM shading
+        fig.add_trace(
+            go.Scatter(
+                x=np.concatenate([x, x[::-1]]),
+                y=np.concatenate([y - sem, (y + sem)[::-1]]),
+                fill="toself", fillcolor=color, opacity=0.15,
+                line=dict(color="rgba(0,0,0,0)"),
+                legendgroup=phase, showlegend=False, hoverinfo="skip",
+            )
+        )
 
-    # Vertical line at distance = 0 on both subplots
-    for col in [1, 2]:
-        fig.add_vline(x=0, line_dash="dash", line_color=COLOR_GRAY, line_width=2, row=1, col=col)
+    fig.add_vline(x=0, line_dash="dash", line_color=COLOR_GRAY, line_width=2)
 
     fig.update_layout(
-        title="First Lick by Distance to Closest Boundary (by learning phase)",
+        title="First Lick by Distance to Closest Boundary — Go (by learning phase)",
+        xaxis_title="Distance to closest boundary (oct)",
+        yaxis_title="First Lick Time (Z-score)",
         template="simple_white",
     )
-    fig.update_xaxes(title_text="Distance to closest boundary (oct)", row=1, col=1)
-    fig.update_xaxes(title_text="Distance to closest boundary (oct)", row=1, col=2)
-    fig.update_yaxes(title_text="First Lick Time (Z-score)", row=1, col=1)
     if plot:
         st.plotly_chart(fig, use_container_width=True, config=get_plotly_config())
 
