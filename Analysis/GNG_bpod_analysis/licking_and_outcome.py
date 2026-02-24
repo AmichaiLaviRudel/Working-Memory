@@ -945,8 +945,8 @@ def _run_phase_latency_stats(
     For each (Phase, Trial Type) group test whether latency near the boundary
     differs from latency far from the boundary.
 
-    Per-animal metric: mean Latency_Z in the *closest* bin (|dist| <= boundary_bin_oct)
-    vs. mean Latency_Z in the *farthest* bin (top-quartile of |dist|).
+    Per-animal metric: mean Latency_Z in the *closest* bin
+    vs. mean Latency_Z in the 0.25 oct bin (or nearest available).
     Paired Wilcoxon signed-rank across animals; Bonferroni correction.
     Returns (report_string, results_df).
     """
@@ -974,6 +974,8 @@ def _run_phase_latency_stats(
     # Fall back to Dist_oct_closest if Dist_bin wasn't computed upstream.
     dist_col = "Dist_bin" if "Dist_bin" in ftl_go.columns else "Dist_oct_closest"
 
+    FAR_BIN = 0.25  # fixed "far" reference bin (octaves)
+
     stat_rows = []
     for phase in phases:
         sub = ftl_go[ftl_go["Phase"] == phase]
@@ -981,15 +983,18 @@ def _run_phase_latency_stats(
             continue
         sub_abs = sub[dist_col].abs()
         min_dist = sub_abs.min()
-        max_dist = sub_abs.max()
-        if min_dist == max_dist:
+
+        # Find the available bin closest to FAR_BIN
+        available_bins = sub_abs.unique()
+        far_dist = float(available_bins[np.argmin(np.abs(available_bins - FAR_BIN))])
+        if min_dist == far_dist:
             continue
         close_summary = (
             sub.loc[sub_abs == min_dist]
             .groupby("MouseName")["Latency_Z"].mean()
         )
         far_summary = (
-            sub.loc[sub_abs == max_dist]
+            sub.loc[sub_abs == far_dist]
             .groupby("MouseName")["Latency_Z"].mean()
         )
         common = close_summary.index.intersection(far_summary.index)
@@ -1001,7 +1006,7 @@ def _run_phase_latency_stats(
             "Phase": phase,
             "n_animals": n,
             "Dist_close": float(min_dist),
-            "Dist_far": float(max_dist),
+            "Dist_far": float(far_dist),
             "Mean_Z_close": float(np.nanmean(close_vals)) if n else np.nan,
             "Mean_Z_far": float(np.nanmean(far_vals)) if n else np.nan,
             "statistic": np.nan,
@@ -1032,7 +1037,7 @@ def _run_phase_latency_stats(
     )
 
     lines = [
-        "**Close vs Far from boundary (Go only)** — per phase, comparing min and max |distance| bins.",
+        f"**Close vs Far from boundary (Go only)** — per phase, comparing closest bin vs ~{FAR_BIN} oct bin.",
         "One-sided Wilcoxon signed-rank (H1: close > far), Bonferroni-corrected.",
     ]
     return "\n\n".join(lines), results_df
@@ -1063,6 +1068,96 @@ def _show_phase_debug_table(
         debug_df = pd.DataFrame(rows_for_table)
         with st.expander("Phase assignment per session (debug)", expanded=False):
             st.dataframe(debug_df, use_container_width=True, hide_index=True)
+
+
+def _run_between_phase_stats_at_closest_bin(
+    ftl_df: pd.DataFrame,
+    project_data: pd.DataFrame,
+    phases: list[str],
+) -> None:
+    """Compare phases at the closest distance bin (Go only). Kruskal-Wallis + pairwise Mann-Whitney U."""
+    from itertools import combinations
+    from scipy.stats import kruskal, mannwhitneyu
+
+    dist_col = "Dist_bin" if "Dist_bin" in ftl_df.columns else "Dist_oct_closest"
+
+    go = ftl_df[(ftl_df["Trial Type"] == "Go")].copy()
+    if go.empty:
+        return
+
+    if "MouseName" not in go.columns:
+        if "MouseName" not in project_data.columns:
+            return
+        go["MouseName"] = go["SessionID"].map(project_data["MouseName"].to_dict())
+
+    closest_bin = go[dist_col].abs().min()
+    go_close = go[go[dist_col].abs() == closest_bin]
+
+    # Per-animal mean at this bin
+    animal_means = (
+        go_close.groupby(["Phase", "MouseName"])["Latency_Z"]
+        .mean()
+        .reset_index()
+    )
+    animal_means = animal_means[animal_means["Phase"].isin(phases)]
+
+    groups = {ph: grp["Latency_Z"].values for ph, grp in animal_means.groupby("Phase") if ph in phases}
+    present = [ph for ph in phases if ph in groups and len(groups[ph]) >= 1]
+    if len(present) < 2:
+        return
+
+    lines: list[str] = [
+        f"**Between-phase comparison at closest bin (|dist| = {closest_bin:.2f} oct, Go only)**",
+        "",
+        "Per-animal mean Latency Z at this bin:",
+    ]
+    for ph in present:
+        vals = groups[ph]
+        lines.append(f"- **{ph}**: n={len(vals)}, mean={np.nanmean(vals):.3f}, SD={np.nanstd(vals, ddof=1):.3f}")
+    lines.append("")
+
+    # Omnibus Kruskal-Wallis (if ≥3 groups with ≥2 animals each)
+    testable = [ph for ph in present if len(groups[ph]) >= 2]
+    if len(testable) >= 3:
+        stat, p = kruskal(*(groups[ph] for ph in testable))
+        lines.append(f"Kruskal-Wallis: H={stat:.2f}, p={p:.3g}")
+    elif len(testable) == 2:
+        lines.append("Only 2 groups with n≥2 — skipping omnibus test, running pairwise only.")
+    else:
+        lines.append("Too few animals per group for statistical testing.")
+        with st.expander("Between-phase comparison at closest bin"):
+            st.markdown("\n\n".join(lines))
+        return
+
+    # Pairwise Mann-Whitney U (two-sided)
+    pair_rows = []
+    for a, b in combinations(testable, 2):
+        try:
+            stat, p = mannwhitneyu(groups[a], groups[b], alternative="two-sided")
+        except ValueError:
+            stat, p = np.nan, np.nan
+        pair_rows.append({"Group A": a, "Group B": b, "U": stat, "p": p})
+    if pair_rows:
+        pair_df = pd.DataFrame(pair_rows)
+        n_tests = pair_df["p"].notna().sum()
+        pair_df["p_adj"] = pair_df["p"].apply(
+            lambda x: min(1.0, x * n_tests) if np.isfinite(x) else np.nan
+        )
+        pair_df["sig"] = pair_df["p_adj"].apply(
+            lambda x: "***" if x < 0.001 else "**" if x < 0.01 else "*" if x < 0.05 else "ns" if np.isfinite(x) else ""
+        )
+        lines.append("")
+        lines.append("Pairwise Mann-Whitney U (two-sided, Bonferroni-corrected):")
+
+    with st.expander("Between-phase comparison at closest bin"):
+        st.markdown("\n\n".join(lines))
+        if pair_rows:
+            fmt = {"U": "{:.1f}", "p": "{:.3g}", "p_adj": "{:.3g}"}
+            st.dataframe(
+                pair_df.style.format(fmt, na_rep="—"),
+                use_container_width=True,
+                hide_index=True,
+            )
 
 
 def plot_first_lick_by_distance_by_phase(
@@ -1126,8 +1221,8 @@ def plot_first_lick_by_distance_by_phase(
         return
 
     color_map = {"Novice": "gray", "1B Expert": COLOR_LOW_BD, "2B Expert": COLOR_HIGH_BD}
-    # Go trials only — single plot
-    go_agg = agg_df[agg_df["Trial Type"] == "Go"]
+    # Go trials only — single plot; drop the 0.3 edge bin (sparse / unreliable)
+    go_agg = agg_df[(agg_df["Trial Type"] == "Go") & (agg_df["Dist_oct_closest"] < 0.3)]
     fig = go.Figure()
     for phase in phases_to_plot:
         sub = go_agg[go_agg["Phase"] == phase].sort_values("Dist_oct_closest")
@@ -1157,7 +1252,6 @@ def plot_first_lick_by_distance_by_phase(
             )
         )
 
-    fig.add_vline(x=0, line_dash="dash", line_color=COLOR_GRAY, line_width=2)
 
     fig.update_layout(
         title="First Lick by Distance to Closest Boundary — Go (by learning phase)",
@@ -1167,6 +1261,35 @@ def plot_first_lick_by_distance_by_phase(
     )
     if plot:
         st.plotly_chart(fig, use_container_width=True, config=get_plotly_config())
+
+    # Summary table of plotted values per phase
+    if plot:
+        summary_rows = []
+        for phase in phases_to_plot:
+            sub = go_agg[go_agg["Phase"] == phase].sort_values("Dist_oct_closest")
+            if sub.empty:
+                continue
+            for _, row in sub.iterrows():
+                summary_rows.append({
+                    "Phase": phase,
+                    "Dist (oct)": row["Dist_oct_closest"],
+                    "Mean Z": row["Mean_Z"],
+                    "SEM Z": row["SEM_Z"],
+                    "N": int(row["N"]),
+                })
+        if summary_rows:
+            summary_df = pd.DataFrame(summary_rows)
+            with st.expander("Summary table (plotted values)"):
+                fmt = {"Dist (oct)": "{:.2f}", "Mean Z": "{:.3f}", "SEM Z": "{:.3f}"}
+                st.dataframe(
+                    summary_df.style.format(fmt, na_rep="—"),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
+    # Between-group comparison at the closest distance bin
+    if plot:
+        _run_between_phase_stats_at_closest_bin(ftl_df, project_data, phases_to_plot)
 
     # Statistics: close vs far from boundary, per (Phase x Trial Type)
     report, stats_df = _run_phase_latency_stats(ftl_df, project_data, boundary_bin_oct=boundary_bin_oct)
@@ -2669,7 +2792,106 @@ def cumulative_number_of_trials_vs_daily_dprime(project_data, t=15):
 
     colors.apply_standard_font_sizes(fig)
     st.plotly_chart(fig, use_container_width=True, config=get_plotly_config())
-    
+
+    # --- Correlation plot: cumulative trials vs d', split by 1B / 2B ---
+    _plot_cumulative_trials_dprime_correlation(project_data, t=t)
+
+
+def _plot_cumulative_trials_dprime_correlation(project_data, t: int = 15):
+    """
+    Assess whether task experience predicts discriminability.
+
+    For each mouse, daily d' (sensitivity index, computed as the mean d' over
+    a sliding window of *t* trials within each session) is paired with the
+    cumulative number of trials the animal has completed up to and including
+    that session.
+
+    A one-sided Pearson correlation test (H₁: r > 0) is used to evaluate
+    whether cumulative trial exposure is positively associated with d'.
+    A least-squares linear fit is overlaid on the scatter plot, and the
+    Pearson r and one-sided p-value are annotated on the figure.
+    """
+    from Analysis.GNG_bpod_analysis.metric import d_prime_multiple_sessions
+    from scipy.stats import pearsonr
+
+    mice = sorted(project_data["MouseName"].unique())
+
+    cum_all, dp_all, names_all = [], [], []
+
+    for mouse in mice:
+        mouse_data = project_data[project_data["MouseName"] == mouse].sort_values("SessionDate")
+
+        n_trials_per_day = []
+        for i in range(len(mouse_data)):
+            stimuli, _ = preprocess_stimuli_outcomes(mouse_data, i)
+            n_trials_per_day.append(len(stimuli))
+        cumulative_trials = np.cumsum(n_trials_per_day)
+
+        data = d_prime_multiple_sessions(project_data.copy(), t=t, animal_name=mouse, plot=False)
+        d_primes = data["d_prime"].values
+
+        n = min(len(cumulative_trials), len(d_primes))
+        for j in range(n):
+            if np.isnan(d_primes[j]):
+                continue
+            cum_all.append(cumulative_trials[j])
+            dp_all.append(d_primes[j])
+            names_all.append(mouse)
+
+    cum_all = np.array(cum_all, dtype=float)
+    dp_all = np.array(dp_all, dtype=float)
+
+    if len(cum_all) < 3:
+        return
+
+    fig = go.Figure()
+
+    fig.add_trace(go.Scatter(
+        x=cum_all, y=dp_all,
+        mode="markers",
+        marker=dict(color=COLOR_D_PRIME, size=6, opacity=0.6),
+        text=names_all,
+        hovertemplate="Mouse: %{text}<br>Cum. Trials: %{x}<br>d': %{y:.2f}<extra></extra>",
+        name="Data",
+        showlegend=True,
+    ))
+
+    # Linear fit
+    slope, intercept = np.polyfit(cum_all, dp_all, 1)
+    x_fit = np.linspace(cum_all.min(), cum_all.max(), 100)
+    y_fit = slope * x_fit + intercept
+    # One-sided test: H1 = positive correlation (d' improves with more trials)
+    r, p = pearsonr(cum_all, dp_all, alternative='greater')
+
+    fig.add_trace(go.Scatter(
+        x=x_fit, y=y_fit,
+        mode="lines",
+        line=dict(color=COLOR_D_PRIME, width=2, dash="dash"),
+        name=f"Fit (r={r:.2f}, p={p:.3f})",
+        showlegend=True,
+    ))
+
+    p_str = f"p = {p:.1e}" if p < 0.001 else f"p = {p:.3f}"
+    fig.add_annotation(
+        text=f"r = {r:.2f}, {p_str} (one-sided)",
+        xref="paper", yref="paper",
+        x=0.98, y=0.98,
+        showarrow=False,
+        font=dict(size=13),
+        xanchor="right", yanchor="top",
+    )
+
+    fig.update_layout(
+        title="Correlation: Cumulative Trials vs d'",
+        xaxis_title="Cumulative Number of Trials",
+        yaxis_title="d'",
+        plot_bgcolor="white",
+    )
+
+    colors.apply_standard_font_sizes(fig)
+    st.plotly_chart(fig, use_container_width=True, config=get_plotly_config())
+
+
 def _trim_on_decrease(sequence: np.ndarray) -> np.ndarray:
     if not isinstance(sequence, np.ndarray) or sequence.size == 0:
         return sequence if isinstance(sequence, np.ndarray) else np.array([])

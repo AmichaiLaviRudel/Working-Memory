@@ -1305,14 +1305,14 @@ def correlation_log_slope_vs_dprime_multi_animal(project_data):
         st.subheader("Correlation log(|slope|) vs d' (all sessions)")
         st.caption("All sessions from all animals pooled; linear regression of log(|slope|) on d'.")
         has_r2 = "Psychometric_r_squared" in project_data.columns
-        filter_low_r2 = False
-        r2_threshold = 0.7
+        filter_low_r2 = True
+        r2_threshold = 0.8
         if has_r2:
             filter_col_a, filter_col_b = st.columns(2)
             with filter_col_a:
                 filter_low_r2 = st.checkbox(
                     "Filter out low R² sessions",
-                    value=False,
+                    value=True,
                     key="corr_filter_low_r2_multi",
                     help="Exclude sessions below the psychometric fit R² threshold",
                 )
@@ -1321,7 +1321,7 @@ def correlation_log_slope_vs_dprime_multi_animal(project_data):
                     "R² minimum",
                     min_value=0.0,
                     max_value=1.0,
-                    value=0.7,
+                    value=0.8,
                     step=0.05,
                     key="corr_r2_threshold_multi",
                     disabled=not filter_low_r2,
@@ -1385,7 +1385,7 @@ def correlation_log_slope_vs_dprime_multi_animal(project_data):
         colors.apply_standard_font_sizes(fig)
         st.plotly_chart(fig, use_container_width=True, config=get_plotly_config("correlation_slope_dprime_multi"))
         n_animals = df["MouseName"].nunique()
-        st.caption(f"Linear regression: r = {r_val:.3f}, p = {p_val:.4f}, n = {len(df)} sessions, {n_animals} animals.")
+        st.caption(f"Linear regression: r = {r_val:.3f}, p = {p_val}, n = {len(df)} sessions, {n_animals} animals.")
     except Exception as e:
         st.warning(f"Something went wrong with correlation plot :|\n\n{e}")
 
