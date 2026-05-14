@@ -92,6 +92,13 @@ def main(parent_dir: str = None):
     OFC_all, ACx_all, data_dir_OFC, data_dir_ACx = load_data(
         data_dir_parent=parent_dir, data_dir_OFC=None, data_dir_ACx=None
     )
+    if data_dir_OFC is None or data_dir_ACx is None:
+        raise RuntimeError(
+            "NPXL_offline_analysis.main requires both probes with event windows. "
+            "Use main_refactored (or the Streamlit offline runner) for single-probe sessions, "
+            "or run event-window preprocessing on the missing shank.\n"
+            f"  data_dir_OFC={data_dir_OFC!r}, data_dir_ACx={data_dir_ACx!r}"
+        )
     
     # Load unit labels
     ofc_g_index, acx_g_index, OFC_g, ACx_g = load_unit_labels(data_dir_OFC, data_dir_ACx)

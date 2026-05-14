@@ -83,7 +83,7 @@ def compute_event_offsets(df: pd.DataFrame, column: str, bin_size: float) -> np.
     return offsets_bins * bin_size
 
 
-def main(parent_dir: str = None):
+def main(parent_dir: str | None = None, save_plots: bool = False) -> None:
     """
     Main execution function with nested loops for clean, DRY code.
     
@@ -91,6 +91,9 @@ def main(parent_dir: str = None):
     -----------
     parent_dir : str, optional
         Path to the parent directory containing the data
+    save_plots : bool, optional
+        If True, write PSTH/heatmap HTML under results_dir/plots. Default False speeds
+        batch runs when only tables/metrics are needed.
     """
     print_config()
     
@@ -104,33 +107,47 @@ def main(parent_dir: str = None):
     print("LOADING DATA")
     print("="*80)
     
-    # Load spike data matrices
+    # Load spike data matrices (either side may be missing event windows → single-probe run)
     OFC_all, ACx_all, data_dir_OFC, data_dir_ACx = load_data(
         data_dir_parent=parent_dir, data_dir_OFC=None, data_dir_ACx=None
     )
     
-    # Load unit labels
+    # Load unit labels for probes that have data
     ofc_g_index, acx_g_index, OFC_g, ACx_g = load_unit_labels(data_dir_OFC, data_dir_ACx)
     
-    # Read metadata
-    ofc_metadata = read_event_windows_metadata(data_dir_OFC)
-    acx_metadata = read_event_windows_metadata(data_dir_ACx)
-    orig_bin_size_sec = float(acx_metadata["bin_size"])
+    if data_dir_ACx is not None:
+        acx_metadata = read_event_windows_metadata(data_dir_ACx)
+    else:
+        acx_metadata = None
+    if data_dir_OFC is not None:
+        ofc_metadata = read_event_windows_metadata(data_dir_OFC)
+    else:
+        ofc_metadata = None
+
+    meta_for_bins = acx_metadata if acx_metadata is not None else ofc_metadata
+    if meta_for_bins is None:
+        raise RuntimeError("No event-window metadata loaded (both probes missing?)")
+    orig_bin_size_sec = float(meta_for_bins["bin_size"])
     bin_to_sec = 1 / orig_bin_size_sec
     
-    # Load full event windows data with stimuli/outcome information
-    acx_event_windows_data = load_full_event_windows_data(data_dir_ACx)
-    ofc_event_windows_data = load_full_event_windows_data(data_dir_OFC)
-    
-    # Unpack data
-    (acx_event_matrix, acx_time_axis, acx_valid_indices, acx_stimuli_outcome_df, 
-     acx_metadata_full, acx_lick_data) = acx_event_windows_data
-    (ofc_event_matrix, ofc_time_axis, ofc_valid_indices, ofc_stimuli_outcome_df, 
-     ofc_metadata_full, ofc_lick_data) = ofc_event_windows_data
+    acx_event_windows_data = (
+        load_full_event_windows_data(data_dir_ACx) if data_dir_ACx is not None else None
+    )
+    ofc_event_windows_data = (
+        load_full_event_windows_data(data_dir_OFC) if data_dir_OFC is not None else None
+    )
     
     print(f"\nLoaded event windows data:")
-    print(f"  ACx: {acx_event_matrix.shape} units × time × events")
-    print(f"  OFC: {ofc_event_matrix.shape} units × time × events")
+    if acx_event_windows_data is not None:
+        acx_event_matrix = acx_event_windows_data[0]
+        print(f"  ACx: {acx_event_matrix.shape} units × time × events")
+    else:
+        print("  ACx: (skipped — no event windows on imec0)")
+    if ofc_event_windows_data is not None:
+        ofc_event_matrix = ofc_event_windows_data[0]
+        print(f"  OFC: {ofc_event_matrix.shape} units × time × events")
+    else:
+        print("  OFC: (skipped — no event windows on imec1)")
     
     # Setup results directory
     analysis_output_dir = os.path.join(parent_dir, "analysis_output")
@@ -140,8 +157,10 @@ def main(parent_dir: str = None):
     # ============================================================================
     # STEP 2: Define region configurations (to iterate over)
     # ============================================================================
-    regions_config = {
-        "acx": {
+    regions_config: dict[str, dict[str, Any]] = {}
+    if data_dir_ACx is not None and ACx_all is not None and acx_event_windows_data is not None:
+        _, _, _, acx_stimuli_outcome_df, _, _ = acx_event_windows_data
+        regions_config["acx"] = {
             "name": "ACx",
             "data_matrix": ACx_all,
             "event_windows_data": acx_event_windows_data,
@@ -149,7 +168,6 @@ def main(parent_dir: str = None):
             "unit_labels": acx_g_index,
             "good_units": ACx_g,
             "data_dir": data_dir_ACx,
-            # Analysis parameters (tone_before/after are bin indices, not seconds)
             "tone_before": (int(-0.1 * bin_to_sec), 0),
             "tone_after": (0, int(0.5 * bin_to_sec)),
             "selectivity_window": (-0.1, 1.0),
@@ -157,8 +175,10 @@ def main(parent_dir: str = None):
             "tone_display_window": (-0.5, 2.0),
             "choice_outcome_display_window": (-0.5, 1.5),
             "alpha": 0.05,
-        },
-        "ofc": {
+        }
+    if data_dir_OFC is not None and OFC_all is not None and ofc_event_windows_data is not None:
+        _, _, _, ofc_stimuli_outcome_df, _, _ = ofc_event_windows_data
+        regions_config["ofc"] = {
             "name": "OFC",
             "data_matrix": OFC_all,
             "event_windows_data": ofc_event_windows_data,
@@ -166,7 +186,6 @@ def main(parent_dir: str = None):
             "unit_labels": ofc_g_index,
             "good_units": OFC_g,
             "data_dir": data_dir_OFC,
-            # Analysis parameters (tone_before/after are bin indices, not seconds)
             "tone_before": (int(-0.5 * bin_to_sec), 0),
             "tone_after": (0, int(2 * bin_to_sec)),
             "selectivity_window": (-0.5, 1.5),
@@ -174,8 +193,13 @@ def main(parent_dir: str = None):
             "tone_display_window": (-0.5, 2.0),
             "choice_outcome_display_window": (-0.5, 1.5),
             "alpha": 0.05,
-        },
-    }
+        }
+
+    if not regions_config:
+        raise RuntimeError(
+            "No brain regions to analyze. Check that at least one probe has "
+            "analysis_output/event_windows_matrix.npy under the catgt folder."
+        )
     
     # Alignment configurations
     alignment_configs = {
@@ -273,8 +297,9 @@ def main(parent_dir: str = None):
             unit_labels=unit_labels,
         )
         
-        for unit in units:
-            unit.set_plots_directory(plots_dir)
+        if save_plots:
+            for unit in units:
+                unit.set_plots_directory(plots_dir)
         
         # ========================================================================
         # STEP 3.4: Compute aligned data for all alignment types
@@ -373,155 +398,162 @@ def main(parent_dir: str = None):
             "category": {},
         }
         
-        for align_type, align_config in alignment_configs.items():
-            align_data = aligned_data[align_type]
-            
-            if align_data is None:
-                print(f"\n  Skipping {align_type}-aligned plots (no data available)")
-                continue
-            
-            # Get alignment-specific units and p-values
-            align_units = alignment_units[align_type]
-            align_pvals = alignment_pvals[align_type]
-            
-            if align_units is None or len(align_units) == 0:
-                print(f"\n  Skipping {align_type}-aligned plots (no significant units)")
-                continue
-            
-            # Create p-value lookup for this alignment type
-            align_pval_lookup = {int(u): float(p) for u, p in zip(align_units, align_pvals)}
-            
-            print(f"\n=== Generating {align_type}-aligned plots for {region_name} ===")
-            print(f"  Total {align_type}-modulated units: {len(align_units)}")
-            print(f"  Units with p<{region_config['alpha']}: {sum(1 for p in align_pvals if p < region_config['alpha'])}")
-            
-            # Special handling for category plots
-            if align_config.get("is_category", False):
-                # Category plots are different - use plot_psth_by_category
-                # Filter units with p < alpha for category sensitivity
+        if not save_plots:
+            print(
+                f"\n=== Skipping HTML plot generation for {region_name} "
+                f"(save_plots=False); metrics CSVs still include empty plot path columns ==="
+            )
+        
+        if save_plots:
+            for align_type, align_config in alignment_configs.items():
+                align_data = aligned_data[align_type]
+                
+                if align_data is None:
+                    print(f"\n  Skipping {align_type}-aligned plots (no data available)")
+                    continue
+                
+                # Get alignment-specific units and p-values
+                align_units = alignment_units[align_type]
+                align_pvals = alignment_pvals[align_type]
+                
+                if align_units is None or len(align_units) == 0:
+                    print(f"\n  Skipping {align_type}-aligned plots (no significant units)")
+                    continue
+                
+                # Create p-value lookup for this alignment type
+                align_pval_lookup = {int(u): float(p) for u, p in zip(align_units, align_pvals)}
+                
+                print(f"\n=== Generating {align_type}-aligned plots for {region_name} ===")
+                print(f"  Total {align_type}-modulated units: {len(align_units)}")
+                print(f"  Units with p<{region_config['alpha']}: {sum(1 for p in align_pvals if p < region_config['alpha'])}")
+                
+                # Special handling for category plots
+                if align_config.get("is_category", False):
+                    # Category plots are different - use plot_psth_by_category
+                    # Filter units with p < alpha for category sensitivity
+                    significant_mask = align_pvals < region_config['alpha']
+                    significant_units = align_units[significant_mask]
+                    significant_pvals = align_pvals[significant_mask]
+                    
+                    if len(significant_units) == 0:
+                        print(f"  No units with p<{region_config['alpha']} for category plots")
+                        continue
+                    
+                    # Sort by p-value and take top units
+                    sorted_idx = np.argsort(significant_pvals)
+                    sorted_units = significant_units[sorted_idx]
+                    sorted_p = significant_pvals[sorted_idx]
+                    
+                    n_to_plot = min(10, len(sorted_units))  # Plot top 10 or fewer
+                    print(f"  Plotting PSTH by category for top {n_to_plot} units with p<{region_config['alpha']}:")
+                    
+                    for rank, (unit_idx, p_val) in enumerate(zip(sorted_units[:n_to_plot], sorted_p[:n_to_plot]), start=1):
+                        unit_idx_int = int(unit_idx)
+                        print(f"    Unit {unit_idx_int} (p={p_val:.4f}, rank={rank})")
+                        
+                        # Find the unit object
+                        unit_obj = next((u for u in units if u.unit_idx == unit_idx_int), None)
+                        if unit_obj is not None:
+                            unit_obj.plot_psth_by_category(
+                                low_boundary=0.983,
+                                high_boundary=1.525,
+                                display_window=(-0.5, 1.0),
+                                cache_plot=True
+                            )
+                            # Store category PSTH path
+                            region_lower = region_name.lower()
+                            psth_category_path = os.path.join(
+                                plots_dir, "psth", f"{region_key}_category",
+                                f"{region_key}_unit_{unit_idx_int}_psth_by_category.html"
+                            )
+                            psth_paths["category"][unit_idx_int] = psth_category_path
+                    
+                    # Update metrics with category paths (will be saved in final step)
+                    print(f"\n  Stored category plot paths for {len(psth_paths['category'])} units")
+                    
+                    continue  # Skip regular PSTH and heatmap generation for category
+                
+                # Regular alignment types (tone, choice, outcome)
+                # Determine display window
+                if align_type == "tone":
+                    display_window = region_config["tone_display_window"]
+                else:
+                    display_window = region_config["choice_outcome_display_window"]
+                
+                # Generate region-specific name for PSTH saving
+                # Directory structure: plots/psth/{region_key}_{align_type}/
+                psth_region_name = f"{region_name}_{align_config['name']}"
+                
+                # Filter units with p < alpha for this alignment type
                 significant_mask = align_pvals < region_config['alpha']
                 significant_units = align_units[significant_mask]
                 significant_pvals = align_pvals[significant_mask]
                 
                 if len(significant_units) == 0:
-                    print(f"  No units with p<{region_config['alpha']} for category plots")
+                    print(f"  No units with p<{region_config['alpha']} for {align_type}-aligned plots")
                     continue
                 
-                # Sort by p-value and take top units
+                # Save PSTHs for significant units only (p < alpha)
+                save_raw_psth_for_active_units(
+                    align_data,
+                    significant_units,
+                    significant_pvals,
+                    psth_region_name,
+                    results_dir,
+                    display_window=display_window,
+                )
+                
+                # Store PSTH paths for this alignment type
                 sorted_idx = np.argsort(significant_pvals)
                 sorted_units = significant_units[sorted_idx]
                 sorted_p = significant_pvals[sorted_idx]
+                psth_dir = os.path.join(results_dir, "plots", "psth", f"{region_key}_{align_type}")
+                for rank, (u, p) in enumerate(zip(sorted_units, sorted_p), start=1):
+                    fname = f"unit_{int(u)}_rank{rank:03d}_p{float(p):.4f}_raw_psth.html"
+                    psth_paths[align_type][int(u)] = os.path.join(psth_dir, fname)
                 
-                n_to_plot = min(10, len(sorted_units))  # Plot top 10 or fewer
-                print(f"  Plotting PSTH by category for top {n_to_plot} units with p<{region_config['alpha']}:")
-                
-                for rank, (unit_idx, p_val) in enumerate(zip(sorted_units[:n_to_plot], sorted_p[:n_to_plot]), start=1):
+                # Generate heatmaps for significant units (p < alpha for this alignment)
+                print(f"  Generating {align_type}-aligned heatmaps for {len(significant_units)} units with p<{region_config['alpha']}...")
+                heatmap_count = 0
+                for unit_idx in significant_units:
                     unit_idx_int = int(unit_idx)
-                    print(f"    Unit {unit_idx_int} (p={p_val:.4f}, rank={rank})")
                     
                     # Find the unit object
                     unit_obj = next((u for u in units if u.unit_idx == unit_idx_int), None)
-                    if unit_obj is not None:
-                        unit_obj.plot_psth_by_category(
-                            low_boundary=0.983,
-                            high_boundary=1.525,
-                            display_window=(-0.5, 1.0),
-                            cache_plot=True
-                        )
-                        # Store category PSTH path
-                        region_lower = region_name.lower()
-                        psth_category_path = os.path.join(
-                            plots_dir, "psth", f"{region_key}_category",
-                            f"{region_key}_unit_{unit_idx_int}_psth_by_category.html"
-                        )
-                        psth_paths["category"][unit_idx_int] = psth_category_path
+                    if unit_obj is None:
+                        continue
+                    
+                    heatmap_count += 1
+                    if heatmap_count % 10 == 0 or heatmap_count == 1:
+                        print(f"    Processing heatmap {heatmap_count}/{len(significant_units)}: Unit {unit_idx_int}")
+                    
+                    fig_heatmap = plot_unit_heatmap(
+                        align_data,
+                        unit_idx_int,
+                        display_window=display_window,
+                        region_name=region_name
+                    )
+                    
+                    # Update the figure title to include alignment target
+                    fig_heatmap.update_layout(
+                        title=f"{region_name} Unit {unit_idx_int} - {align_config['name']} Aligned"
+                    )
+                    
+                    heatmap_path = os.path.join(
+                        results_dir, "plots", "heatmap", f"{align_type}_aligned",
+                        f"{region_key}_unit_{unit_idx_int}_{align_type}_heatmap.html"
+                    )
+                    save_plot_to_html(
+                        fig_heatmap,
+                        heatmap_path,
+                        f"{region_name} Unit {unit_idx_int} Heatmap ({align_config['name']}-Aligned)"
+                    )
+                    
+                    # Store heatmap path
+                    heatmap_paths[align_type][unit_idx_int] = heatmap_path
                 
-                # Update metrics with category paths (will be saved in final step)
-                print(f"\n  Stored category plot paths for {len(psth_paths['category'])} units")
-                
-                continue  # Skip regular PSTH and heatmap generation for category
-            
-            # Regular alignment types (tone, choice, outcome)
-            # Determine display window
-            if align_type == "tone":
-                display_window = region_config["tone_display_window"]
-            else:
-                display_window = region_config["choice_outcome_display_window"]
-            
-            # Generate region-specific name for PSTH saving
-            # Directory structure: plots/psth/{region_key}_{align_type}/
-            psth_region_name = f"{region_name}_{align_config['name']}"
-            
-            # Filter units with p < alpha for this alignment type
-            significant_mask = align_pvals < region_config['alpha']
-            significant_units = align_units[significant_mask]
-            significant_pvals = align_pvals[significant_mask]
-            
-            if len(significant_units) == 0:
-                print(f"  No units with p<{region_config['alpha']} for {align_type}-aligned plots")
-                continue
-            
-            # Save PSTHs for significant units only (p < alpha)
-            save_raw_psth_for_active_units(
-                align_data,
-                significant_units,
-                significant_pvals,
-                psth_region_name,
-                results_dir,
-                display_window=display_window,
-            )
-            
-            # Store PSTH paths for this alignment type
-            sorted_idx = np.argsort(significant_pvals)
-            sorted_units = significant_units[sorted_idx]
-            sorted_p = significant_pvals[sorted_idx]
-            psth_dir = os.path.join(results_dir, "plots", "psth", f"{region_key}_{align_type}")
-            for rank, (u, p) in enumerate(zip(sorted_units, sorted_p), start=1):
-                fname = f"unit_{int(u)}_rank{rank:03d}_p{float(p):.4f}_raw_psth.html"
-                psth_paths[align_type][int(u)] = os.path.join(psth_dir, fname)
-            
-            # Generate heatmaps for significant units (p < alpha for this alignment)
-            print(f"  Generating {align_type}-aligned heatmaps for {len(significant_units)} units with p<{region_config['alpha']}...")
-            heatmap_count = 0
-            for unit_idx in significant_units:
-                unit_idx_int = int(unit_idx)
-                
-                # Find the unit object
-                unit_obj = next((u for u in units if u.unit_idx == unit_idx_int), None)
-                if unit_obj is None:
-                    continue
-                
-                heatmap_count += 1
-                if heatmap_count % 10 == 0 or heatmap_count == 1:
-                    print(f"    Processing heatmap {heatmap_count}/{len(significant_units)}: Unit {unit_idx_int}")
-                
-                fig_heatmap = plot_unit_heatmap(
-                    align_data,
-                    unit_idx_int,
-                    display_window=display_window,
-                    region_name=region_name
-                )
-                
-                # Update the figure title to include alignment target
-                fig_heatmap.update_layout(
-                    title=f"{region_name} Unit {unit_idx_int} - {align_config['name']} Aligned"
-                )
-                
-                heatmap_path = os.path.join(
-                    results_dir, "plots", "heatmap", f"{align_type}_aligned",
-                    f"{region_key}_unit_{unit_idx_int}_{align_type}_heatmap.html"
-                )
-                save_plot_to_html(
-                    fig_heatmap,
-                    heatmap_path,
-                    f"{region_name} Unit {unit_idx_int} Heatmap ({align_config['name']}-Aligned)"
-                )
-                
-                # Store heatmap path
-                heatmap_paths[align_type][unit_idx_int] = heatmap_path
-            
-            print(f"  Generated {heatmap_count} {align_type}-aligned heatmaps")
-            print(f"  Stored {len(psth_paths[align_type])} PSTH paths and {len(heatmap_paths[align_type])} heatmap paths for {align_type}")
+                print(f"  Generated {heatmap_count} {align_type}-aligned heatmaps")
+                print(f"  Stored {len(psth_paths[align_type])} PSTH paths and {len(heatmap_paths[align_type])} heatmap paths for {align_type}")
         
         # ========================================================================
         # STEP 3.6: Final save of comprehensive metrics table with all paths
@@ -567,7 +599,7 @@ def main(parent_dir: str = None):
         # ========================================================================
         # STEP 3.7: Save category sensitivity results to CSV
         # ========================================================================
-        # (Category plots were already generated in the alignment loop above)
+        # Category HTML PSTHs are produced in STEP 3.5 when save_plots is True.
         print(f"\n=== Saving category sensitivity results for {region_name} ===")
         if category_df is not None and len(category_df) > 0:
             # Save category sensitivity results

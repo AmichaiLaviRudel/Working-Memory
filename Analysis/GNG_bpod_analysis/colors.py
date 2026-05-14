@@ -167,6 +167,15 @@ def get_subject_color_map(subject_names):
         # Fallback: return empty mapping on any unexpected error
         return {}
 
+# ─── Learning Stage Colors (heatmap density overlay) ────────────
+# (opaque line color, rgba fill color) keyed by canonical stage label
+LEARNING_STAGE_COLORS: dict[str, tuple[str, str]] = {
+    "Novice":    ("#636EFA", "rgba(99,110,250,0.15)"),
+    "1b Expert": ("#EF553B", "rgba(239,85,59,0.15)"),
+    "2b Expert": ("#00CC96", "rgba(0,204,150,0.15)"),
+    "Other":     ("#AB63FA", "rgba(171,99,250,0.15)"),
+}
+
 # ─── Line Width ─────────────────────────────────────────────────
 LINE_WIDTH_THIN     = 0.5
 LINE_WIDTH_MEDIUM  = 1.0

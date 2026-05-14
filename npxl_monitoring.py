@@ -3,15 +3,107 @@ import streamlit as st
 import time
 import numpy as np
 import os
+import re
 import plotly.graph_objects as go
 from Analysis.GNG_bpod_analysis.colors import COLOR_HIT, COLOR_MISS, COLOR_FA, COLOR_CR
-from Analysis.NPXL_analysis.npxl_single_unit_analysis import single_unit_analysis_panel
+from Analysis.NPXL_analysis.npxl_single_unit_analysis import (
+    multi_session_single_unit_analysis_panel,
+    single_unit_analysis_panel,
+)
 from Analysis.NPXL_analysis.population_analysis import plot_population_heatmap, advanced_population_analysis_panel, plot_best_stimulus_panel
 
 # Load the experimental data
 project_data = pd.read_csv(st.session_state.npxl_monitoring_path, delimiter=',', low_memory=False)
 
 # Session type is now provided explicitly by the monitoring table (column: 'Session Type')
+
+
+def _probe_region_from_path(path: str) -> str | None:
+    """
+    Map a file path to ACx (imec0) or OFC (imec1), matching the rest of this app.
+    Uses imec0 / imec1 path segments (SpikeGLX + ks output dirs like imec0_ks4).
+    """
+    norm = path.replace("\\", "/").lower()
+    # imec10-style dirs are uncommon; require imec0/imec1 followed by boundary.
+    if re.search(r"imec1(?:_|/|$)", norm):
+        return "ofc"
+    if re.search(r"imec0(?:_|/|$)", norm):
+        return "acx"
+    return None
+
+
+def _prepare_multi_session_selection_table(source_df: pd.DataFrame) -> pd.DataFrame:
+    table_df = source_df.copy()
+    if "Checkbox" not in table_df.columns:
+        table_df.insert(0, "Checkbox", False)
+
+    current_dir = table_df.get("current_dir", pd.Series("", index=table_df.index)).fillna("").astype(str).str.strip()
+    name_columns = [
+        column
+        for column in ["current_dir", "spike glx file", "Session Type"]
+        if column in table_df.columns
+    ]
+    session_names = table_df[name_columns].fillna("").astype(str).agg(" ".join, axis=1)
+    table_df["Checkbox"] = current_dir.ne("") & ~session_names.str.contains("FRA", case=False, na=False)
+
+    columns = [
+        column
+        for column in [
+            "Checkbox",
+            "Animal",
+            "Date",
+            "Session Type",
+            "spike glx file",
+            "Recording Assessment ",
+            "Acx good units",
+            "OFC good units",
+            "current_dir",
+        ]
+        if column in table_df.columns
+    ]
+    return table_df[columns]
+
+
+page_view = st.sidebar.radio(
+    "Neuropixels Monitoring",
+    options=["Monitoring", "Multi-Session Units"],
+    key="npxl_monitoring_page_view",
+)
+
+if page_view == "Multi-Session Units":
+    st.title("Multi-Session Single Unit Analysis")
+    st.caption("Compare single-unit traits across selected Neuropixels sessions, session types, and histological areas.")
+
+    selection_df = _prepare_multi_session_selection_table(project_data)
+    edited_selection_df = st.data_editor(
+        selection_df,
+        height=360,
+        use_container_width=True,
+        hide_index=False,
+        column_config={
+            "Checkbox": st.column_config.CheckboxColumn(
+                "Include?",
+                help="Select sessions to include in the multi-session unit panel.",
+                default=True,
+            ),
+            "current_dir": st.column_config.TextColumn(
+                "current_dir",
+                help="Recording folder that contains analysis_output and probe mapping files.",
+                disabled=True,
+            ),
+        },
+        key="multi_session_unit_session_selector",
+    )
+
+    selected_sessions_df = edited_selection_df[edited_selection_df["Checkbox"] == True].copy()
+    if selected_sessions_df.empty:
+        st.info("Select one or more sessions above to load the unit comparison panel.")
+        st.stop()
+
+    # Use original rows so hidden metadata/path columns remain available to the loader.
+    selected_sessions_df = project_data.loc[selected_sessions_df.index].copy()
+    multi_session_single_unit_analysis_panel(selected_sessions_df)
+    st.stop()
 
 # Streamlit App
 st.title("Neuropixels Data Management")
@@ -77,7 +169,8 @@ with st.expander("Utilities", expanded=False):
                 col = tbl['bc_unitType'].astype(str).str.upper()
                 good = (col == 'GOOD').sum()
                 mua = (col == 'MUA').sum()
-                nonsoma = (col == 'NON-SOMA').sum()
+                # Python Bombcell uses "non-somatic"; older tables may use NON-SOMA
+                nonsoma = ((col == 'NON-SOMA') | (col == 'NON-SOMATIC')).sum()
             elif 'UnitType' in tbl.columns:
                 # UnitType may be numeric (1,2,3) or strings
                 if np.issubdtype(tbl['UnitType'].dtype, np.number):
@@ -89,15 +182,18 @@ with st.expander("Utilities", expanded=False):
                     col = tbl['UnitType'].astype(str).str.upper()
                     good = (col == 'GOOD').sum()
                     mua = (col == 'MUA').sum()
-                    nonsoma = (col == 'NON-SOMA').sum()
+                    nonsoma = ((col == 'NON-SOMA') | (col == 'NON-SOMATIC')).sum()
             else:
                 return None
 
             return f"good: {int(good)}, MUA: {int(mua)}, non-somatic: {int(nonsoma)}"
 
         for idx, row in df.iterrows():
-            current_dir = row.get('current_dir', None)
-            if not current_dir or not isinstance(current_dir, str) or not os.path.isdir(current_dir):
+            raw_dir = row.get("current_dir", None)
+            if raw_dir is None or (isinstance(raw_dir, float) and np.isnan(raw_dir)):
+                continue
+            current_dir = str(raw_dir).strip()
+            if not current_dir or not os.path.isdir(current_dir):
                 continue
 
             need_acx = ('Acx good units' in df.columns) and is_empty_cell(row.get('Acx good units', None))
@@ -109,20 +205,22 @@ with st.expander("Utilities", expanded=False):
             ofc_summary = None
 
             for root, dirs, files in os.walk(current_dir):
-                if 'bombcell' in dirs:
-                    bc_dir = os.path.join(root, 'bombcell')
-                    tsv_path = os.path.join(bc_dir, 'unit_labels.tsv')
-                    if not os.path.exists(tsv_path):
-                        continue
+                candidate_tsvs: list[str] = []
+                if "cluster_bc_unitType.tsv" in files:
+                    # Python Bombcell writes this next to Kilosort output (imec0_ks4, imec1_ks4, …)
+                    candidate_tsvs.append(os.path.join(root, "cluster_bc_unitType.tsv"))
+                ul_path = os.path.join(root, "bombcell", "unit_labels.tsv")
+                if os.path.isfile(ul_path):
+                    candidate_tsvs.append(ul_path)
 
+                for tsv_path in candidate_tsvs:
                     summary = summarize_unit_labels(tsv_path)
                     if summary is None:
                         continue
-
-                    parent_tail = os.path.basename(root)[-5:]
-                    if '0' in parent_tail:
+                    region = _probe_region_from_path(tsv_path)
+                    if region == "acx" and acx_summary is None:
                         acx_summary = summary
-                    else:
+                    elif region == "ofc" and ofc_summary is None:
                         ofc_summary = summary
 
             changed = False

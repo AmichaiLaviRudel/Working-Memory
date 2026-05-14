@@ -48,13 +48,12 @@ def save_dataframe_to_csv(df: pd.DataFrame, filepath: str, description: str = ""
         print(f"  Saved DataFrame to: {filepath}")
 
 
-def save_plot_to_html(fig: go.Figure, filepath: str, description: str = ""):
-    """Save Plotly figure to HTML file."""
-    fig.write_html(filepath)
-    if description:
-        print(f"  Saved {description} to: {filepath}")
-    else:
-        print(f"  Saved plot to: {filepath}")
+def save_plot_to_html(fig: go.Figure, filepath: str, description: str = "") -> None:
+    """Save Plotly figure to a self-contained HTML file (plotly.js bundled inline)."""
+    # include_plotlyjs=True bundles plotly.js so the file renders without CDN/internet.
+    fig.write_html(filepath, include_plotlyjs=True, full_html=True)
+    label = description or "plot"
+    print(f"  Saved {label} to: {filepath}")
 
 
 def units_to_dataframe(

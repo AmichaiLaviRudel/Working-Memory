@@ -1,3 +1,5 @@
+#%%
+
 import sys
 import os
 import re
@@ -250,9 +252,12 @@ def load_spike_data(data_dir):
         tuple: (spike_times, spike_clusters) as numpy arrays
     """
     try:
-        spike_times_sec= np.load(os.path.join(data_dir, 'spike_times_sec_adj.npy').replace("\\", "/")) 
+        spike_times_sec = np.load(os.path.join(data_dir, 'spike_times_sec_adj.npy').replace("\\", "/")) 
     except Exception:
-        spike_times_sec = np.load(os.path.join(data_dir, 'spike_times_seconds.npy').replace("\\", "/"))
+        try:
+            spike_times_sec = np.load(os.path.join(data_dir, 'spike_times_seconds.npy').replace("\\", "/"))
+        except Exception:
+            spike_times_sec = np.load(os.path.join(data_dir, 'spike_times_sec.npy').replace("\\", "/"))
         
     spike_clusters = np.load(os.path.join(data_dir, 'spike_clusters.npy'))
     len(spike_times_sec)
@@ -358,17 +363,29 @@ def extract_outcome_times(raw_events_df, tone_onset_times, bin_size):
 def couple_stimuli_outcome_and_times(parent_dir, stimuli, atten, outcomes, bin_size, 
                                      first_lick_times_bins=None, outcome_times_bins=None):
     """
-    Finds the file ending with 'nidq.xd_0_1_100.txt' in the directory, loads times, and couples with stimuli values and outcomes.
+    Finds a CatGT NIDQ tone-onset extract in parent_dir (tries suffixes in order), loads times,
+    and couples with stimuli values and outcomes.
     Trims all arrays to the shortest length if they mismatch.
     Also includes first lick times and outcome times if provided.
     """
-    # Define the expected file suffix
-    expected_suffix = "nidq.xd_0_1_100.txt"
-    
-    times = load_nidq_stream(parent_dir, stream_suffix=expected_suffix)
-    if len(times) == 0:
-        expected_suffix = "nidq.xd_0_1_0.txt"
-        times = load_nidq_stream(parent_dir, stream_suffix=expected_suffix)
+    tone_nidq_suffixes = (
+        "nidq.xd_0_1_100.txt",
+        "nidq.xa_3_100.txt",
+        "nidq.xd_0_1_0.txt",
+    )
+    times = None
+    last_err = None
+    for expected_suffix in tone_nidq_suffixes:
+        try:
+            times = load_nidq_stream(parent_dir, stream_suffix=expected_suffix)
+            break
+        except (FileNotFoundError, OSError) as e:
+            last_err = e
+            continue
+    if times is None:
+        raise FileNotFoundError(
+            f"No tone NIDQ stream in {parent_dir}; tried {tone_nidq_suffixes}"
+        ) from last_err
 
     # check if the times are in the same length as the stimuli_values and outcomes
     if len(times) != len(stimuli):
@@ -402,6 +419,27 @@ def couple_stimuli_outcome_and_times(parent_dir, stimuli, atten, outcomes, bin_s
     
     return df
 
+def catgt_session_base_from_dir(session_dir: str) -> str | None:
+    """
+    Parse the spikeglx session base from a CatGT output folder name.
+
+    Expected basename pattern: catgt_<SPIKEGLX_BASE>_g<gate>, e.g. catgt_G4A2_novice2_2b_4t_g0
+    -> G4A2_novice2_2b_4t. Using strict parsing avoids substring bugs (e.g. G4A2_novice matching
+    paths that are actually G4A2_novice2_...).
+    """
+    base = os.path.basename(os.path.normpath(session_dir))
+    m = re.match(r"^catgt_(.+)_g\d+$", base, flags=re.IGNORECASE)
+    return m.group(1) if m else None
+
+
+def normalize_spikeglx_base(value: str) -> str:
+    """
+    Strip a trailing _g<gate> suffix from a CSV 'spike glx file' value so that
+    entries like 'G4A2_novice_g0' and 'G4A2_novice' both reduce to 'G4A2_novice'.
+    The CSV column is inconsistently populated — some rows include the gate suffix.
+    """
+    return re.sub(r"_g\d+$", "", value.strip(), flags=re.IGNORECASE)
+
 # --- Behavioral File Copy Function  ---
 def copy_behavioral_file_for_dir(parent_dir, df, spike_glx_col='spike glx file', behavioral_file_col='behavioral file', csv_path=None, force_rerun=False):
     """
@@ -428,7 +466,7 @@ def copy_behavioral_file_for_dir(parent_dir, df, spike_glx_col='spike glx file',
 
     # Get list of directories in parent_dir to check for spikeglx matches
     try:
-        entries_in_parent = os.listdir(parent_dir)
+        _ = os.listdir(parent_dir)
     except (OSError, PermissionError) as e:
         print(f"Warning: Could not list directory {parent_dir}: {e}")
         return None
@@ -446,31 +484,32 @@ def copy_behavioral_file_for_dir(parent_dir, df, spike_glx_col='spike glx file',
         if not os.path.exists(behavioral_full_name):
             continue
         
-        # Construct spikeglx directory name (e.g., "catgt_G7A1_novice_FRA_g0")
-        spikeglx_name = f"catgt_{spikeglx_base}"
-        
-        if not spikeglx_base in parent_dir:
+        # Match CSV row to this session folder by parsed catgt_<base>_g* basename.
+        # Normalize both sides to strip any trailing _g<n> — the CSV column is inconsistently
+        # populated (some rows include the gate suffix, others don't).
+        dir_session_base = catgt_session_base_from_dir(parent_dir)
+        if dir_session_base is None:
             continue
-        else:
-            print(f"Found spikeglx directory: {spikeglx_base} in {parent_dir}")
-            # Get behavioral file name
-            behavioral_name = os.path.basename(behavioral_full_name)
-            behav_file_in_parent = os.path.join(parent_dir, behavioral_name).replace("\\", "/")
-            
-            # Copy behavioral file to parent_dir if it doesn't exist or if force_rerun is True
-            try:
-                if not os.path.exists(behav_file_in_parent) or force_rerun:
-                    shutil.copy2(behavioral_full_name, parent_dir)
-                    print(f"Copied {behavioral_name} to {parent_dir}")
-                    behav_file = behav_file_in_parent
-                else:
-                    behav_file = behav_file_in_parent
-                    print(f"Behavioral file {behavioral_name} already exists in {parent_dir}")
-            except Exception as e:
-                print(f"Error copying behavioral file {behavioral_name} to {parent_dir}: {e}")
+        if normalize_spikeglx_base(spikeglx_base) != dir_session_base:
+            continue
 
-                
-               
+        print(f"Found spikeglx directory: {spikeglx_base} in {parent_dir}")
+        # Get behavioral file name
+        behavioral_name = os.path.basename(behavioral_full_name)
+        behav_file_in_parent = os.path.join(parent_dir, behavioral_name).replace("\\", "/")
+
+        # Copy behavioral file to parent_dir if it doesn't exist or if force_rerun is True
+        try:
+            if not os.path.exists(behav_file_in_parent) or force_rerun:
+                shutil.copy2(behavioral_full_name, parent_dir)
+                print(f"Copied {behavioral_name} to {parent_dir}")
+                behav_file = behav_file_in_parent
+            else:
+                behav_file = behav_file_in_parent
+                print(f"Behavioral file {behavioral_name} already exists in {parent_dir}")
+        except Exception as e:
+            print(f"Error copying behavioral file {behavioral_name} to {parent_dir}: {e}")
+
         # Save the DataFrame if a path is provided (with error handling for permission issues)
         if csv_path is not None:
             try:
@@ -480,10 +519,10 @@ def copy_behavioral_file_for_dir(parent_dir, df, spike_glx_col='spike glx file',
                 # Continue processing even if CSV save fails
             except Exception as e:
                 print(f"Warning: Error saving CSV file: {e}")
-        
+
         # Found a match, return the behavioral file path
         return behav_file
-        
+
     # No matching spikeglx directory found in parent_dir
     return None
 
@@ -573,8 +612,30 @@ def load_nidq_stream(working_dir, stream_suffix):
     # Ensure it's a 1D array
     if stream_timestamps.ndim > 1:
         stream_timestamps = stream_timestamps.flatten()
-    
+    # Zero-byte CatGT extracts load as length-0; try alternate stream instead of failing later
+    if stream_timestamps.size == 0:
+        raise FileNotFoundError(f"NIDQ stream file is empty: {stream_file}")
+
     return stream_timestamps
+
+
+def load_tone_onset_times_seconds(nidq_dir: str) -> np.ndarray:
+    """
+    Tone onsets from CatGT NIDQ: xd bit extract, then analog xa word 3 ~100 ms, then xd bit 0.
+    """
+    last_err = None
+    for suffix in (
+        "nidq.xd_0_1_100.txt",
+        "nidq.xa_3_100.txt",
+    ):
+        try:
+            return load_nidq_stream(nidq_dir, stream_suffix=suffix)
+        except (FileNotFoundError, OSError) as e:
+            last_err = e
+            continue
+    raise FileNotFoundError(
+        f"No non-empty tone NIDQ stream in {nidq_dir} (tried xd_0_1_100, xa_3_100, xd_0_1_0, xa_0_3_100)"
+    ) from last_err
 
 def reshape_firing_rate_to_event_windows(firing_rate_matrix, stimuli_outcome_df, window_duration=1.0, bin_size=0.1):
     """
@@ -810,7 +871,7 @@ def load_event_windows_data(folder):
                 metadata[key] = value
     
     return event_windows_matrix, time_axis, valid_event_indices, stimuli_outcome_df, metadata, lick_event_windows_matrix
-
+#%%
 # --- Main Analysis Loop ---
 def main():
     """
@@ -823,7 +884,7 @@ def main():
     # recordings_root_directory = r"/ems/elsc-labs/mizrahi-a/Shared/Amichai/NPXL/Recs/group5"
     # experiment_metadata_csv_path = r"/ems/elsc-labs/mizrahi-a/Code\DB\users_data\Amichai\NPXL recordings _experimental_data.csv".replace("\\", "/")
     
-    recordings_root_directory = r"Z:/Shared/Amichai/NPXL/Recs/group5".replace("\\", "/")
+    recordings_root_directory = r"Z:\Shared\Amichai\Data\pipeline_output".replace("\\", "/")
     experiment_metadata_csv_path = r"Z:\Shared\Amichai/Code\DB\users_data\Amichai\NPXL recordings _experimental_data.csv".replace("\\", "/")
     
 
@@ -832,8 +893,9 @@ def main():
     for idx, current_ks_folder in enumerate(ks_analysis_folders):
         print(f"\n\nProcessing {idx+1} of {len(ks_analysis_folders)}: {current_ks_folder}")
         try:
-            # current_ks_folder = ks_analysis_folders[-3].replace("\\", "/")
-
+            # current_ks_folder = ks_analysis_folders[-1].replace("\\", "/")
+            # current_ks_folder = r"Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A2_novice2_2b_4t_g0\G4A2_novice2_2b_4t_g0_imec1"
+           
             recording_session_dir = os.path.dirname(current_ks_folder)
             os.chdir(recording_session_dir)
             nidq_dir = recording_session_dir
@@ -860,7 +922,7 @@ def main():
 
                 # Process behavioral data
                 try:
-                    trial_types_df, raw_events_df, session_date, session_time, trial_settings, notes, licks, states, stimulis, Unique_Stimuli_Values, tones_per_class, boundaries, recs = load_mat_file(behavioral_data_file_path)
+                    trial_types_df, raw_events_df, session_date, session_time, trial_settings, notes, licks, states, stimulis, Unique_Stimuli_Values, tones_per_class, boundaries, recs, outcome_names = load_mat_file(behavioral_data_file_path)
                     # Check if this is actually an FRA file by checking if stimulis is a 2D array (FRA) or 1D (regular)
                     is_fra_file = "FRA" in current_ks_folder and isinstance(stimulis, np.ndarray) and len(stimulis.shape) == 2
                     
@@ -872,9 +934,22 @@ def main():
                         except (IndexError, TypeError) as e:
                             print(f"Warning: File in FRA folder but doesn't have FRA structure. Processing as regular file: {e}")
                             # Fall back to regular processing
-                            session_summary_df = create_single_row_with_outcome(behavioral_data_file_path, trial_types_df, raw_events_df, session_date,
-                                                                    session_time, trial_settings, notes, licks, states,
-                                                                    Unique_Stimuli_Values, tones_per_class, boundaries, recs)
+                            session_summary_df = create_single_row_with_outcome(
+                                behavioral_data_file_path,
+                                trial_types_df,
+                                raw_events_df,
+                                session_date,
+                                session_time,
+                                trial_settings,
+                                notes,
+                                licks,
+                                states,
+                                Unique_Stimuli_Values,
+                                tones_per_class,
+                                boundaries,
+                                recs,
+                                outcome_names=outcome_names,
+                            )
                             stimuli = stimulis
                             atten = np.ones(len(stimuli))*(-60)
                             outcomes = session_summary_df["Outcomes"].iloc[0]
@@ -891,7 +966,8 @@ def main():
 
                 # --- Load Spikeglx Data ---
                 try:
-                    spike_timestamps_seconds, spike_cluster_assignments = load_spike_data(ks4_data_dir)
+                    spike_timestamps_seconds, spike_cluster_assignments = load_spike_data(
+                        ks4_data_dir)
                     
                     if len(spike_timestamps_seconds) != len(spike_cluster_assignments):
                         print(f"{current_ks_folder}: Warning: spike times and cluster assignments not in the same length")
@@ -909,10 +985,7 @@ def main():
                     
                     # Extract first lick times and outcome times
                     # First, get tone onset times to calculate absolute times
-                    try:
-                        tone_onset_times_file = load_nidq_stream(nidq_dir, stream_suffix="nidq.xd_0_1_100.txt")
-                    except FileNotFoundError:
-                        tone_onset_times_file = load_nidq_stream(nidq_dir, stream_suffix="nidq.xd_0_1_0.txt")
+                    tone_onset_times_file = load_tone_onset_times_seconds(nidq_dir)
                     
        
                     tone_onset_times_bins = tone_onset_times_file / bin_size
@@ -977,3 +1050,5 @@ def main():
 if __name__ == "__main__":
     main()
 
+
+# %%

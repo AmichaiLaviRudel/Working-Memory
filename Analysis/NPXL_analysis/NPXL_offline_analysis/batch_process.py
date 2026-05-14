@@ -1,12 +1,16 @@
 """
 Batch processing script for NPXL offline analysis (using refactored main script).
 
-This script searches for all folders starting with "catgt" in the main recordings directory
-and runs the refactored analysis pipeline (main_refactored.py) for each folder.
+This script searches for all folders starting with "catgt" under the base directory
+(default: pipeline_output on Z:) and runs the refactored analysis pipeline
+(main_refactored.py) for each folder.
 
-The refactored pipeline uses nested loops for cleaner code and generates:
-- Tone, Choice, and Outcome aligned PSTHs and heatmaps
-- Category sensitivity plots
+By default, HTML plots are not written (--save-plots enables them). The pipeline still
+writes tables/metrics; plot path columns in CSVs stay empty when plots are skipped.
+
+The refactored pipeline uses nested loops for cleaner code and can generate:
+- Tone, Choice, and Outcome aligned PSTHs and heatmaps (when --save-plots)
+- Category sensitivity plots (when --save-plots)
 - Comprehensive metrics CSV with all p-values and plot paths
 """
 import sys
@@ -69,7 +73,10 @@ def find_catgt_folders(base_dir: str) -> list:
     return catgt_folders
 
 
-def batch_process_all_recordings(base_dir: str = r"Z:\Shared\Amichai\NPXL\Recs"):
+def batch_process_all_recordings(
+    base_dir: str = r"Z:\Shared\Amichai\Data\pipeline_output",
+    save_plots: bool = False,
+) -> None:
     """
     Process all recordings in folders starting with "catgt".
     
@@ -77,6 +84,8 @@ def batch_process_all_recordings(base_dir: str = r"Z:\Shared\Amichai\NPXL\Recs")
     -----------
     base_dir : str
         Base directory to search for catgt folders
+    save_plots : bool
+        If True, main_refactored writes PSTH/heatmap HTML; if False, only metrics/tables.
     """
     print("=" * 80)
     print("NPXL Batch Processing Script")
@@ -106,7 +115,7 @@ def batch_process_all_recordings(base_dir: str = r"Z:\Shared\Amichai\NPXL\Recs")
         
         try:
             # Run the main analysis function
-            main(parent_dir=parent_dir)
+            main(parent_dir=parent_dir, save_plots=save_plots)
             successful.append(parent_dir)
             print(f"\n✓ Successfully completed: {parent_dir}")
             
@@ -155,11 +164,16 @@ if __name__ == "__main__":
     parser.add_argument(
         "--base-dir",
         type=str,
-        default=r"Z:\Shared\Amichai\NPXL\Recs",
-        help="Base directory to search for catgt folders (default: Z:\\Shared\\Amichai\\NPXL\\Recs)"
+        default=r"Z:\Shared\Amichai\Data\pipeline_output",
+        help="Base directory to search for catgt folders (default: Z:\\Shared\\Amichai\\Data\\pipeline_output)",
+    )
+    parser.add_argument(
+        "--save-plots",
+        action="store_true",
+        help="Write PSTH/heatmap/category HTML plots (default: off for faster batch runs)",
     )
     
     args = parser.parse_args()
     
-    batch_process_all_recordings(base_dir=args.base_dir)
+    batch_process_all_recordings(base_dir=args.base_dir, save_plots=args.save_plots)
 

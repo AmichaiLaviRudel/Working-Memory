@@ -83,21 +83,17 @@ def save_dataframe_to_csv(df: pd.DataFrame, filepath: str, description: str = ""
         print(f"  Saved DataFrame to: {filepath}")
 
 
-def save_plot_to_html(fig: go.Figure, filepath: str, description: str = ""):
+def save_plot_to_html(fig: go.Figure, filepath: str, description: str = "") -> None:
     """
-    Save Plotly figure to HTML file with error handling for permission issues.
-    
-    Handles common Windows permission errors by:
-    - Ensuring directory exists
-    - Attempting to remove locked files
-    - Retrying with delay if initial write fails
+    Save Plotly figure to a self-contained HTML file.
+
+    Uses include_plotlyjs=True to bundle plotly.js (~3.5 MB) inline so the file
+    renders without internet access or CDN availability (e.g. in Streamlit iframes).
     """
-    # Ensure directory exists
     dir_path = os.path.dirname(filepath)
     if dir_path:
         os.makedirs(dir_path, exist_ok=True)
-        # Write the file
-    fig.write_html(filepath)
+    fig.write_html(filepath, include_plotlyjs=True, full_html=True)
    
 
 def units_to_dataframe(

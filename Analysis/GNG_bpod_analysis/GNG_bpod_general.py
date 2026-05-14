@@ -45,17 +45,86 @@ def getNameAndSession(project_data, index):
 
 def normalize_workspace_path(path: str) -> str:
     """
-    Map cluster-style paths to the local Z: drive while leaving Z: paths untouched.
+    Normalize persisted analysis paths so they resolve on local Windows and cluster exports.
     """
     if not path:
         return path
-    if path.lower().startswith("z:"):
-        return path
-    unix_prefix = "/ems/elsc-labs/mizrahi-a/"
-    if path.startswith(unix_prefix):
-        relative = path[len(unix_prefix):]
-        return os.path.join("z:\\", relative.replace("/", os.sep))
-    return path
+    # Strip stray quotes that some CSV/JSON exporters add.
+    normalized = str(path).strip().strip('"').strip("'")
+    if not normalized:
+        return normalized
+
+    normalized = os.path.expandvars(normalized)
+
+    # Already a Windows drive path — just normalise separators.
+    if len(normalized) >= 2 and normalized[1] == ":":
+        return os.path.normpath(normalized)
+
+    unix_prefixes = (
+        "/ems/elsc-labs/mizrahi-a/",
+        "/mnt/z/",
+        "/z/",
+    )
+    unc_prefixes = (
+        "\\\\ems\\elsc-labs\\mizrahi-a\\",
+        "//ems/elsc-labs/mizrahi-a/",
+    )
+
+    for prefix in unix_prefixes:
+        if normalized.startswith(prefix):
+            relative = normalized[len(prefix):].replace("/", os.sep).lstrip("\\/")
+            return os.path.normpath(os.path.join("z:\\", relative))
+
+    normalized_unc = normalized.replace("/", "\\")
+    for prefix in unc_prefixes:
+        prefix_unc = prefix.replace("/", "\\")
+        if normalized_unc.lower().startswith(prefix_unc.lower()):
+            relative = normalized_unc[len(prefix_unc):].lstrip("\\/")
+            return os.path.normpath(os.path.join("z:\\", relative))
+
+    return os.path.normpath(normalized)
+
+
+def resolve_analysis_path(stored_path: str, analysis_output_dir: str = "") -> str:
+    """
+    Resolve a stored cluster/network path to a local file path.
+
+    Strategy:
+    1. Try normalize_workspace_path() — works when the drive mapping is correct.
+    2. Glob fallback: search for the filename under *analysis_output_dir*.
+       When analysis_output_dir is not provided (e.g. multi-session drilldown),
+       derive a search root by walking up the normalized path's directory tree
+       until an existing directory is found, then glob from there.
+    """
+    import glob as _glob
+
+    normalized = normalize_workspace_path(stored_path)
+    if os.path.exists(normalized):
+        return normalized
+
+    filename = os.path.basename(normalized) or os.path.basename(
+        stored_path.replace("\\", "/").rstrip("/")
+    )
+    if not filename:
+        return normalized
+
+    # Determine the best available search root.
+    search_root = analysis_output_dir if (analysis_output_dir and os.path.isdir(analysis_output_dir)) else ""
+
+    if not search_root:
+        # Walk up the normalized path to find the deepest existing ancestor.
+        candidate_dir = os.path.dirname(normalized)
+        while candidate_dir and candidate_dir != os.path.dirname(candidate_dir):
+            if os.path.isdir(candidate_dir):
+                search_root = candidate_dir
+                break
+            candidate_dir = os.path.dirname(candidate_dir)
+
+    if not search_root:
+        return normalized
+
+    matches = _glob.glob(os.path.join(search_root, "**", filename), recursive=True)
+    return matches[0] if matches else normalized
 
 
 

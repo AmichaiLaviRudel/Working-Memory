@@ -1,4 +1,6 @@
+import re
 import plotly.graph_objects as go
+import plotly.express as px
 import numpy as np
 from scipy import stats
 from scipy.ndimage import gaussian_filter1d
@@ -9,6 +11,27 @@ import streamlit as st
 import streamlit.components.v1 as components
 from functools import lru_cache
 import json
+
+# Pre-compile once; matches <script src="https://cdn.plot.ly/..."></script>
+_CDN_PLOTLY_RE = re.compile(
+    r'<script[^>]+src=["\']https://cdn\.plot\.ly/[^"\']*["\'][^>]*>\s*</script>',
+    re.IGNORECASE | re.DOTALL,
+)
+
+@lru_cache(maxsize=1)
+def _plotly_js_inline() -> str:
+    """Return the minified plotly.js wrapped in a <script> tag (cached once per session)."""
+    from plotly.offline import get_plotlyjs
+    return f'<script type="text/javascript">{get_plotlyjs()}</script>'
+
+def ensure_plotlyjs_inline(html: str) -> str:
+    """
+    Replace a CDN plotly.js <script> tag with an inline bundled version.
+    No-op if the file already has inline JS or no CDN reference.
+    """
+    if not _CDN_PLOTLY_RE.search(html):
+        return html
+    return _CDN_PLOTLY_RE.sub(_plotly_js_inline(), html, count=1)
             
 # Import single unit metrics functions from single_unit_offline_analysis
 from Analysis.NPXL_analysis.single_unit_offline_analysis.single_unit_metrics import (
@@ -32,8 +55,8 @@ from Analysis.NPXL_analysis.single_unit_offline_analysis.visualization import (
     plot_unit_heatmap,
     get_trial_statistics,
 )
-from Analysis.GNG_bpod_analysis.colors import COLOR_GO, COLOR_GRAY, COLOR_NOGO, COLOR_HIT, COLOR_FA, COLOR_CR, COLOR_MISS, COLOR_BLUE, COLOR_BLUE_TRANSPARENT, COLOR_ACCENT, COLOR_ACCENT_TRANSPARENT
-from Analysis.GNG_bpod_analysis.GNG_bpod_general import normalize_workspace_path
+from Analysis.GNG_bpod_analysis.colors import COLOR_GO, COLOR_GRAY, COLOR_NOGO, COLOR_HIT, COLOR_FA, COLOR_CR, COLOR_MISS, COLOR_BLUE, COLOR_BLUE_TRANSPARENT, COLOR_ACCENT, COLOR_ACCENT_TRANSPARENT, LEARNING_STAGE_COLORS
+from Analysis.GNG_bpod_analysis.GNG_bpod_general import normalize_workspace_path, resolve_analysis_path
 def save_pvalues_to_folder(pvals, selected_folder, window=(-1, 2), bin_size=0.01):
     """
     Save p-values to the analysis output folder.
@@ -383,6 +406,8 @@ def plot_tuning_curves_heatmap(selectivity_df, use_log_scale=True, normalize_per
     """
     def _parse_value(val):
         """Parse value from JSON string, Python list string, or return as-is."""
+        if isinstance(val, (list, np.ndarray)):
+            return val if len(val) > 0 else None
         if pd.isna(val) or val == '' or val == '[]':
             return None
         if isinstance(val, str):
@@ -435,10 +460,13 @@ def plot_tuning_curves_heatmap(selectivity_df, use_log_scale=True, normalize_per
     # Sort by best_stimulus (ascending - lowest first)
     tuning_data.sort(key=lambda x: x['best_stimulus'] if x['best_stimulus'] is not None else float('inf'))
     
-    # Find common stimulus range for interpolation
-    all_stimuli = np.concatenate([d['stimuli'] for d in tuning_data])
-    min_stim = np.min(all_stimuli)
-    max_stim = np.max(all_stimuli)
+    # Find common stimulus range for interpolation.
+    # Use per-unit min/max and take the median across units to avoid outlier
+    # units (e.g. Hz vs kHz mismatch) from stretching the shared x-axis.
+    per_unit_min = np.array([np.min(d['stimuli']) for d in tuning_data])
+    per_unit_max = np.array([np.max(d['stimuli']) for d in tuning_data])
+    min_stim = np.median(per_unit_min)
+    max_stim = np.median(per_unit_max)
     
     # Create common x-axis (150 points for better resolution)
     if use_log_scale:
@@ -452,24 +480,28 @@ def plot_tuning_curves_heatmap(selectivity_df, use_log_scale=True, normalize_per
     best_frequencies = []
     
     for d in tuning_data:
-        # Interpolate to common x-axis
-        curve_interp = np.interp(x_common, d['stimuli'], d['curve'])
-        # Apply Gaussian smoothing for cleaner appearance
-        curve_smooth = gaussian_filter1d(curve_interp, sigma=1.0)
-        
+        # Interpolate to common x-axis; NaN outside the unit's own stimulus range
+        # so extrapolated regions don't show as flat boundary values.
+        curve_interp = np.interp(x_common, d['stimuli'], d['curve'],
+                                 left=np.nan, right=np.nan)
+        # Smooth only finite values; preserve NaN for out-of-range regions
+        nan_mask = np.isnan(curve_interp)
+        curve_smooth = curve_interp.copy()
+        if not nan_mask.all():
+            curve_smooth[~nan_mask] = gaussian_filter1d(curve_interp[~nan_mask], sigma=1.0)
+
         if normalize_per_unit:
-            # Normalize to [0, 1] for each curve
-            curve_min = np.min(curve_smooth)
-            curve_max = np.max(curve_smooth)
+            finite_vals = curve_smooth[~nan_mask]
+            curve_min = np.min(finite_vals) if len(finite_vals) else 0.0
+            curve_max = np.max(finite_vals) if len(finite_vals) else 0.0
             if curve_max > curve_min:
                 curve_norm = (curve_smooth - curve_min) / (curve_max - curve_min)
             else:
-                curve_norm = np.zeros_like(curve_smooth)
-            curve_norm = np.maximum(curve_norm, 0)
+                curve_norm = np.where(nan_mask, np.nan, 0.0)
+            curve_norm = np.where(nan_mask, np.nan, np.maximum(curve_norm, 0))
             heatmap_matrix.append(curve_norm)
         else:
-            # Use raw firing rates
-            curve_smooth = np.maximum(curve_smooth, 0)  # Ensure non-negative
+            curve_smooth = np.where(nan_mask, np.nan, np.maximum(curve_smooth, 0))
             heatmap_matrix.append(curve_smooth)
         
         unit_indices.append(d['unit_idx'])
@@ -492,59 +524,84 @@ def plot_tuning_curves_heatmap(selectivity_df, use_log_scale=True, normalize_per
         low_boundary = None
         high_boundary = None
     
-    # Create customdata matrix for hover (best frequency for each unit)
-    customdata_matrix = np.tile(np.array(best_frequencies)[:, np.newaxis], (1, len(x_common)))
-    
-    # Create figure with heatmap
-    fig = go.Figure(data=go.Heatmap(
+    from plotly.subplots import make_subplots
+
+    # KDE of best frequencies projected onto the shared x-axis
+    bf_arr = np.array(best_frequencies, dtype=float)
+    bf_finite = bf_arr[np.isfinite(bf_arr)]
+    # bw_method as a scalar directly sets the bandwidth factor;
+    # 0.15 is ~2x narrower than Scott's rule for sharper resolution.
+    KDE_BW = 0.04
+    if use_log_scale and len(bf_finite):
+        # KDE in log space so it looks natural on a log x-axis
+        log_bf = np.log10(bf_finite)
+        kde = stats.gaussian_kde(log_bf, bw_method=KDE_BW)
+        kde_y = kde(np.log10(x_common))
+    else:
+        kde = stats.gaussian_kde(bf_finite, bw_method=KDE_BW)
+        kde_y = kde(x_common)
+    kde_y = kde_y / kde_y.max()  # normalize to [0, 1] for display
+
+    # Build combined figure: heatmap (80%) + KDE strip (20%)
+    fig = make_subplots(
+        rows=2, cols=1,
+        row_heights=[0.82, 0.18],
+        shared_xaxes=True,
+        vertical_spacing=0.02,
+    )
+
+    # --- Heatmap ---
+    customdata_matrix = np.tile(bf_arr[:, np.newaxis], (1, len(x_common)))
+    fig.add_trace(go.Heatmap(
         z=heatmap_matrix,
         x=x_common,
-        y=[f"Unit {uid}" for uid in unit_indices],  # Simplified labels
+        y=[f"Unit {uid}" for uid in unit_indices],
         colorscale='Viridis',
         colorbar=dict(
-            title="Normalized Response" if normalize_per_unit else "Firing Rate (spikes/s)"
+            title="Norm. Response" if normalize_per_unit else "Firing Rate (sp/s)",
+            len=0.82, y=0.59, yanchor='middle',
         ),
         hovertemplate='Unit: %{y}<br>Frequency: %{x:.2f} kHz<br>Response: %{z:.3f}<br>Best Freq: %{customdata:.2f} kHz<extra></extra>',
-        customdata=customdata_matrix
-    ))
-    
-    # Add dashed white lines at boundaries
-    if low_boundary is not None:
-        fig.add_vline(
-            x=low_boundary,
-            line_dash="dash",
-            line_color="white",
-            line_width=2,
-            opacity=0.8
-        )
-    if high_boundary is not None:
-        fig.add_vline(
-            x=high_boundary,
-            line_dash="dash",
-            line_color="white",
-            line_width=2,
-            opacity=0.8
-        )
-    
-    # Update layout
+        customdata=customdata_matrix,
+    ), row=1, col=1)
+
+    # --- KDE projection ---
+    fig.add_trace(go.Scatter(
+        x=x_common,
+        y=kde_y,
+        mode='lines',
+        fill='tozeroy',
+        fillcolor='rgba(100,180,255,0.25)',
+        line=dict(color='rgba(80,160,240,0.9)', width=1.5),
+        hovertemplate='Frequency: %{x:.2f} kHz<br>Density: %{y:.3f}<extra></extra>',
+        name='Best-freq density',
+        showlegend=False,
+    ), row=2, col=1)
+
+    # --- Boundary lines (both subplots) ---
+    for boundary, color in [(low_boundary, 'white'), (high_boundary, 'white')]:
+        if boundary is not None:
+            for row in (1, 2):
+                fig.add_vline(
+                    x=boundary, row=row, col=1,
+                    line_dash='dash', line_color=color,
+                    line_width=2, opacity=0.8,
+                )
+
+    x_axis_cfg = dict(type='log' if use_log_scale else 'linear', showgrid=False)
+    heatmap_height = min(700, max(300, 300 + len(tuning_data) * 3))
     fig.update_layout(
         title="Tuning Curves Heatmap (Sorted by Best Frequency - Lowest First)",
-        xaxis_title="Frequency (kHz)" + (" [log scale]" if use_log_scale else ""),
-        xaxis=dict(
-            type="log" if use_log_scale else "linear",
-            showgrid=False
-        ),
-        yaxis=dict(
-            showgrid=False,
-            autorange='reversed',  # Top unit = lowest best frequency
-            showticklabels=False  # Remove y-axis labels
-        ),
+        xaxis2=dict(title="Frequency (kHz)" + (" [log scale]" if use_log_scale else ""), **x_axis_cfg),
+        xaxis=dict(**x_axis_cfg),
+        yaxis=dict(showgrid=False, autorange='reversed', showticklabels=False),
+        yaxis2=dict(showgrid=False, showticklabels=False, title='Density'),
         plot_bgcolor='white',
         paper_bgcolor='white',
-        margin=dict(l=60, r=40, t=60, b=60),  # Reduced left margin since no y labels
-        height=min(800, max(400, 400 + len(tuning_data) * 3))  # Limit to screen height, min 400px
+        margin=dict(l=60, r=40, t=60, b=60),
+        height=heatmap_height + 120,
     )
-    
+
     return fig
 
 
@@ -624,6 +681,1063 @@ def run_offline_analysis(parent_dir):
             progress_bar.progress(100, text="Offline analysis failed")
             status_placeholder.error(f"Offline analysis failed: {e}")
         return False, str(e)
+
+
+def _nonempty_sorted_values(df: pd.DataFrame, column: str) -> list:
+    if column not in df.columns:
+        return []
+
+    values = df[column].dropna().astype(str).str.strip()
+    return sorted(value for value in values.unique().tolist() if value)
+
+
+def _numeric_metric_columns(df: pd.DataFrame) -> list[str]:
+    preferred = [
+        "mean_firing_rate",
+        "psth_response_magnitude",
+        "psth_peak_latency",
+        "psth_onset_latency",
+        "psth_signal_to_noise",
+        "go_nogo_dprime",
+        "go_nogo_roc_auc",
+        "choice_probability",
+        "tone_p_value",
+        "choice_p_value",
+        "outcome_p_value",
+        "category_p_value",
+    ]
+    return [
+        column
+        for column in preferred
+        if column in df.columns and pd.to_numeric(df[column], errors="coerce").notna().any()
+    ]
+
+
+def _apply_multi_session_unit_filters(units_df: pd.DataFrame) -> pd.DataFrame:
+    filtered_df = units_df.copy()
+
+    with st.expander("Smart Filters", expanded=True):
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            session_types = _nonempty_sorted_values(units_df, "session_type")
+            selected_session_types = st.multiselect(
+                "Session type",
+                session_types,
+                default=session_types,
+                key="multi_unit_session_type_filter",
+            )
+            brain_areas = _nonempty_sorted_values(units_df, "brain_area")
+            selected_brain_areas = st.multiselect(
+                "Recording brain area",
+                brain_areas,
+                default=brain_areas,
+                key="multi_unit_brain_area_filter",
+            )
+
+        with col2:
+            histology_regions = _nonempty_sorted_values(units_df, "histology_region")
+            selected_histology_regions = st.multiselect(
+                "Aligned histological area",
+                histology_regions,
+                default=histology_regions,
+                key="multi_unit_histology_filter",
+            )
+            cortex_groups = _nonempty_sorted_values(units_df, "cortex_group")
+            selected_cortex_groups = st.multiselect(
+                "Cortex group",
+                cortex_groups,
+                default=cortex_groups,
+                key="multi_unit_cortex_group_filter",
+            )
+
+        with col3:
+            unit_types = _nonempty_sorted_values(units_df, "unit_type")
+            default_unit_types = ["good"] if "good" in unit_types else unit_types
+            selected_unit_types = st.multiselect(
+                "Unit type",
+                unit_types,
+                default=default_unit_types,
+                key="multi_unit_type_filter",
+            )
+            search_text = st.text_input(
+                "Search animal/session/unit",
+                key="multi_unit_search_text",
+                placeholder="e.g. G7A3, novice, 250",
+            ).strip()
+
+        metric_col1, metric_col2, metric_col3 = st.columns(3)
+        with metric_col1:
+            if "mean_firing_rate" in units_df.columns:
+                rates = pd.to_numeric(units_df["mean_firing_rate"], errors="coerce").dropna()
+                if not rates.empty and float(rates.min()) < float(rates.max()):
+                    min_rate, max_rate = st.slider(
+                        "Mean firing rate",
+                        min_value=float(rates.min()),
+                        max_value=float(rates.max()),
+                        value=(float(rates.min()), float(rates.max())),
+                        key="multi_unit_firing_rate_range",
+                    )
+                    filtered_df = filtered_df[
+                        pd.to_numeric(filtered_df["mean_firing_rate"], errors="coerce").between(min_rate, max_rate)
+                    ]
+
+        with metric_col2:
+            pvalue_columns = [
+                column
+                for column in ["tone_p_value", "choice_p_value", "outcome_p_value", "category_p_value"]
+                if column in units_df.columns
+            ]
+            if pvalue_columns:
+                selected_pvalue_column = st.selectbox(
+                    "P-value filter",
+                    pvalue_columns,
+                    key="multi_unit_pvalue_column",
+                )
+                max_pvalue = st.slider(
+                    "Max p-value",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=1.0,
+                    step=0.01,
+                    key="multi_unit_max_pvalue",
+                )
+                pvalues = pd.to_numeric(filtered_df[selected_pvalue_column], errors="coerce")
+                filtered_df = filtered_df[pvalues.isna() | (pvalues <= max_pvalue)]
+
+        with metric_col3:
+            if "psth_response_magnitude" in units_df.columns:
+                response_magnitudes = pd.to_numeric(units_df["psth_response_magnitude"], errors="coerce").dropna()
+                if not response_magnitudes.empty and float(response_magnitudes.min()) < float(response_magnitudes.max()):
+                    min_response = st.slider(
+                        "Min response magnitude",
+                        min_value=float(response_magnitudes.min()),
+                        max_value=float(response_magnitudes.max()),
+                        value=float(response_magnitudes.min()),
+                        key="multi_unit_min_response_magnitude",
+                    )
+                    filtered_df = filtered_df[
+                        pd.to_numeric(filtered_df["psth_response_magnitude"], errors="coerce") >= min_response
+                    ]
+
+    if selected_session_types and set(selected_session_types) != set(session_types):
+        filtered_df = filtered_df[filtered_df["session_type"].astype(str).isin(selected_session_types)]
+    if selected_brain_areas and set(selected_brain_areas) != set(brain_areas):
+        filtered_df = filtered_df[filtered_df["brain_area"].astype(str).isin(selected_brain_areas)]
+    if (
+        selected_histology_regions
+        and set(selected_histology_regions) != set(histology_regions)
+        and "histology_region" in filtered_df.columns
+    ):
+        filtered_df = filtered_df[filtered_df["histology_region"].astype(str).isin(selected_histology_regions)]
+    if (
+        selected_cortex_groups
+        and set(selected_cortex_groups) != set(cortex_groups)
+        and "cortex_group" in filtered_df.columns
+    ):
+        filtered_df = filtered_df[filtered_df["cortex_group"].astype(str).isin(selected_cortex_groups)]
+    if selected_unit_types and set(selected_unit_types) != set(unit_types) and "unit_type" in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df["unit_type"].astype(str).isin(selected_unit_types)]
+
+    if search_text:
+        search_columns = [
+            column
+            for column in ["animal", "date", "session_type", "brain_area", "histology_region", "unit_idx", "label_unitID"]
+            if column in filtered_df.columns
+        ]
+        search_blob = filtered_df[search_columns].astype(str).agg(" ".join, axis=1).str.lower()
+        filtered_df = filtered_df[search_blob.str.contains(search_text.lower(), regex=False, na=False)]
+
+    return filtered_df
+
+
+def _plot_multi_session_unit_counts(filtered_df: pd.DataFrame, compare_column: str):
+    count_df = (
+        filtered_df.groupby(["session_type", compare_column], dropna=False)
+        .size()
+        .reset_index(name="unit_count")
+    )
+    return px.bar(
+        count_df,
+        x="session_type",
+        y="unit_count",
+        color=compare_column,
+        barmode="group",
+        title=f"Unit Counts by Session Type and {compare_column.replace('_', ' ').title()}",
+        labels={"session_type": "Session Type", "unit_count": "Units"},
+    )
+
+
+def _render_selected_unit_preview(filtered_df: pd.DataFrame) -> None:
+    if filtered_df.empty:
+        return
+
+    st.subheader("Single Unit Drilldown")
+    id_columns = [column for column in ["animal", "date", "session_type", "brain_area", "histology_region", "unit_idx"] if column in filtered_df.columns]
+    option_df = filtered_df[id_columns + ["unit_global_id"]].copy()
+    option_df["label"] = option_df[id_columns].astype(str).agg(" | ".join, axis=1)
+    selected_label = st.selectbox(
+        "Select filtered unit",
+        option_df["label"].tolist(),
+        key="multi_unit_drilldown_select",
+    )
+    selected_unit_id = option_df.loc[option_df["label"] == selected_label, "unit_global_id"].iloc[0]
+    row = filtered_df.loc[filtered_df["unit_global_id"] == selected_unit_id].iloc[0]
+
+    metric_columns = [
+        "mean_firing_rate",
+        "tone_p_value",
+        "choice_p_value",
+        "psth_response_magnitude",
+        "psth_peak_latency",
+        "psth_signal_to_noise",
+        "go_nogo_dprime",
+    ]
+    metric_columns = [column for column in metric_columns if column in row and pd.notna(row[column])]
+    if metric_columns:
+        cols = st.columns(min(4, len(metric_columns)))
+        for idx, column in enumerate(metric_columns):
+            value = row[column]
+            label = column.replace("_", " ").title()
+            cols[idx % len(cols)].metric(label, f"{float(value):.3g}" if isinstance(value, (int, float, np.integer, np.floating)) else str(value))
+
+    plot_options = {
+        "Tone PSTH": "psth_tone_path",
+        "Choice PSTH": "psth_choice_path",
+        "Outcome PSTH": "psth_outcome_path",
+        "Tone Heatmap": "heatmap_tone_path",
+        "Choice Heatmap": "heatmap_choice_path",
+        "Outcome Heatmap": "heatmap_outcome_path",
+    }
+    available_plots = {
+        label: column
+        for label, column in plot_options.items()
+        if column in row and pd.notna(row[column]) and os.path.exists(resolve_analysis_path(row[column]))
+    }
+
+    if not available_plots:
+        st.info("No saved PSTH or heatmap HTML exists for this filtered unit.")
+        return
+
+    selected_plot = st.selectbox(
+        "Saved plot",
+        list(available_plots.keys()),
+        key="multi_unit_saved_plot_select",
+    )
+    plot_path = resolve_analysis_path(row[available_plots[selected_plot]])
+    try:
+        with open(plot_path, "r", encoding="utf-8") as f:
+            components.html(ensure_plotlyjs_inline(f.read()), height=520, scrolling=False)
+    except Exception as e:
+        st.warning(f"Could not render saved plot: {e}")
+
+
+# Category boundary constants (kHz) – match session_states.py defaults
+_BOUNDARY_LOW_KHZ: float = 0.983
+_BOUNDARY_HIGH_KHZ: float = 1.525
+
+
+def _render_tuning_curves_panel(selectivity_df: pd.DataFrame) -> None:
+    """Panel B – Mean population tuning curve per session type / brain area."""
+    if selectivity_df.empty:
+        st.info("No selectivity data available. Run offline single-unit analysis first.")
+        return
+
+    # Filters
+    filter_col1, filter_col2, filter_col3 = st.columns(3)
+    with filter_col1:
+        brain_areas = _nonempty_sorted_values(selectivity_df, "brain_area")
+        selected_areas = st.multiselect(
+            "Brain area",
+            brain_areas,
+            default=brain_areas,
+            key="tc_brain_area",
+        )
+    with filter_col2:
+        selective_only = st.checkbox(
+            "Stimulus-selective units only",
+            value=False,
+            key="tc_selective_only",
+        )
+    with filter_col3:
+        log_x = st.checkbox("Log frequency axis", value=True, key="tc_log_x")
+
+    plot_df = selectivity_df.copy()
+    if selected_areas:
+        plot_df = plot_df[plot_df["brain_area"].isin(selected_areas)]
+    if selective_only and "stimulus_selective" in plot_df.columns:
+        plot_df = plot_df[plot_df["stimulus_selective"].astype(str).str.lower() == "true"]
+
+    # Drop rows without parsed tuning data
+    plot_df = plot_df.dropna(subset=["tuning_curve_stimuli", "tuning_curve"])
+    if plot_df.empty:
+        st.info("No tuning curve data available after filtering.")
+        return
+
+    # Build a list of (session_type, brain_area) groups; produce one line per group
+    group_cols = ["session_type", "brain_area"]
+    fig = go.Figure()
+
+    palette = px.colors.qualitative.Plotly
+    color_idx = 0
+
+    for (session_type, brain_area), grp in plot_df.groupby(group_cols, dropna=False):
+        # Collect all (stimuli, rates) pairs and interpolate onto a common grid
+        all_stimuli: list[list[float]] = []
+        all_rates: list[list[float]] = []
+
+        for _, row in grp.iterrows():
+            stimuli = row["tuning_curve_stimuli"]
+            rates = row["tuning_curve"]
+            if isinstance(stimuli, list) and isinstance(rates, list) and len(stimuli) == len(rates) and len(stimuli) > 1:
+                all_stimuli.append(stimuli)
+                all_rates.append(rates)
+
+        if not all_stimuli:
+            continue
+
+        # Use the most common stimulus grid as the reference grid
+        ref_stimuli = sorted(set(s for stim_list in all_stimuli for s in stim_list))
+        aligned_rates = np.full((len(all_rates), len(ref_stimuli)), np.nan)
+        for i, (stimuli, rates) in enumerate(zip(all_stimuli, all_rates)):
+            stim_map = dict(zip(stimuli, rates))
+            for j, s in enumerate(ref_stimuli):
+                if s in stim_map:
+                    aligned_rates[i, j] = stim_map[s]
+
+        mean_rates = np.nanmean(aligned_rates, axis=0)
+        n_units = np.sum(~np.isnan(aligned_rates), axis=0)
+        # SEM: std / sqrt(n), nan where n < 2
+        with np.errstate(invalid="ignore"):
+            sem_rates = np.nanstd(aligned_rates, axis=0, ddof=1) / np.sqrt(np.maximum(n_units, 1))
+
+        color = palette[color_idx % len(palette)]
+        color_idx += 1
+        label = f"{session_type} | {brain_area} (n={len(all_rates)})"
+        x_vals = [float(s) for s in ref_stimuli]
+
+        fig.add_trace(go.Scatter(
+            x=x_vals + x_vals[::-1],
+            y=(mean_rates + sem_rates).tolist() + (mean_rates - sem_rates).tolist()[::-1],
+            fill="toself",
+            fillcolor=color.replace("rgb", "rgba").replace(")", ",0.15)") if color.startswith("rgb") else color,
+            line=dict(color="rgba(0,0,0,0)"),
+            hoverinfo="skip",
+            showlegend=False,
+            name=label + " (SEM)",
+        ))
+        fig.add_trace(go.Scatter(
+            x=x_vals,
+            y=mean_rates.tolist(),
+            mode="lines+markers",
+            name=label,
+            line=dict(color=color, width=2),
+            marker=dict(size=5),
+        ))
+
+    # Shade the category boundary region
+    fig.add_vrect(
+        x0=_BOUNDARY_LOW_KHZ,
+        x1=_BOUNDARY_HIGH_KHZ,
+        fillcolor="gray",
+        opacity=0.12,
+        layer="below",
+        line_width=0,
+        annotation_text="Boundary",
+        annotation_position="top left",
+    )
+
+    x_type = "log" if log_x else "linear"
+    fig.update_layout(
+        title="Population Tuning Curves by Session Type",
+        xaxis=dict(title="Frequency (kHz)", type=x_type),
+        yaxis=dict(title="Mean firing rate (spikes/s)"),
+        legend=dict(orientation="v"),
+        height=480,
+    )
+    st.plotly_chart(fig, use_container_width=True)
+    st.caption(
+        f"Shaded band: category boundary ({_BOUNDARY_LOW_KHZ}–{_BOUNDARY_HIGH_KHZ} kHz). "
+        "Ribbons = ± 1 SEM across units."
+    )
+
+
+def _render_responsive_units_panel(filtered_df: pd.DataFrame) -> None:
+    """Panel C – % responsive units per brain area and session type."""
+    pvalue_candidates = [
+        col for col in ["tone_p_value", "choice_p_value", "outcome_p_value", "category_p_value"]
+        if col in filtered_df.columns
+    ]
+    if not pvalue_candidates:
+        st.info("No p-value columns found in the filtered data.")
+        return
+
+    ctrl_col1, ctrl_col2 = st.columns(2)
+    with ctrl_col1:
+        pval_col = st.selectbox(
+            "Responsiveness criterion (p-value)",
+            pvalue_candidates,
+            key="responsive_pval_col",
+        )
+    with ctrl_col2:
+        threshold = st.slider(
+            "Significance threshold (α)",
+            min_value=0.001,
+            max_value=0.20,
+            value=0.05,
+            step=0.001,
+            format="%.3f",
+            key="responsive_threshold",
+        )
+
+    work_df = filtered_df.copy()
+    work_df["_pval"] = pd.to_numeric(work_df[pval_col], errors="coerce")
+    work_df["_responsive"] = work_df["_pval"] < threshold
+
+    # Compute %responsive per (session_index, session_type, brain_area) to get per-session rates
+    # then average those to get mean ± SEM per group
+    per_session = (
+        work_df.groupby(["session_index", "session_type", "brain_area"], dropna=False)
+        .agg(
+            n_responsive=("_responsive", "sum"),
+            n_total=("_responsive", "count"),
+        )
+        .reset_index()
+    )
+    per_session = per_session[per_session["n_total"] > 0].copy()
+    per_session["pct_responsive"] = 100.0 * per_session["n_responsive"] / per_session["n_total"]
+
+    summary = (
+        per_session.groupby(["session_type", "brain_area"], dropna=False)["pct_responsive"]
+        .agg(mean="mean", sem=lambda x: float(np.std(x, ddof=1) / np.sqrt(len(x))) if len(x) > 1 else 0.0)
+        .reset_index()
+    )
+
+    fig = go.Figure()
+    brain_areas = sorted(summary["brain_area"].dropna().unique().tolist())
+    palette = px.colors.qualitative.Plotly
+
+    for idx, area in enumerate(brain_areas):
+        area_df = summary[summary["brain_area"] == area].sort_values("session_type")
+        fig.add_trace(go.Bar(
+            x=area_df["session_type"],
+            y=area_df["mean"],
+            error_y=dict(type="data", array=area_df["sem"].tolist(), visible=True),
+            name=area,
+            marker_color=palette[idx % len(palette)],
+        ))
+
+    fig.update_layout(
+        title=f"% Responsive Units by Session Type ({pval_col} < {threshold})",
+        xaxis_title="Session Type",
+        yaxis_title="% Responsive Units",
+        barmode="group",
+        height=440,
+    )
+    st.plotly_chart(fig, use_container_width=True)
+    st.caption("Error bars = ± 1 SEM across recording sessions.")
+
+
+def _render_best_frequency_panel(filtered_df: pd.DataFrame) -> None:
+    """Panel D – Population distribution of best frequencies near the category boundary."""
+    if "best_stimulus" not in filtered_df.columns:
+        st.info("best_stimulus column not found in the filtered data.")
+        return
+
+    work_df = filtered_df.copy()
+    work_df["best_stimulus"] = pd.to_numeric(work_df["best_stimulus"], errors="coerce")
+    work_df = work_df.dropna(subset=["best_stimulus"])
+    if work_df.empty:
+        st.info("No best_stimulus data available after filtering.")
+        return
+
+    ctrl_col1, ctrl_col2, ctrl_col3 = st.columns(3)
+    with ctrl_col1:
+        brain_areas = _nonempty_sorted_values(work_df, "brain_area")
+        selected_areas = st.multiselect(
+            "Brain area",
+            brain_areas,
+            default=brain_areas,
+            key="bf_brain_area",
+        )
+    with ctrl_col2:
+        n_bins = st.slider("Histogram bins", min_value=5, max_value=40, value=15, key="bf_nbins")
+    with ctrl_col3:
+        log_x = st.checkbox("Log frequency axis", value=True, key="bf_log_x")
+
+    if selected_areas:
+        work_df = work_df[work_df["brain_area"].isin(selected_areas)]
+
+    session_types = sorted(work_df["session_type"].dropna().unique().tolist())
+    areas_in_data = sorted(work_df["brain_area"].dropna().unique().tolist())
+    n_areas = len(areas_in_data)
+
+    from plotly.subplots import make_subplots
+    fig = make_subplots(
+        rows=1,
+        cols=max(n_areas, 1),
+        subplot_titles=[str(a) for a in areas_in_data] if n_areas > 1 else None,
+        shared_yaxes=True,
+    )
+
+    palette = px.colors.qualitative.Plotly
+
+    # Determine common bin edges in log space so subplots are aligned
+    bf_min = float(work_df["best_stimulus"].min())
+    bf_max = float(work_df["best_stimulus"].max())
+    if log_x and bf_min > 0:
+        bin_edges = np.logspace(np.log10(bf_min), np.log10(bf_max), n_bins + 1)
+    else:
+        bin_edges = np.linspace(bf_min, bf_max, n_bins + 1)
+
+    for col_idx, area in enumerate(areas_in_data, start=1):
+        area_df = work_df[work_df["brain_area"] == area]
+        for st_idx, session_type in enumerate(session_types):
+            st_df = area_df[area_df["session_type"] == session_type]["best_stimulus"].dropna()
+            if st_df.empty:
+                continue
+
+            counts, _ = np.histogram(st_df.values, bins=bin_edges)
+            bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+
+            fig.add_trace(
+                go.Bar(
+                    x=bin_centers.tolist(),
+                    y=counts.tolist(),
+                    name=session_type,
+                    marker_color=palette[st_idx % len(palette)],
+                    opacity=0.7,
+                    showlegend=(col_idx == 1),
+                    legendgroup=session_type,
+                ),
+                row=1,
+                col=col_idx,
+            )
+
+        # Shade boundary zone on every subplot
+        for vrect_col in [col_idx]:
+            fig.add_vrect(
+                x0=_BOUNDARY_LOW_KHZ,
+                x1=_BOUNDARY_HIGH_KHZ,
+                fillcolor="gray",
+                opacity=0.15,
+                layer="below",
+                line_width=0,
+                row=1,
+                col=vrect_col,
+            )
+
+    x_type = "log" if log_x else "linear"
+    fig.update_xaxes(title_text="Best frequency (kHz)", type=x_type)
+    fig.update_yaxes(title_text="Unit count", col=1)
+    fig.update_layout(
+        title="Best Frequency Distribution by Session Type",
+        barmode="overlay",
+        height=440,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+    st.caption(
+        f"Shaded band: category boundary ({_BOUNDARY_LOW_KHZ}–{_BOUNDARY_HIGH_KHZ} kHz). "
+        "Includes stimulus-selective units only where best_stimulus is defined."
+    )
+
+
+def _classify_learning_stage(session_type: str) -> str:
+    """Map a session_type string to a canonical learning stage label.
+
+    Matches the naming convention in recording folder names, e.g.
+    'catgt_G4A2_novice2_2b_4t_g0' → session_type contains 'novice', '1b', or '2b'.
+    Returns 'Novice', '1b Expert', '2b Expert', or 'Other'.
+    """
+    s = str(session_type).lower()
+    if "novice" in s:
+        return "Novice"
+    if "2b" in s:
+        return "2b Expert"
+    if "1b" in s:
+        return "1b Expert"
+    return "Other"
+
+
+# Alias imported palette so rest of this module uses the same name
+_STAGE_COLORS = LEARNING_STAGE_COLORS
+
+KDE_BW_DENSITY = 0.04  # bandwidth factor for overlay density KDE (log space)
+
+
+_BF_EXCLUDE_CENTER_KHZ = 1.5   # category boundary to exclude from density KDE
+_BF_EXCLUDE_MARGIN_KHZ = 0.05  # ±margin around the boundary
+
+
+def _plot_best_freq_density_overlay(
+    plot_df: pd.DataFrame,
+    stage_labels: list[str],
+    use_log_scale: bool,
+    title: str,
+    x_range: tuple[float, float] | None = None,
+    kde_bw: float = KDE_BW_DENSITY,
+) -> go.Figure | None:
+    """Overlay best-frequency KDE density curves for the given learning stages.
+
+    BF values within ±_BF_EXCLUDE_MARGIN_KHZ of _BF_EXCLUDE_CENTER_KHZ are
+    excluded before KDE to avoid the category boundary dominating the density.
+
+    Args:
+        plot_df:      DataFrame that already has a 'learning_stage' column and
+                      a numeric 'best_stimulus' column.
+        stage_labels: Ordered list of stage names to include (e.g. ["Novice", "1b Expert"]).
+        use_log_scale: Whether to compute/display on a log frequency axis.
+        title:        Plot title.
+    """
+    _bf_lo = _BF_EXCLUDE_CENTER_KHZ - _BF_EXCLUDE_MARGIN_KHZ
+    _bf_hi = _BF_EXCLUDE_CENTER_KHZ + _BF_EXCLUDE_MARGIN_KHZ
+
+    all_bf = pd.to_numeric(plot_df["best_stimulus"], errors="coerce").dropna()
+    all_bf = all_bf[all_bf > 0] if use_log_scale else all_bf
+    # apply boundary exclusion to the shared range estimate too
+    all_bf = all_bf[~all_bf.between(_bf_lo, _bf_hi)]
+    if all_bf.empty:
+        return None
+
+    if use_log_scale:
+        x_common = np.logspace(np.log10(all_bf.min()), np.log10(all_bf.max()), 300)
+    else:
+        x_common = np.linspace(all_bf.min(), all_bf.max(), 300)
+
+    fig = go.Figure()
+    for stage in stage_labels:
+        mask = plot_df["learning_stage"] == stage
+        bf = pd.to_numeric(plot_df.loc[mask, "best_stimulus"], errors="coerce").dropna()
+        bf = bf[bf > 0] if use_log_scale else bf
+        # exclude boundary zone
+        bf = bf[~bf.between(_bf_lo, _bf_hi)].values
+        if len(bf) < 3:
+            continue
+
+        line_color, fill_color = _STAGE_COLORS.get(stage, ("#888888", "rgba(136,136,136,0.15)"))
+        if use_log_scale:
+            kde = stats.gaussian_kde(np.log10(bf), bw_method=kde_bw)
+            kde_y = kde(np.log10(x_common))
+        else:
+            kde = stats.gaussian_kde(bf, bw_method=kde_bw)
+            kde_y = kde(x_common)
+        kde_y = kde_y / kde_y.max()
+
+        fig.add_trace(go.Scatter(
+            x=x_common,
+            y=kde_y,
+            mode="lines",
+            fill="tozeroy",
+            fillcolor=fill_color,
+            line=dict(color=line_color, width=2),
+            name=f"{stage} (n={len(bf)})",
+            hovertemplate="Freq: %{x:.2f} kHz<br>Density: %{y:.3f}<extra></extra>",
+        ))
+
+    if not fig.data:
+        return None
+
+    x_min, x_max = x_range if x_range is not None else (0.6, 2.2)
+    fig.update_layout(
+        title=title,
+        xaxis=dict(
+            type="log" if use_log_scale else "linear",
+            title="Frequency (kHz)" + (" [log scale]" if use_log_scale else ""),
+            range=[np.log10(x_min), np.log10(x_max)] if use_log_scale else [x_min, x_max],
+            showgrid=True,
+        ),
+        yaxis=dict(title="Normalised density", showgrid=True, range=[0, 1.1]),
+        plot_bgcolor="white",
+        paper_bgcolor="white",
+        height=320,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+    )
+    return fig
+
+
+def _render_selectivity_heatmap_panel(selectivity_df: pd.DataFrame) -> None:
+    """Panel E – Per-session-type tuning-curve heatmaps sorted by best frequency."""
+    if selectivity_df.empty:
+        st.info("No selectivity data available. Run offline single-unit analysis first.")
+        return
+
+    # --- Shared filter controls ---
+    ctrl_col1, ctrl_col2, ctrl_col3, ctrl_col4, ctrl_col5 = st.columns(5)
+    with ctrl_col1:
+        brain_areas = _nonempty_sorted_values(selectivity_df, "brain_area")
+        selected_areas = st.multiselect(
+            "Brain area",
+            brain_areas,
+            default=brain_areas,
+            key="sh_brain_area",
+        )
+    with ctrl_col2:
+        selective_only = st.checkbox(
+            "Stimulus-selective units only",
+            value=False,
+            key="sh_selective_only",
+        )
+    with ctrl_col3:
+        good_units_only = st.checkbox(
+            "Good units only",
+            value=True,
+            key="sh_good_units_only",
+        )
+    with ctrl_col4:
+        log_x = st.checkbox("Log frequency axis", value=True, key="sh_log_x")
+    with ctrl_col5:
+        normalize = st.checkbox("Normalize per unit", value=True, key="sh_normalize")
+
+    # Apply shared filters (brain area, quality flags) — keep ALL units for density
+    filtered_df = selectivity_df.copy()
+    # Always drop noise units regardless of other filters
+    if "unit_type" in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df["unit_type"].astype(str).str.lower() != "noise"]
+    if selected_areas:
+        filtered_df = filtered_df[filtered_df["brain_area"].isin(selected_areas)]
+    if selective_only and "stimulus_selective" in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df["stimulus_selective"].astype(str).str.lower() == "true"]
+    if good_units_only and "unit_type" in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df["unit_type"].astype(str).str.lower() == "good"]
+
+    # Attach learning stage before splitting so both views share the same column
+    if "session_type" in filtered_df.columns:
+        filtered_df["learning_stage"] = filtered_df["session_type"].apply(_classify_learning_stage)
+    else:
+        filtered_df["learning_stage"] = "Other"
+
+    # density_df: only needs best_stimulus — do NOT drop rows missing tuning curves
+    density_df = filtered_df.dropna(subset=["best_stimulus"]).copy()
+
+    # plot_df (heatmap): requires both tuning-curve columns to be present
+    plot_df = filtered_df.dropna(subset=["tuning_curve_stimuli", "tuning_curve"]).copy()
+
+    if plot_df.empty:
+        st.info("No tuning curve data available after filtering.")
+        return
+
+    session_types = sorted(plot_df["session_type"].dropna().unique().tolist())
+    if not session_types:
+        st.info("No session types found in the data.")
+        return
+
+    # --- Density overlay option ---
+    show_density = st.checkbox(
+        "Show best-frequency density comparison by learning stage",
+        value=False,
+        key="sh_density_overlay",
+    )
+    if show_density:
+        kde_bw = st.slider(
+            "KDE smoothing (bandwidth)",
+            min_value=0.01,
+            max_value=0.30,
+            value=KDE_BW_DENSITY,
+            step=0.01,
+            format="%.2f",
+            key="sh_kde_bw",
+            help="Controls how smooth the density curves are. Lower = sharper peaks, higher = broader.",
+        )
+        density_areas = sorted(density_df["brain_area"].dropna().unique().tolist()) if "brain_area" in density_df.columns else ["All"]
+        for area in density_areas:
+            st.markdown(f"**{area}**")
+            area_df = density_df[density_df["brain_area"] == area] if area != "All" else density_df
+            dcol1, dcol2 = st.columns(2)
+            with dcol1:
+                fig_1b = _plot_best_freq_density_overlay(
+                    area_df,
+                    stage_labels=["Novice", "1b Expert"],
+                    use_log_scale=log_x,
+                    title=f"{area} — 1b: Novice vs Expert",
+                    x_range=(0.68, 1.5),
+                    kde_bw=kde_bw,
+                )
+                if fig_1b is not None:
+                    st.plotly_chart(fig_1b, use_container_width=True)
+                    st.caption("1b context · 'novice' or '1b' sessions · BF ≠ 1.5±0.05 kHz")
+                else:
+                    st.info(f"{area}: insufficient data for 1b comparison (need ≥3 units/stage).")
+            with dcol2:
+                fig_2b = _plot_best_freq_density_overlay(
+                    area_df,
+                    stage_labels=["Novice", "1b Expert", "2b Expert"],
+                    use_log_scale=log_x,
+                    title=f"{area} — 2b: Novice / 1b Expert / 2b Expert",
+                    kde_bw=kde_bw,
+                )
+                if fig_2b is not None:
+                    st.plotly_chart(fig_2b, use_container_width=True)
+                    st.caption("2b context · 'novice', '1b', '2b' sessions · BF ≠ 1.5±0.05 kHz")
+                else:
+                    st.info(f"{area}: insufficient data for 2b comparison (need ≥3 units/stage).")
+            st.divider()
+
+    # One sub-tab per session type so heatmaps don't stack vertically
+    sub_tabs = st.tabs(session_types)
+    for tab, session_type in zip(sub_tabs, session_types):
+        with tab:
+            st_df = plot_df[plot_df["session_type"] == session_type]
+            if st_df.empty:
+                st.info(f"No tuning curve data for session type '{session_type}'.")
+                continue
+
+            fig = plot_tuning_curves_heatmap(
+                st_df,
+                use_log_scale=log_x,
+                normalize_per_unit=normalize,
+            )
+            if fig is None:
+                st.info(f"Could not build heatmap for session type '{session_type}' (insufficient data).")
+                continue
+
+            fig.update_layout(
+                title=f"Tuning Curves Heatmap — {session_type} (n={len(st_df)} units, sorted by best frequency)"
+            )
+            st.plotly_chart(fig, use_container_width=True)
+            st.caption(
+                f"Each row = one unit. Columns = frequency (kHz). "
+                f"Color = {'normalised [0,1]' if normalize else 'firing rate (spikes/s)'}. "
+                f"Sorted top → bottom by ascending best frequency."
+            )
+
+
+def multi_session_single_unit_analysis_panel(selected_sessions_df: pd.DataFrame) -> None:
+    """Render an aggregated unit-analysis panel across checked NPXL sessions."""
+    from Analysis.NPXL_analysis.single_unit_dataset import (
+        load_multi_session_unit_metrics,
+        load_selectivity_data,
+    )
+
+    st.write("### Multi-Session Single Unit Analysis")
+    if selected_sessions_df is None or selected_sessions_df.empty:
+        st.info("Select one or more sessions to compare units across sessions.")
+        return
+
+    with st.spinner("Loading unit metrics and histology mappings..."):
+        units_df = load_multi_session_unit_metrics(selected_sessions_df)
+
+    if units_df.empty:
+        st.warning("No unit metrics were found for the selected sessions. Run offline single-unit analysis first.")
+        return
+
+    filtered_df = _apply_multi_session_unit_filters(units_df)
+    matched_mapping = 0
+    if "mapping_join_status" in units_df.columns:
+        matched_mapping = int((units_df["mapping_join_status"] == "matched").sum())
+
+    metric_cols = st.columns(4)
+    metric_cols[0].metric("Filtered Units", f"{len(filtered_df):,}/{len(units_df):,}")
+    metric_cols[1].metric("Sessions", units_df["session_index"].nunique())
+    metric_cols[2].metric("Histology Matches", f"{matched_mapping:,}/{len(units_df):,}")
+    metric_cols[3].metric("Brain Areas", units_df["brain_area"].nunique())
+
+
+    if filtered_df.empty:
+        st.info("No units match the current filters.")
+        return
+
+    compare_options = [
+        column
+        for column in ["brain_area", "histology_region", "cortex_group", "unit_type"]
+        if column in filtered_df.columns and filtered_df[column].notna().any()
+    ]
+    metric_options = _numeric_metric_columns(filtered_df)
+
+    plot_col1, plot_col2 = st.columns(2)
+    with plot_col1:
+        compare_column = st.selectbox(
+            "Compare by",
+            compare_options,
+            key="multi_unit_compare_column",
+        )
+        st.plotly_chart(
+            _plot_multi_session_unit_counts(filtered_df, compare_column),
+            use_container_width=True,
+        )
+
+    with plot_col2:
+        if metric_options:
+            trait_metric = st.selectbox(
+                "Trait distribution",
+                metric_options,
+                key="multi_unit_trait_metric",
+            )
+            trait_df = filtered_df.copy()
+            trait_df[trait_metric] = pd.to_numeric(trait_df[trait_metric], errors="coerce")
+            trait_df = trait_df.dropna(subset=[trait_metric])
+            if not trait_df.empty:
+                fig = px.box(
+                    trait_df,
+                    x="session_type",
+                    y=trait_metric,
+                    color=compare_column,
+                    points="outliers",
+                    title=f"{trait_metric.replace('_', ' ').title()} by Session Type",
+                    labels={"session_type": "Session Type", trait_metric: trait_metric.replace("_", " ").title()},
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
+    if len(metric_options) >= 2:
+        scatter_col1, scatter_col2, scatter_col3, scatter_col4 = st.columns(4)
+        with scatter_col1:
+            x_metric = st.selectbox("Scatter X", metric_options, index=0, key="multi_unit_scatter_x")
+        with scatter_col2:
+            y_metric = st.selectbox("Scatter Y", metric_options, index=1, key="multi_unit_scatter_y")
+        with scatter_col3:
+            color_column = st.selectbox(
+                "Color by",
+                compare_options,
+                key="multi_unit_scatter_color",
+            )
+        with scatter_col4:
+            scatter_session_types = _nonempty_sorted_values(filtered_df, "session_type")
+            selected_scatter_session_types = st.multiselect(
+                "Scatter session type",
+                scatter_session_types,
+                default=scatter_session_types,
+                key="multi_unit_scatter_session_type",
+            )
+
+        scatter_df = filtered_df.copy()
+        if selected_scatter_session_types and set(selected_scatter_session_types) != set(scatter_session_types):
+            scatter_df = scatter_df[scatter_df["session_type"].astype(str).isin(selected_scatter_session_types)]
+
+        scatter_df[x_metric] = pd.to_numeric(scatter_df[x_metric], errors="coerce")
+        scatter_df[y_metric] = pd.to_numeric(scatter_df[y_metric], errors="coerce")
+        scatter_df = scatter_df.dropna(subset=[x_metric, y_metric])
+        if not scatter_df.empty:
+            hover_columns = [
+                column
+                for column in ["animal", "date", "session_type", "brain_area", "histology_region", "unit_idx", "unit_type"]
+                if column in scatter_df.columns
+            ]
+            fig = px.scatter(
+                scatter_df,
+                x=x_metric,
+                y=y_metric,
+                color=color_column,
+                hover_data=hover_columns,
+                title=f"{x_metric.replace('_', ' ').title()} vs {y_metric.replace('_', ' ').title()}",
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+    st.subheader("Filtered Unit Table")
+    display_columns = [
+        column
+        for column in [
+            # identity
+            "animal",
+            "date",
+            "session_type",
+            "brain_area",
+            "histology_region",
+            "cortex_group",
+            "unit_type",
+            "unit_idx",
+            "label_unitID",
+            "peak_channel",
+            "y_pos",
+            # basic activity
+            "mean_firing_rate",
+            "psth_response_type",
+            "psth_baseline_rate",
+            "psth_peak_rate",
+            "psth_onset_latency",
+            "psth_peak_latency",
+            "psth_response_magnitude",
+            "psth_signal_to_noise",
+            "psth_fwhm",
+            # tone / p-values
+            "tone_p_value",
+            "outcome_p_value",
+            "choice_p_value",
+            "category_p_value",
+            # stimulus selectivity
+            "stimulus_selective",
+            "best_stimulus",
+            "max_stimulus_response",
+            "min_stimulus_response",
+            # outcome modulation
+            "outcome_modulated",
+            "rewarded_mean_rate",
+            "non_rewarded_mean_rate",
+            # go/nogo discrimination
+            "go_nogo_dprime",
+            "go_nogo_roc_auc",
+            "go_nogo_selective",
+            # choice coding
+            "choice_probability",
+            "choice_probability_corr",
+            "choice_coding",
+            # category sensitivity
+            "category_sensitive",
+            "category_anova_p",
+            "best_category",
+            # trial counts
+            "trial_count_hit",
+            "trial_count_miss",
+            "trial_count_fa",
+            "trial_count_cr",
+            # mapping
+            "mapping_join_status",
+        ]
+        if column in filtered_df.columns
+    ]
+    st.dataframe(filtered_df[display_columns], use_container_width=True, height=420)
+    st.download_button(
+        "Download filtered units CSV",
+        filtered_df.to_csv(index=False).encode("utf-8"),
+        file_name="filtered_multi_session_units.csv",
+        mime="text/csv",
+        key="download_multi_session_units",
+    )
+
+    _render_selected_unit_preview(filtered_df)
+
+    # ------------------------------------------------------------------
+    # Figure 5: Single-Unit Tuning & Plasticity
+    # ------------------------------------------------------------------
+    st.divider()
+    st.subheader("Figure 5: Single-Unit Tuning & Plasticity")
+    with st.expander("Methods", expanded=False):
+        st.markdown("""
+**Tuning curve estimation.**
+For each unit, mean firing rate was computed in a post-stimulus window (−0.1 to +0.5 s relative to tone onset)
+across all valid trials, averaged per frequency. The **best frequency (BF)** was defined as the tone frequency
+that elicited the highest mean firing rate. Units were classified as **stimulus-selective** if the peak-to-trough
+range of the tuning curve exceeded twice the maximum SEM across frequencies.
+
+**Stimulus selectivity & coding metrics.**
+Four metrics were computed per unit per session:
+- *Outcome modulation* — Wilcoxon rank-sum test comparing spike rates on rewarded vs. unrewarded trials (p < 0.05 threshold).
+- *Go/NoGo coding* — d′ and ROC-AUC computed from firing rates on Go vs. NoGo trials (selective if |d′| > 0.5).
+- *Choice probability* — area under the ROC curve computed from Hit vs. Miss trials, corrected for firing-rate bias (|CP\_corr| > 0.1 threshold).
+- *Category sensitivity* — one-way ANOVA across tone-frequency categories; units passing p < 0.05 were flagged as category-sensitive.
+
+**Unit quality.**
+Only Kilosort-labelled **"good"** units (single units passing manual or automated curation) are included by default.
+MUA and noise labels are available for comparison via the filter controls.
+
+**Best-frequency density comparison.**
+Population BF distributions are estimated with a **Gaussian KDE** (bandwidth adjustable via slider) applied
+separately for each brain area (ACx, OFC) and each learning stage:
+- *1b context* — Novice vs. 1b Expert (x-axis 0.68–1.5 kHz; the 1-boundary category boundary).
+- *2b context* — Novice, 1b Expert, and 2b Expert (x-axis 0.6–2.2 kHz; the 2-boundary category range).
+
+Units with BF within ±0.05 kHz of the 1.5 kHz boundary are excluded from density estimation to prevent the
+boundary itself from artificially inflating density in that region.
+
+**Heatmaps.**
+Tuning curves are interpolated to a common 150-point log-spaced frequency axis, optionally smoothed (σ = 1 bin,
+Gaussian) and normalised per unit to \[0, 1\]. Rows are sorted by ascending BF. A KDE strip below each heatmap
+projects the BF distribution of that session type.
+        """)
+
+    with st.spinner("Loading selectivity / tuning-curve data..."):
+        selectivity_df = load_selectivity_data(selected_sessions_df)
+
+    _render_selectivity_heatmap_panel(selectivity_df)
+
 
 def single_unit_analysis_panel(selected_recording_dir=None, selected_area=None, raw_folder=None):
     import streamlit as st
@@ -760,13 +1874,13 @@ def single_unit_analysis_panel(selected_recording_dir=None, selected_area=None, 
                 df_to_check = units_metrics_df_sorted if units_metrics_df_sorted is not None else units_metrics_df
                 if "psth_tone_path" in df_to_check.columns:
                     if pd.notna(row.get("psth_tone_path", None)):
-                        html_tone_path = normalize_workspace_path(row["psth_tone_path"])
+                        html_tone_path = resolve_analysis_path(row["psth_tone_path"], analysis_output_dir)
                 if html_tone_path and os.path.exists(html_tone_path):
                     try:
                         with open(html_tone_path, "r", encoding="utf-8") as f:
                             psth_render = f.read()
                         st.markdown(f"### Tone PSTH")
-                        components.html(psth_render, height=500, scrolling=False)
+                        components.html(ensure_plotlyjs_inline(psth_render), height=500, scrolling=False)
                     except Exception as e:
                         st.warning(f"Error loading PSTH plot: {e}")
                 else:
@@ -774,13 +1888,13 @@ def single_unit_analysis_panel(selected_recording_dir=None, selected_area=None, 
                 # plot psth by choice
                 if "psth_choice_path" in df_to_check.columns:
                     if pd.notna(row.get("psth_choice_path", None)):
-                        html_choice_path = normalize_workspace_path(row["psth_choice_path"])
+                        html_choice_path = resolve_analysis_path(row["psth_choice_path"], analysis_output_dir)
                 if html_choice_path and os.path.exists(html_choice_path):
                     try:
                         with open(html_choice_path, "r", encoding="utf-8") as f:
                             psth_render = f.read()
                         st.markdown(f"### Choice PSTH")
-                        components.html(psth_render, height=500, scrolling=False)
+                        components.html(ensure_plotlyjs_inline(psth_render), height=500, scrolling=False)
                     except Exception as e:
                         st.warning(f"Error loading PSTH plot: {e}")
                 else:
@@ -788,13 +1902,13 @@ def single_unit_analysis_panel(selected_recording_dir=None, selected_area=None, 
                 # plot psth by outcome
                 if "psth_outcome_path" in df_to_check.columns:
                     if pd.notna(row.get("psth_outcome_path", None)):
-                        html_outcome_path = normalize_workspace_path(row["psth_outcome_path"])
+                        html_outcome_path = resolve_analysis_path(row["psth_outcome_path"], analysis_output_dir)
                 if html_outcome_path and os.path.exists(html_outcome_path):
                     try:
                         with open(html_outcome_path, "r", encoding="utf-8") as f:
                             psth_render = f.read()
                         st.markdown(f"### Outcome PSTH")
-                        components.html(psth_render, height=500, scrolling=False)
+                        components.html(ensure_plotlyjs_inline(psth_render), height=500, scrolling=False)
                     except Exception as e:
                         st.warning(f"Error loading PSTH plot: {e}")
                 else:
@@ -828,14 +1942,13 @@ def single_unit_analysis_panel(selected_recording_dir=None, selected_area=None, 
             with viz_col2:
                 heatmap_html_path = None
                 if "plot_path_heatmap" in units_metrics_df.columns:
-                    # Locate row by unit_idx column if exists
                     if pd.notna(row.get("plot_path_heatmap", None)):
-                        heatmap_html_path = normalize_workspace_path(row["plot_path_heatmap"])
+                        heatmap_html_path = resolve_analysis_path(row["plot_path_heatmap"], analysis_output_dir)
                 if heatmap_html_path and os.path.exists(heatmap_html_path):
                     try:
                         with open(heatmap_html_path, "r", encoding="utf-8") as f:
                             heatmap_render = f.read()
-                        components.html(heatmap_render, height=500, scrolling=False)
+                        components.html(ensure_plotlyjs_inline(heatmap_render), height=500, scrolling=False)
                     except Exception as e:
                         st.warning(f"Error loading heatmap plot: {e}")
                 else:
@@ -998,256 +2111,3 @@ def single_unit_analysis_panel(selected_recording_dir=None, selected_area=None, 
                 base_path=selected_recording_dir,
                 selected_area=selected_area or "",
             )
-        
-    #     if not has_analysis_data:
-    #         st.warning("⚠️ Analysis output not found. Please run the offline analysis first.")
-    #     else:
-    #         # Load comprehensive unit metrics
-    #         units_metrics_path = os.path.join(analysis_output_dir, "tables", "acx_all_units_metrics.csv")
-    #         if not os.path.exists(units_metrics_path):
-    #             units_metrics_path = os.path.join(analysis_output_dir, "tables", "ofc_all_units_metrics.csv")
-            
-    #         if os.path.exists(units_metrics_path):
-    #             units_metrics_df = pd.read_csv(units_metrics_path)
-    #             st.success(f"✅ Loaded comprehensive metrics for {len(units_metrics_df)} units")
-                
-    #             # Unit selection
-    #             st.subheader("Unit Selection")
-    #             if 'unit_idx' in units_metrics_df.columns:
-    #                 unit_options = units_metrics_df['unit_idx'].tolist()
-    #                 selected_unit_idx = st.selectbox("Select Unit", unit_options, key="glm_unit_select")
-                    
-    #                 # Display comprehensive metrics for selected unit
-    #                 unit_data = units_metrics_df[units_metrics_df['unit_idx'] == selected_unit_idx].iloc[0]
-                    
-    #                 st.subheader(f"Comprehensive Metrics for Unit {selected_unit_idx}")
-                    
-    #                 # Display key metrics in columns
-    #                 metrics_col1, metrics_col2, metrics_col3 = st.columns(3)
-                    
-    #                 with metrics_col1:
-    #                     st.write("**Response Properties**")
-    #                     if 'response_type' in unit_data:
-    #                         st.metric("Response Type", str(unit_data['response_type']))
-    #                     if 'onset_latency' in unit_data and not pd.isna(unit_data['onset_latency']):
-    #                         st.metric("Onset Latency", f"{unit_data['onset_latency']:.3f}s")
-    #                     if 'peak_latency' in unit_data and not pd.isna(unit_data['peak_latency']):
-    #                         st.metric("Peak Latency", f"{unit_data['peak_latency']:.3f}s")
-    #                     if 'response_magnitude' in unit_data and not pd.isna(unit_data['response_magnitude']):
-    #                         st.metric("Response Magnitude", f"{unit_data['response_magnitude']:.2f} spikes/s")
-                    
-    #                 with metrics_col2:
-    #                     st.write("**Selectivity Metrics**")
-    #                     if 'd_prime' in unit_data and not pd.isna(unit_data['d_prime']):
-    #                         st.metric("d' (Go/NoGo)", f"{unit_data['d_prime']:.3f}")
-    #                     if 'choice_probability' in unit_data and not pd.isna(unit_data['choice_probability']):
-    #                         st.metric("Choice Probability", f"{unit_data['choice_probability']:.3f}")
-    #                     if 'outcome_p_value' in unit_data and not pd.isna(unit_data['outcome_p_value']):
-    #                         st.metric("Outcome p-value", f"{unit_data['outcome_p_value']:.3g}")
-                    
-    #                 with metrics_col3:
-    #                     st.write("**PSTH Metrics**")
-    #                     if 'baseline_rate' in unit_data and not pd.isna(unit_data['baseline_rate']):
-    #                         st.metric("Baseline Rate", f"{unit_data['baseline_rate']:.2f} spikes/s")
-    #                     if 'peak_rate' in unit_data and not pd.isna(unit_data['peak_rate']):
-    #                         st.metric("Peak Rate", f"{unit_data['peak_rate']:.2f} spikes/s")
-    #                     if 'signal_to_noise' in unit_data and not pd.isna(unit_data['signal_to_noise']):
-    #                         st.metric("Signal-to-Noise", f"{unit_data['signal_to_noise']:.2f}")
-                    
-    #                 # Display full metrics table
-    #                 st.subheader("All Metrics")
-    #                 st.dataframe(unit_data.to_frame().T, use_container_width=True)
-                    
-    #                 # Load and display saved plots
-    #                 plots_dir = os.path.join(analysis_output_dir, "plots")
-    #                 if os.path.exists(plots_dir):
-    #                     # Check for heatmap
-    #                     heatmap_plot_path = os.path.join(plots_dir, "raw_psth", f"acx_unit_{selected_unit_idx}_heatmap.html")
-    #                     if not os.path.exists(heatmap_plot_path):
-    #                         heatmap_plot_path = os.path.join(plots_dir, "raw_psth", f"ofc_unit_{selected_unit_idx}_heatmap.html")
-                        
-    #                     if os.path.exists(heatmap_plot_path):
-    #                         st.subheader("Unit Heatmap")
-    #                         with open(heatmap_plot_path, 'r', encoding='utf-8') as f:
-    #                             st.components.v1.html(f.read(), height=600)
-    #         else:
-    #             st.warning("Comprehensive unit metrics file not found in analysis output.")
-        
-  
-    
-    # with qa_tab:
-    #     st.header("Quality Assurance")
-    #     import PIL.Image
-    #     import base64
-    #     from io import BytesIO
-
-    #     if selected_folder is not None:
-    #         # Determine parent directory
-    #         if os.path.basename(selected_folder) == "analysis_output":
-    #             parent_dir = os.path.dirname(selected_folder)
-    #         else:
-    #             parent_dir = selected_folder
-            
-    #         # Check for bombcell folder
-    #         qa_folder = os.path.join(parent_dir, "bombcell")
-    #         has_bombcell = os.path.exists(qa_folder)
-            
-    #         # Check for analysis output summary plots
-    #         if has_analysis_data and analysis_output_dir is not None:
-    #             st.subheader("Analysis Output Summary")
-    #             plots_dir = os.path.join(analysis_output_dir, "plots")
-                
-    #             # Try to load summary plots
-    #             summary_plots = []
-    #             if os.path.exists(plots_dir):
-    #                 # Check for ACx summary plots
-    #                 acx_dir = os.path.join(plots_dir, "acx")
-    #                 if os.path.exists(acx_dir):
-    #                     acx_metrics_plot = os.path.join(acx_dir, "acx_selectivity_metrics_summary.html")
-    #                     acx_class_plot = os.path.join(acx_dir, "acx_unit_classification_summary.html")
-    #                     if os.path.exists(acx_metrics_plot):
-    #                         st.write("**ACx Selectivity Metrics Summary**")
-    #                         with open(acx_metrics_plot, 'r', encoding='utf-8') as f:
-    #                             st.components.v1.html(f.read(), height=500)
-    #                     if os.path.exists(acx_class_plot):
-    #                         st.write("**ACx Unit Classification Summary**")
-    #                         with open(acx_class_plot, 'r', encoding='utf-8') as f:
-    #                             st.components.v1.html(f.read(), height=500)
-                    
-    #                 # Check for OFC summary plots
-    #                 ofc_dir = os.path.join(plots_dir, "ofc")
-    #                 if os.path.exists(ofc_dir):
-    #                     ofc_metrics_plot = os.path.join(ofc_dir, "ofc_selectivity_metrics_summary.html")
-    #                     ofc_class_plot = os.path.join(ofc_dir, "ofc_unit_classification_summary.html")
-    #                     if os.path.exists(ofc_metrics_plot):
-    #                         st.write("**OFC Selectivity Metrics Summary**")
-    #                         with open(ofc_metrics_plot, 'r', encoding='utf-8') as f:
-    #                             st.components.v1.html(f.read(), height=500)
-    #                     if os.path.exists(ofc_class_plot):
-    #                         st.write("**OFC Unit Classification Summary**")
-    #                         with open(ofc_class_plot, 'r', encoding='utf-8') as f:
-    #                             st.components.v1.html(f.read(), height=500)
-                    
-    #                 # Check for comparison plots
-    #                 comparison_dir = os.path.join(plots_dir, "comparison")
-    #                 if os.path.exists(comparison_dir):
-    #                     comparison_plot = os.path.join(comparison_dir, "ofc_vs_acx_selectivity_comparison.html")
-    #                     if os.path.exists(comparison_plot):
-    #                         st.write("**OFC vs ACx Comparison**")
-    #                         with open(comparison_plot, 'r', encoding='utf-8') as f:
-    #                             st.components.v1.html(f.read(), height=500)
-            
-    #         # Bombcell QA section
-    #         if has_bombcell:
-    #             st.subheader("Bombcell Quality Metrics")
-    #             st.write(f"QA folder: {qa_folder}")
-                
-    #         # Try the first path; if not found, try the second path
-    #         distribution_img_path = os.path.join(qa_folder, "quality_metrics_histograms.png")
-    #         classification_img_path = os.path.join(qa_folder, "waveforms_overlay.png")
-    #         if not (os.path.exists(distribution_img_path) and os.path.exists(classification_img_path)):
-    #             distribution_img_path = os.path.join(qa_folder, "quality_metrics_distribution.png")
-    #             classification_img_path = os.path.join(qa_folder, "waveform_classification.png")
-
-    #         def pil_image_to_data_uri(image):
-    #             """Convert a PIL Image to a data URI for plotly."""
-    #             buffered = BytesIO()
-    #             image.save(buffered, format="PNG")
-    #             img_bytes = buffered.getvalue()
-    #             img_b64 = base64.b64encode(img_bytes).decode()
-    #             return f"data:image/png;base64,{img_b64}"
-
-    #         def plot_image(img_path, title="Image"):
-    #             if os.path.exists(img_path):
-    #                 image = PIL.Image.open(img_path)
-    #                 data_uri = pil_image_to_data_uri(image)
-    #                 width, height = image.size
-    #                 fig_img = go.Figure()
-    #                 fig_img.add_layout_image(
-    #                     dict(
-    #                         source=data_uri,
-    #                         xref="x",
-    #                         yref="y",
-    #                         x=0,
-    #                         y=0,
-    #                         sizex=width,
-    #                         sizey=height,
-    #                         layer="below"
-    #                     )
-    #                 )
-    #                 fig_img.update_xaxes(visible=False, range=[0, width])
-    #                 fig_img.update_yaxes(visible=False, range=[height, 0])
-    #                 fig_img.update_layout(
-    #                     title=title,
-    #                     margin=dict(l=0, r=0, t=40, b=0),
-    #                     width=width,
-    #                     height=height
-    #                 )
-    #                 st.plotly_chart(fig_img, use_container_width=True)
-    #             else:
-    #                 st.warning(f"Image not found: {img_path}")
-                
-    #         col1, col2 = st.columns(2)
-    #         with col1:      
-    #             plot_image(distribution_img_path, title="Quality Metrics Distribution")
-    #         with col2:
-    #             plot_image(classification_img_path, title="Waveform Classification")
-
-    #         # Load TSV file as a numpy array of unit labels
-    #         units_labels_file = os.path.join(qa_folder, "unit_labels.tsv")
-    #         if os.path.exists(units_labels_file):
-    #             good_units = pd.read_csv(units_labels_file, sep="\t")
-    #             good_units = good_units[good_units["UnitType"] == 1]
-    #             st.write("Indices of units with UnitType == 1:", good_units.index.tolist())
-    #             good_idxs = good_units.index.tolist()
-
-    #             waveforms_file = os.path.join(qa_folder, "templates._bc_rawWaveforms.npy")
-    #             if os.path.exists(waveforms_file):
-    #                 waveforms = np.load(waveforms_file)
-
-    #                 def plot_waveforms(waveforms, idxs):
-    #                     # Plot the waveforms[:,0,:] as a line plot using plotly.graph_objects
-    #                     if waveforms.ndim == 3:
-    #                         # waveforms shape: (n_units, n_channels, n_samples)
-    #                         # waveforms[:,0,:] shape: (n_units, n_samples)
-    #                         n_units, n_samples = waveforms[idxs,:,:].shape
-    #                         fig_wave = go.Figure()
-    #                         # Plot each unit's waveform in transparent gray
-    #                         for i in range(n_units):
-    #                             fig_wave.add_trace(
-    #                                 go.Scatter(
-    #                                     y=waveforms[idxs, i, :],
-    #                                     mode='lines',
-    #                                     line=dict(color='rgba(100,100,100,0.2)', width=1),
-    #                                     name=f'Unit {i}',
-    #                                     showlegend=False
-    #                                 )
-    #                             )
-    #                         # Add black average line
-    #                         avg_waveform = np.mean(waveforms[idxs, :, :], axis=0)
-    #                         fig_wave.add_trace(
-    #                             go.Scatter(
-    #                                 y=avg_waveform,
-    #                                 mode='lines',
-    #                                 line=dict(color='black', width=2),
-    #                                 name='Average',
-    #                                 showlegend=True
-    #                             )
-    #                         )
-    #                         fig_wave.update_layout(
-    #                             title=f"Raw Waveforms (Channel {idxs})",
-    #                             xaxis_title="Sample",
-    #                             yaxis_title="Amplitude",
-    #                             showlegend=True,
-    #                             margin=dict(l=40, r=20, t=40, b=40)
-    #                         )
-    #                         st.plotly_chart(fig_wave, use_container_width=True)
-    #                     else:
-    #                         st.warning("Waveforms array does not have expected 3D shape.")
-       
-    #                 for idx in good_idxs[:10]:
-    #                     plot_waveforms(waveforms, idx)
-    #         else:
-    #             st.info("Bombcell folder not found. Only analysis output summary is available.")
-    #     else:
-    #         st.warning("No folder selected. Please select an analysis output folder.")

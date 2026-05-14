@@ -64,7 +64,7 @@ def find_catgt_folders(base_dir: str) -> list:
     return catgt_folders
 
 
-def batch_process_all_recordings(base_dir: str = r"Z:\Shared\Amichai\NPXL\Recs"):
+def batch_process_all_recordings(base_dir: str = r"Z:\Shared\Amichai\Data\pipeline_output"):
     """
     Process all recordings in folders starting with "catgt".
     
@@ -150,8 +150,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--base-dir",
         type=str,
-        default=r"Z:\Shared\Amichai\NPXL\Recs",
-        help="Base directory to search for catgt folders (default: Z:\\Shared\\Amichai\\NPXL\\Recs)"
+        default=r"Z:\Shared\Amichai\Data\pipeline_output",
+        help="Base directory to search for catgt folders (default: Z:\\Shared\\Amichai\\Data\\pipeline_output)"
     )
     
     args = parser.parse_args()
