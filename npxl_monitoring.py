@@ -102,7 +102,7 @@ if page_view == "Multi-Session Units":
 
     # Use original rows so hidden metadata/path columns remain available to the loader.
     selected_sessions_df = project_data.loc[selected_sessions_df.index].copy()
-    multi_session_single_unit_analysis_panel(selected_sessions_df)
+    multi_session_single_unit_analysis_panel(selected_sessions_df, sessions_table_df=project_data)
     st.stop()
 
 # Streamlit App

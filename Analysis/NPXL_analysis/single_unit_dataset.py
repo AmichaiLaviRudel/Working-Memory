@@ -88,6 +88,34 @@ def _session_metadata(row: pd.Series) -> dict[str, Any]:
     }
 
 
+def filter_sessions_by_session_type_contains(
+    sessions_df: pd.DataFrame,
+    substring: str,
+    *,
+    case_sensitive: bool = False,
+) -> pd.DataFrame:
+    """Return rows whose session type string contains ``substring``.
+
+    Uses the same session-type column aliases as :func:`_session_metadata`
+    (e.g. ``Session Type``, ``SessionType``).
+    """
+    if sessions_df.empty or not substring:
+        return sessions_df.iloc[0:0].copy()
+
+    type_columns = SESSION_METADATA_COLUMNS["session_type"]
+
+    def row_matches(row: pd.Series) -> bool:
+        text = str(_first_existing_value(row, type_columns))
+        if not text or text == "nan":
+            return False
+        haystack = text if case_sensitive else text.lower()
+        needle = substring if case_sensitive else substring.lower()
+        return needle in haystack
+
+    mask = sessions_df.apply(row_matches, axis=1)
+    return sessions_df.loc[mask].copy()
+
+
 def _catgt_recording_name(session_dir: str) -> str:
     base_name = os.path.basename(os.path.normpath(session_dir))
     return base_name.removeprefix("catgt_")

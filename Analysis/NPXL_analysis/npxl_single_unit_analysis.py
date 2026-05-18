@@ -381,7 +381,27 @@ def plot_unit_psth(
     return psth_fig, psth_metrics, False
 
 
-def plot_tuning_curves_heatmap(selectivity_df, use_log_scale=True, normalize_per_unit=True):
+def _category_boundary_khz() -> tuple[float, float]:
+    """Low/high category boundaries (kHz); match ``session_states.initialize_session_state`` defaults."""
+    _default_lo, _default_hi = 0.983, 1.525
+    try:
+        import streamlit as st
+
+        lo = float(st.session_state.get("low_boundary", _default_lo))
+        hi = float(st.session_state.get("high_boundary", _default_hi))
+        return lo, hi
+    except Exception:
+        return _default_lo, _default_hi
+
+
+def plot_tuning_curves_heatmap(
+    selectivity_df,
+    use_log_scale=True,
+    normalize_per_unit=True,
+    *,
+    fixed_x_range: tuple[float, float] | None = None,
+    shade_x_range: tuple[float, float] | None = None,
+):
     """
     Create a heatmap of all units' tuning curves, sorted by best frequency (lowest first).
     
@@ -398,7 +418,12 @@ def plot_tuning_curves_heatmap(selectivity_df, use_log_scale=True, normalize_per
     normalize_per_unit : bool, optional
         If True, normalize each unit's curve to [0, 1] (default: True)
         If False, use raw firing rates
-    
+    fixed_x_range : (lo, hi) kHz, optional
+        If set, frequency grid and axis limits use this span instead of the data-driven median range
+        (used for FRA-style sweeps e.g. 5–40 kHz).
+    shade_x_range : (lo, hi) kHz, optional
+        If set, a semi-transparent vertical band is drawn between these frequencies (same units as stimuli).
+
     Returns:
     --------
     go.Figure
@@ -461,15 +486,22 @@ def plot_tuning_curves_heatmap(selectivity_df, use_log_scale=True, normalize_per
     tuning_data.sort(key=lambda x: x['best_stimulus'] if x['best_stimulus'] is not None else float('inf'))
     
     # Find common stimulus range for interpolation.
-    # Use per-unit min/max and take the median across units to avoid outlier
-    # units (e.g. Hz vs kHz mismatch) from stretching the shared x-axis.
-    per_unit_min = np.array([np.min(d['stimuli']) for d in tuning_data])
-    per_unit_max = np.array([np.max(d['stimuli']) for d in tuning_data])
-    min_stim = np.median(per_unit_min)
-    max_stim = np.median(per_unit_max)
-    
+    if fixed_x_range is not None:
+        min_stim, max_stim = float(fixed_x_range[0]), float(fixed_x_range[1])
+        if min_stim > max_stim:
+            min_stim, max_stim = max_stim, min_stim
+    else:
+        # Use per-unit min/max and take the median across units to avoid outlier
+        # units (e.g. Hz vs kHz mismatch) from stretching the shared x-axis.
+        per_unit_min = np.array([np.min(d["stimuli"]) for d in tuning_data])
+        per_unit_max = np.array([np.max(d["stimuli"]) for d in tuning_data])
+        min_stim = float(np.median(per_unit_min))
+        max_stim = float(np.median(per_unit_max))
+
     # Create common x-axis (150 points for better resolution)
     if use_log_scale:
+        if min_stim <= 0 or max_stim <= 0:
+            return None
         x_common = np.logspace(np.log10(min_stim), np.log10(max_stim), 150)
     else:
         x_common = np.linspace(min_stim, max_stim, 150)
@@ -509,21 +541,9 @@ def plot_tuning_curves_heatmap(selectivity_df, use_log_scale=True, normalize_per
     
     # Convert to numpy array (rows = units, columns = frequencies)
     heatmap_matrix = np.array(heatmap_matrix)
-    
-    # Get boundaries from session state if available
-    try:
-        import streamlit as st
-        low_boundary = None
-        high_boundary = None
-        if hasattr(st, 'session_state'):
-            if hasattr(st.session_state, "low_boundary"):
-                low_boundary = st.session_state.low_boundary
-            if hasattr(st.session_state, "high_boundary"):
-                high_boundary = st.session_state.high_boundary
-    except ImportError:
-        low_boundary = None
-        high_boundary = None
-    
+
+    low_boundary, high_boundary = _category_boundary_khz()
+
     from plotly.subplots import make_subplots
 
     # KDE of best frequencies projected onto the shared x-axis
@@ -578,17 +598,50 @@ def plot_tuning_curves_heatmap(selectivity_df, use_log_scale=True, normalize_per
         showlegend=False,
     ), row=2, col=1)
 
-    # --- Boundary lines (both subplots) ---
-    for boundary, color in [(low_boundary, 'white'), (high_boundary, 'white')]:
-        if boundary is not None:
-            for row in (1, 2):
-                fig.add_vline(
-                    x=boundary, row=row, col=1,
-                    line_dash='dash', line_color=color,
-                    line_width=2, opacity=0.8,
-                )
+    # --- Optional background band (e.g. passband / behaviourally relevant band) ---
+    if shade_x_range is not None:
+        sx0, sx1 = float(shade_x_range[0]), float(shade_x_range[1])
+        if sx0 > sx1:
+            sx0, sx1 = sx1, sx0
+        _shade = dict(
+            x0=sx0,
+            x1=sx1,
+            fillcolor="rgba(120, 140, 200, 0.22)",
+            layer="below",
+            line_width=0,
+        )
+        fig.add_vrect(**_shade, row=1, col=1)
+        fig.add_vrect(**_shade, row=2, col=1)
 
-    x_axis_cfg = dict(type='log' if use_log_scale else 'linear', showgrid=False)
+    # --- Dashed vertical lines at session category boundaries (heatmap + KDE strip) ---
+    xc_lo, xc_hi = float(x_common[0]), float(x_common[-1])
+    if xc_lo > xc_hi:
+        xc_lo, xc_hi = xc_hi, xc_lo
+    for boundary in (low_boundary, high_boundary):
+        if not np.isfinite(boundary):
+            continue
+        if boundary < xc_lo or boundary > xc_hi:
+            continue
+        for row in (1, 2):
+            fig.add_vline(
+                x=boundary,
+                row=row,
+                col=1,
+                line_dash="dash",
+                line_color="rgba(255, 255, 255, 0.92)",
+                line_width=2,
+                opacity=0.9,
+            )
+
+    x_axis_cfg: dict = dict(type='log' if use_log_scale else 'linear', showgrid=False)
+    if fixed_x_range is not None:
+        lo, hi = float(fixed_x_range[0]), float(fixed_x_range[1])
+        if lo > hi:
+            lo, hi = hi, lo
+        if use_log_scale and lo > 0 and hi > 0:
+            x_axis_cfg["range"] = [np.log10(lo), np.log10(hi)]
+        elif not use_log_scale:
+            x_axis_cfg["range"] = [lo, hi]
     heatmap_height = min(700, max(300, 300 + len(tuning_data) * 3))
     fig.update_layout(
         title="Tuning Curves Heatmap (Sorted by Best Frequency - Lowest First)",
@@ -1262,7 +1315,7 @@ def _classify_learning_stage(session_type: str) -> str:
 # Alias imported palette so rest of this module uses the same name
 _STAGE_COLORS = LEARNING_STAGE_COLORS
 
-KDE_BW_DENSITY = 0.04  # bandwidth factor for overlay density KDE (log space)
+KDE_BW_DENSITY = 0.08  # bandwidth factor for overlay density KDE (log space)
 
 
 _BF_EXCLUDE_CENTER_KHZ = 1.5   # category boundary to exclude from density KDE
@@ -1276,6 +1329,8 @@ def _plot_best_freq_density_overlay(
     title: str,
     x_range: tuple[float, float] | None = None,
     kde_bw: float = KDE_BW_DENSITY,
+    *,
+    reference_vlines_khz: tuple[float, ...] | None = None,
 ) -> go.Figure | None:
     """Overlay best-frequency KDE density curves for the given learning stages.
 
@@ -1288,6 +1343,8 @@ def _plot_best_freq_density_overlay(
         stage_labels: Ordered list of stage names to include (e.g. ["Novice", "1b Expert"]).
         use_log_scale: Whether to compute/display on a log frequency axis.
         title:        Plot title.
+        reference_vlines_khz: Optional extra dashed vlines at these frequencies (kHz)
+            when they fall inside the plot x-range (e.g. FRA markers at 10 and 15 kHz).
     """
     _bf_lo = _BF_EXCLUDE_CENTER_KHZ - _BF_EXCLUDE_MARGIN_KHZ
     _bf_hi = _BF_EXCLUDE_CENTER_KHZ + _BF_EXCLUDE_MARGIN_KHZ
@@ -1299,7 +1356,18 @@ def _plot_best_freq_density_overlay(
     if all_bf.empty:
         return None
 
-    if use_log_scale:
+    # Evaluation grid: use explicit x_range when given so the KDE spans the same axis as the heatmaps
+    if x_range is not None:
+        xr_lo, xr_hi = float(x_range[0]), float(x_range[1])
+        if xr_lo > xr_hi:
+            xr_lo, xr_hi = xr_hi, xr_lo
+        if use_log_scale:
+            if xr_lo <= 0 or xr_hi <= 0:
+                return None
+            x_common = np.logspace(np.log10(xr_lo), np.log10(xr_hi), 300)
+        else:
+            x_common = np.linspace(xr_lo, xr_hi, 300)
+    elif use_log_scale:
         x_common = np.logspace(np.log10(all_bf.min()), np.log10(all_bf.max()), 300)
     else:
         x_common = np.linspace(all_bf.min(), all_bf.max(), 300)
@@ -1338,6 +1406,32 @@ def _plot_best_freq_density_overlay(
         return None
 
     x_min, x_max = x_range if x_range is not None else (0.6, 2.2)
+    if x_min > x_max:
+        x_min, x_max = x_max, x_min
+
+    lo_b, hi_b = _category_boundary_khz()
+    for xv in (lo_b, hi_b):
+        if x_min <= xv <= x_max:
+            fig.add_vline(
+                x=xv,
+                line_width=2,
+                line_dash="dash",
+                line_color="rgba(45, 45, 55, 0.88)",
+            )
+
+    # Optional fixed reference frequencies (e.g. FRA at 10 and 15 kHz)
+    if reference_vlines_khz:
+        for xv in reference_vlines_khz:
+            if not np.isfinite(xv):
+                continue
+            if x_min <= float(xv) <= x_max:
+                fig.add_vline(
+                    x=float(xv),
+                    line_width=2,
+                    line_dash="dash",
+                    line_color="rgba(200, 95, 40, 0.92)",
+                )
+
     fig.update_layout(
         title=title,
         xaxis=dict(
@@ -1355,11 +1449,20 @@ def _plot_best_freq_density_overlay(
     return fig
 
 
-def _render_selectivity_heatmap_panel(selectivity_df: pd.DataFrame) -> None:
+def _render_selectivity_heatmap_panel(
+    selectivity_df: pd.DataFrame,
+    *,
+    widget_key_prefix: str = "sh",
+    fixed_tuning_x_range: tuple[float, float] | None = None,
+    tuning_shade_x_range: tuple[float, float] | None = None,
+) -> None:
     """Panel E – Per-session-type tuning-curve heatmaps sorted by best frequency."""
     if selectivity_df.empty:
         st.info("No selectivity data available. Run offline single-unit analysis first.")
         return
+
+    def _wk(suffix: str) -> str:
+        return f"{widget_key_prefix}_{suffix}"
 
     # --- Shared filter controls ---
     ctrl_col1, ctrl_col2, ctrl_col3, ctrl_col4, ctrl_col5 = st.columns(5)
@@ -1369,24 +1472,24 @@ def _render_selectivity_heatmap_panel(selectivity_df: pd.DataFrame) -> None:
             "Brain area",
             brain_areas,
             default=brain_areas,
-            key="sh_brain_area",
+            key=_wk("brain_area"),
         )
     with ctrl_col2:
         selective_only = st.checkbox(
             "Stimulus-selective units only",
-            value=False,
-            key="sh_selective_only",
+            value=True,
+            key=_wk("selective_only"),
         )
     with ctrl_col3:
         good_units_only = st.checkbox(
             "Good units only",
-            value=True,
-            key="sh_good_units_only",
+            value=False,
+            key=_wk("good_units_only"),
         )
     with ctrl_col4:
-        log_x = st.checkbox("Log frequency axis", value=True, key="sh_log_x")
+        log_x = st.checkbox("Log frequency axis", value=True, key=_wk("log_x"))
     with ctrl_col5:
-        normalize = st.checkbox("Normalize per unit", value=True, key="sh_normalize")
+        normalize = st.checkbox("Normalize per unit", value=True, key=_wk("normalize"))
 
     # Apply shared filters (brain area, quality flags) — keep ALL units for density
     filtered_df = selectivity_df.copy()
@@ -1424,8 +1527,8 @@ def _render_selectivity_heatmap_panel(selectivity_df: pd.DataFrame) -> None:
     # --- Density overlay option ---
     show_density = st.checkbox(
         "Show best-frequency density comparison by learning stage",
-        value=False,
-        key="sh_density_overlay",
+        value=True,
+        key=_wk("density_overlay"),
     )
     if show_density:
         kde_bw = st.slider(
@@ -1435,41 +1538,65 @@ def _render_selectivity_heatmap_panel(selectivity_df: pd.DataFrame) -> None:
             value=KDE_BW_DENSITY,
             step=0.01,
             format="%.2f",
-            key="sh_kde_bw",
+            key=_wk("kde_bw"),
             help="Controls how smooth the density curves are. Lower = sharper peaks, higher = broader.",
         )
         density_areas = sorted(density_df["brain_area"].dropna().unique().tolist()) if "brain_area" in density_df.columns else ["All"]
         for area in density_areas:
             st.markdown(f"**{area}**")
             area_df = density_df[density_df["brain_area"] == area] if area != "All" else density_df
-            dcol1, dcol2 = st.columns(2)
-            with dcol1:
-                fig_1b = _plot_best_freq_density_overlay(
-                    area_df,
-                    stage_labels=["Novice", "1b Expert"],
-                    use_log_scale=log_x,
-                    title=f"{area} — 1b: Novice vs Expert",
-                    x_range=(0.68, 1.5),
-                    kde_bw=kde_bw,
-                )
-                if fig_1b is not None:
-                    st.plotly_chart(fig_1b, use_container_width=True)
-                    st.caption("1b context · 'novice' or '1b' sessions · BF ≠ 1.5±0.05 kHz")
-                else:
-                    st.info(f"{area}: insufficient data for 1b comparison (need ≥3 units/stage).")
-            with dcol2:
-                fig_2b = _plot_best_freq_density_overlay(
+
+            if fixed_tuning_x_range is not None:
+                # FRA: one density figure on 6–22 kHz, learning stages in a single overlay
+                fig_fra = _plot_best_freq_density_overlay(
                     area_df,
                     stage_labels=["Novice", "1b Expert", "2b Expert"],
                     use_log_scale=log_x,
-                    title=f"{area} — 2b: Novice / 1b Expert / 2b Expert",
+                    title=f"{area} — FRA: Novice / 1b Expert / 2b Expert",
+                    x_range=(6.0, 22.0),
                     kde_bw=kde_bw,
+                    reference_vlines_khz=(10.0, 15.0),
                 )
-                if fig_2b is not None:
-                    st.plotly_chart(fig_2b, use_container_width=True)
-                    st.caption("2b context · 'novice', '1b', '2b' sessions · BF ≠ 1.5±0.05 kHz")
+                if fig_fra is not None:
+                    st.plotly_chart(fig_fra, use_container_width=True)
+                    st.caption(
+                        "BF density on **6–22 kHz** axis (FRA). "
+                        "Orange dashed lines at **10** and **15 kHz**. "
+                        "Dark dashed lines: session low/high boundaries only if inside the axis. "
+                        "Tuning heatmaps below use the broadband axis."
+                    )
                 else:
-                    st.info(f"{area}: insufficient data for 2b comparison (need ≥3 units/stage).")
+                    st.info(f"{area}: insufficient data for FRA stage comparison (need ≥3 units/stage).")
+            else:
+                dcol1, dcol2 = st.columns(2)
+                with dcol1:
+                    fig_1b = _plot_best_freq_density_overlay(
+                        area_df,
+                        stage_labels=["Novice", "1b Expert"],
+                        use_log_scale=log_x,
+                        title=f"{area} — 1b: Novice vs Expert",
+                        x_range=(0.68, 1.5),
+                        kde_bw=kde_bw,
+                    )
+                    if fig_1b is not None:
+                        st.plotly_chart(fig_1b, use_container_width=True)
+                        st.caption("1b context · 'novice' or '1b' sessions · BF ≠ 1.5±0.05 kHz")
+                    else:
+                        st.info(f"{area}: insufficient data for 1b comparison (need ≥3 units/stage).")
+                with dcol2:
+                    fig_2b = _plot_best_freq_density_overlay(
+                        area_df,
+                        stage_labels=["Novice", "1b Expert", "2b Expert"],
+                        use_log_scale=log_x,
+                        title=f"{area} — 2b: Novice / 1b Expert / 2b Expert",
+                        x_range=None,
+                        kde_bw=kde_bw,
+                    )
+                    if fig_2b is not None:
+                        st.plotly_chart(fig_2b, use_container_width=True)
+                        st.caption("2b context · 'novice', '1b', '2b' sessions · BF ≠ 1.5±0.05 kHz")
+                    else:
+                        st.info(f"{area}: insufficient data for 2b comparison (need ≥3 units/stage).")
             st.divider()
 
     # One sub-tab per session type so heatmaps don't stack vertically
@@ -1485,6 +1612,8 @@ def _render_selectivity_heatmap_panel(selectivity_df: pd.DataFrame) -> None:
                 st_df,
                 use_log_scale=log_x,
                 normalize_per_unit=normalize,
+                fixed_x_range=fixed_tuning_x_range,
+                shade_x_range=tuning_shade_x_range,
             )
             if fig is None:
                 st.info(f"Could not build heatmap for session type '{session_type}' (insufficient data).")
@@ -1501,9 +1630,20 @@ def _render_selectivity_heatmap_panel(selectivity_df: pd.DataFrame) -> None:
             )
 
 
-def multi_session_single_unit_analysis_panel(selected_sessions_df: pd.DataFrame) -> None:
-    """Render an aggregated unit-analysis panel across checked NPXL sessions."""
+def multi_session_single_unit_analysis_panel(
+    selected_sessions_df: pd.DataFrame,
+    sessions_table_df: pd.DataFrame | None = None,
+) -> None:
+    """Render an aggregated unit-analysis panel across checked NPXL sessions.
+
+    Args:
+        selected_sessions_df: Rows the user checked in the session editor (main panel).
+        sessions_table_df: Full monitoring table used to discover FRA sessions for the
+            bottom tuning section. When omitted, FRA rows are taken only from
+            ``selected_sessions_df`` (same source as the checkboxes).
+    """
     from Analysis.NPXL_analysis.single_unit_dataset import (
+        filter_sessions_by_session_type_contains,
         load_multi_session_unit_metrics,
         load_selectivity_data,
     )
@@ -1736,7 +1876,66 @@ projects the BF distribution of that session type.
     with st.spinner("Loading selectivity / tuning-curve data..."):
         selectivity_df = load_selectivity_data(selected_sessions_df)
 
-    _render_selectivity_heatmap_panel(selectivity_df)
+    _render_selectivity_heatmap_panel(selectivity_df, widget_key_prefix="sh")
+
+    # ------------------------------------------------------------------
+    # FRA sessions: same tuning landscape (all table rows with "FRA" in session type)
+    # ------------------------------------------------------------------
+    st.divider()
+    st.subheader("FRA sessions: Tuning landscape")
+    st.caption(
+        "Sessions whose session type contains “FRA”, taken from the full monitoring table "
+        "when available so they are included even if the multi-session checkbox defaults exclude FRA. "
+        "Tuning heatmaps use a fixed 5–40 kHz frequency axis with a shaded 7–21 kHz band."
+    )
+    with st.expander("Methods (same as Figure 5)", expanded=False):
+        st.markdown("""
+Same tuning-curve pipeline as **Figure 5** (mean rates per frequency, BF, heatmaps, optional
+best-frequency KDE by learning stage). Only units from sessions whose **Session Type** contains
+`FRA` are loaded here.
+        """)
+
+    fra_source_df = sessions_table_df if sessions_table_df is not None else selected_sessions_df
+    fra_sessions_df = filter_sessions_by_session_type_contains(fra_source_df, "FRA")
+    if fra_sessions_df.empty:
+        st.info("No sessions with “FRA” in the session type were found in the monitoring table.")
+    else:
+        preview_cols = [
+            c
+            for c in [
+                "Animal",
+                "Date",
+                "Session Type",
+                "SessionType",
+                "session_type",
+                "current_dir",
+                "Current Dir",
+                "RecordingDir",
+            ]
+            if c in fra_sessions_df.columns
+        ]
+        with st.expander(f"FRA sessions included ({len(fra_sessions_df)})", expanded=False):
+            st.dataframe(
+                fra_sessions_df[preview_cols] if preview_cols else fra_sessions_df,
+                use_container_width=True,
+                height=min(360, 60 + 28 * len(fra_sessions_df)),
+            )
+
+        with st.spinner("Loading FRA selectivity / tuning-curve data..."):
+            fra_selectivity_df = load_selectivity_data(fra_sessions_df)
+
+        if fra_selectivity_df.empty:
+            st.info(
+                "No selectivity CSVs found for these FRA sessions (run offline single-unit analysis "
+                "on each recording, or verify analysis_output/tables/*_selectivity_metrics.csv)."
+            )
+        else:
+            _render_selectivity_heatmap_panel(
+                fra_selectivity_df,
+                widget_key_prefix="fra_sh",
+                fixed_tuning_x_range=(5.0, 40.0),
+                tuning_shade_x_range=(7.0, 21.0),
+            )
 
 
 def single_unit_analysis_panel(selected_recording_dir=None, selected_area=None, raw_folder=None):

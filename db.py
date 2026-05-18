@@ -27,8 +27,13 @@ npxl_page = st.Page(
     title = "Neuropixels Monitoring",
     icon = ":material/neurology:",
 )
+npxl_agreement_page = st.Page(
+    "npxl_agreement_decoder.py",
+    title = "NPXL Agreement Decoder",
+    icon = ":material/analytics:",
+)
 
-working_pages = [home_page, projects_page, npxl_page]
+working_pages = [home_page, projects_page, npxl_page, npxl_agreement_page]
 experiments_page = [projects_page, ]
 
 pg = st.navigation({"Working": working_pages} )

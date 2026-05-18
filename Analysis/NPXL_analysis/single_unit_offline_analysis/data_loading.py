@@ -8,6 +8,17 @@ import os
 import numpy as np
 import pandas as pd
 from Analysis.NPXL_analysis.NPXL_Preprocessing import load_event_windows_data
+from Analysis.NPXL_analysis.single_unit_dataset import (
+    AREA_CONFIG,
+    _add_unit_type,
+    _join_mapping,
+)
+
+# Normalized cortex_group / histology_region tokens that count as the target probe area.
+_AREA_HISTOLOGY_TOKENS: dict[str, frozenset[str]] = {
+    "ACx": frozenset({"acx", "auditory", "auditory cortex", "a1", "tea"}),
+    "OFC": frozenset({"ofc", "orbitofrontal", "orbitofrontal cortex", "lo", "vmo", "mofc"}),
+}
 
 
 def _event_windows_npy_path(data_dir: str) -> str:
@@ -190,7 +201,8 @@ def _labels_tsv_to_g_index_and_good_list(labels_path: str) -> tuple[pd.DataFrame
         codes = raw["bc_unitType"].map(_bc_cell_to_code)
         max_id = int(cid.max())
         full = pd.DataFrame(index=pd.RangeIndex(max_id + 1))
-        full["bc_unitType"] = np.nan
+        # Keep text labels (GOOD/MUA/...) in object dtype to avoid mixed-dtype assignment warnings.
+        full["bc_unitType"] = pd.Series([None] * (max_id + 1), dtype="object")
         full["UnitType"] = np.nan
         full.loc[cid.values, "bc_unitType"] = raw["bc_unitType"].values
         full.loc[cid.values, "UnitType"] = codes.values
@@ -213,6 +225,168 @@ def _labels_tsv_to_g_index_and_good_list(labels_path: str) -> tuple[pd.DataFrame
     good_mask = df["UnitType"] == 1
     good = df.index[good_mask].tolist()
     return df, [int(i) for i in good]
+
+
+def _build_fallback_metrics_from_labels(probe_dir: str) -> pd.DataFrame:
+    """
+    Build a minimal all-units metrics table when offline analysis tables are missing.
+
+    Why: downstream histology matching only needs event-matrix row index (unit_idx) and a
+    stable per-cluster ID (label_unitID) to join against mapping_unit_id.
+    """
+    legacy_path = os.path.join(probe_dir, "bombcell", "unit_labels.tsv")
+    ks4_pattern = os.path.join(probe_dir, "imec*_ks4", "cluster_bc_unitType.tsv")
+    ks4_paths = sorted(glob.glob(ks4_pattern))
+
+    candidate_paths: list[str] = []
+    try:
+        candidate_paths.append(_resolve_probe_unit_labels_tsv(probe_dir))
+    except FileNotFoundError:
+        pass
+    candidate_paths.extend([legacy_path, *ks4_paths])
+    candidate_paths = list(dict.fromkeys(candidate_paths))  # preserve order, remove duplicates
+
+    parse_errors: list[str] = []
+    best_noise_only_df: pd.DataFrame | None = None
+    best_noise_only_path: str | None = None
+
+    for labels_path in candidate_paths:
+        if not os.path.isfile(labels_path):
+            continue
+        try:
+            labels_df, _good_indices = _labels_tsv_to_g_index_and_good_list(labels_path)
+        except Exception as exc:
+            parse_errors.append(f"{labels_path}: {exc}")
+            continue
+
+        if "UnitType" not in labels_df.columns:
+            parse_errors.append(f"{labels_path}: missing UnitType column after parsing")
+            continue
+
+        unit_type_codes = pd.to_numeric(labels_df["UnitType"], errors="coerce")
+        # Preserve event-matrix ordering convention: GOOD -> MUA -> NON-SOMA -> NOISE -> other known codes.
+        ordered_parts = [unit_type_codes[unit_type_codes == code] for code in (1, 2, 3, 0)]
+        other_known = unit_type_codes[~unit_type_codes.isin([0, 1, 2, 3]) & unit_type_codes.notna()]
+        ordered_codes = pd.concat([*ordered_parts, other_known], ignore_index=False)
+        if ordered_codes.empty:
+            parse_errors.append(f"{labels_path}: no parsable UnitType codes")
+            continue
+
+        fallback_df = pd.DataFrame(
+            {
+                "unit_idx": np.arange(len(ordered_codes), dtype=int),
+                "label_unitID": ordered_codes.index.to_numpy(dtype=int),
+                "label_UnitType": ordered_codes.to_numpy(dtype=float),
+            }
+        )
+
+        has_good_mua_non_soma = bool(unit_type_codes.isin([1, 2, 3]).any())
+        if has_good_mua_non_soma:
+            if labels_path != candidate_paths[0]:
+                print(
+                    f"WARNING: fallback metrics used alternate labels source: {labels_path} "
+                    f"(primary source lacked usable GOOD/MUA/NON-SOMA labels)."
+                )
+            return fallback_df
+
+        if best_noise_only_df is None:
+            best_noise_only_df = fallback_df
+            best_noise_only_path = labels_path
+
+    if best_noise_only_df is not None:
+        print(
+            f"WARNING: fallback metrics built from {best_noise_only_path} with no GOOD/MUA/NON-SOMA labels; "
+            "only NOISE/other unit types were available."
+        )
+        return best_noise_only_df
+
+    details = "\n".join(parse_errors) if parse_errors else "No readable label files were found."
+    raise ValueError(
+        f"Could not build fallback metrics for {probe_dir}. Tried candidate label files:\n"
+        + "\n".join(f"  {p}" for p in candidate_paths)
+        + f"\nDetails:\n{details}"
+    )
+
+
+def _histology_agrees_with_area(row: pd.Series, area: str) -> bool:
+    """True when histology labels place the unit in the probe's target area (not the other cortex)."""
+    area_l = area.strip().lower()
+    allowed = _AREA_HISTOLOGY_TOKENS.get(area, frozenset({area_l}))
+
+    cortex_group = row.get("cortex_group")
+    if pd.notna(cortex_group) and str(cortex_group).strip():
+        text = str(cortex_group).strip().lower()
+        if text == area_l:
+            return True
+        return text in allowed or any(token in text for token in allowed)
+
+    histology_region = row.get("histology_region")
+    if pd.notna(histology_region) and str(histology_region).strip():
+        text = str(histology_region).strip().lower()
+        return text in allowed or any(token in text for token in allowed)
+
+    return False
+
+
+def load_histology_matched_unit_indices(
+    session_dir: str,
+    probe_dir: str,
+    area: str,
+    unit_types: tuple[int, ...] = (1, 2),
+) -> tuple[list[int], pd.DataFrame]:
+    """Event-matrix row indices that are good/MUA and histologically assigned to ``area``."""
+    metric_prefix = AREA_CONFIG[area]["metric_prefix"]
+    metrics_path = os.path.join(
+        probe_dir,
+        "analysis_output",
+        "tables",
+        f"{metric_prefix}_all_units_metrics.csv",
+    )
+    if os.path.exists(metrics_path):
+        metrics_df = pd.read_csv(metrics_path, low_memory=False)
+    else:
+        metrics_df = _build_fallback_metrics_from_labels(probe_dir)
+        os.makedirs(os.path.dirname(metrics_path), exist_ok=True)
+        metrics_df.to_csv(metrics_path, index=False)
+        print(
+            f"WARNING: Missing {metrics_path}; built fallback metrics table from unit labels "
+            f"({len(metrics_df)} rows) so histology mapping can proceed."
+        )
+
+    if "unit_idx" not in metrics_df.columns:
+        raise ValueError(f"{metrics_path} has no unit_idx column (cannot align to event matrix rows).")
+
+    enriched_df = _join_mapping(metrics_df, session_dir, area)
+    enriched_df = _add_unit_type(enriched_df)
+
+    allowed_types: list[str] = []
+    if 1 in unit_types:
+        allowed_types.append("good")
+    if 2 in unit_types:
+        allowed_types.append("mua")
+    type_mask = enriched_df["unit_type"].astype(str).str.lower().isin(allowed_types)
+
+    histology_mask = enriched_df.apply(lambda row: _histology_agrees_with_area(row, area), axis=1)
+    matched_df = enriched_df.loc[type_mask & histology_mask].copy()
+    matched_df["matrix_row"] = pd.to_numeric(matched_df["unit_idx"], errors="coerce")
+    matched_df = matched_df.dropna(subset=["matrix_row"])
+    matched_df["matrix_row"] = matched_df["matrix_row"].astype(int)
+
+    unit_indices = sorted(matched_df["matrix_row"].unique().tolist())
+    return unit_indices, matched_df
+
+
+def load_unit_indices_by_type(probe_dir: str, unit_types: tuple[int, ...] = (1,)) -> list[int]:
+    """Return event-matrix row positions matching Bombcell unit type codes."""
+    labels_path = _resolve_probe_unit_labels_tsv(probe_dir)
+    labels_df, _good_indices = _labels_tsv_to_g_index_and_good_list(labels_path)
+    unit_type_codes = pd.to_numeric(labels_df["UnitType"], errors="coerce")
+    ordered_codes = pd.concat(
+        [unit_type_codes[unit_type_codes == code] for code in (1, 2, 3)],
+        ignore_index=True,
+    )
+    keep_mask = ordered_codes.isin(unit_types)
+    return [int(position) for position in np.flatnonzero(keep_mask.to_numpy())]
 
 
 def load_unit_labels(
