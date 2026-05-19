@@ -21,13 +21,18 @@
 # Configuration — edit these before submitting
 # -----------------------------------------------------------------------
 CONDA_ROOT="/ems/elsc-labs/mizrahi-a/amichai.lavi/miniconda3"
-CONDA_ENV_NAME="analysis"        # <-- set to your analysis conda environment
+# Use "base" — all required packages are available there via ~/.local/lib
+# Change to "analysis" or "ks4" if you prefer an isolated env
+CONDA_ENV_NAME="base"
 CODE_ROOT="/ems/elsc-labs/mizrahi-a/Shared/Amichai/Code"
 
-# Path to the NPXL monitoring CSV (same file the Streamlit app uses)
-MONITORING_CSV="${CODE_ROOT}/DB/npxl_monitoring.csv"   # <-- update if needed
+# Path to the NPXL monitoring CSV (same file the Streamlit app uses).
+MONITORING_CSV="${CODE_ROOT}/DB/users_data/Amichai/NPXL recordings _experimental_data.csv"
 
-# Where to save the results (directory will be created if it doesn't exist)
+# Where to save the results (directory will be created if it doesn't exist).
+# npxl_group_decoder_batch.py appends _histology or _no_histology to OUTPUT_CSV's base name.
+#   With histology:    OUTPUT_CSV=.../npxl_group_decoder_results_with_histology.csv  -> ..._with_histology_histology.csv
+#   No histology:      OUTPUT_CSV=.../npxl_group_decoder_results.csv + --no_histology -> ..._no_histology.csv
 OUTPUT_DIR="${CODE_ROOT}/DB/Results"
 OUTPUT_CSV="${OUTPUT_DIR}/npxl_group_decoder_results.csv"
 
@@ -40,28 +45,57 @@ RANDOM_STATE=42
 MIN_TRIALS=5
 
 # Uncomment the next line to skip histology filtering (more units, no area guarantee):
-# NO_HISTOLOGY_FLAG="--no_histology"
+NO_HISTOLOGY_FLAG="--no_histology"
 
 # -----------------------------------------------------------------------
 # 1. Initialise conda
 # -----------------------------------------------------------------------
 source "${CONDA_ROOT}/etc/profile.d/conda.sh"
 
-if ! conda env list | grep -q "^${CONDA_ENV_NAME} "; then
-    echo "[setup] Creating conda environment '${CONDA_ENV_NAME}'..."
-    conda create -y -n "${CONDA_ENV_NAME}" python=3.10
-fi
+echo "Available conda environments:"
+conda info --envs
 
-conda activate "${CONDA_ENV_NAME}"
+if [ "${CONDA_ENV_NAME}" = "base" ] || conda env list | grep -q "^${CONDA_ENV_NAME} "; then
+    echo "[setup] Activating ${CONDA_ENV_NAME}..."
+    conda activate "${CONDA_ENV_NAME}"
+else
+    echo "[setup] WARNING: env '${CONDA_ENV_NAME}' not found; using base"
+    conda activate base
+fi
 
 # -----------------------------------------------------------------------
 # 2. Install required Python packages if missing
+#    tqdm is required by load_bpod_data (pulled in via NPXL_Preprocessing)
 # -----------------------------------------------------------------------
-python -c "import numpy"       2>/dev/null || pip install numpy
-python -c "import pandas"      2>/dev/null || pip install pandas
-python -c "import sklearn"     2>/dev/null || pip install scikit-learn
-python -c "import streamlit"   2>/dev/null || pip install streamlit
-python -c "import plotly"      2>/dev/null || pip install plotly
+_install_if_missing() {
+    python -c "import ${1}" 2>/dev/null || pip install "${2:-$1}"
+}
+_install_if_missing numpy
+_install_if_missing pandas
+_install_if_missing scipy
+_install_if_missing sklearn scikit-learn
+_install_if_missing tqdm
+_install_if_missing streamlit
+_install_if_missing plotly
+
+# Verify the full import chain before starting the long batch run
+python - <<PYCODE || {
+import sys
+sys.path.insert(0, "${CODE_ROOT}")
+sys.path.insert(0, "${CODE_ROOT}/DB")
+from npxl_agreement_decoder import load_valid_sessions, _run_one_session_batch
+print("[setup] npxl_agreement_decoder import OK")
+PYCODE
+    echo "[setup] Import check failed — installing analysis stack..."
+    pip install numpy pandas scipy scikit-learn tqdm streamlit plotly openpyxl h5py
+    python - <<PYCODE2
+import sys
+sys.path.insert(0, "${CODE_ROOT}")
+sys.path.insert(0, "${CODE_ROOT}/DB")
+from npxl_agreement_decoder import load_valid_sessions
+print("[setup] npxl_agreement_decoder import OK (after pip install)")
+PYCODE2
+}
 
 # -----------------------------------------------------------------------
 # 3. Set PYTHONPATH so relative imports in the analysis code resolve

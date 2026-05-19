@@ -5,15 +5,37 @@ import numpy as np
 import os
 import re
 import plotly.graph_objects as go
-from Analysis.GNG_bpod_analysis.colors import COLOR_HIT, COLOR_MISS, COLOR_FA, COLOR_CR
+from Analysis.GNG_bpod_analysis.colors import (
+    COLOR_ACX,
+    COLOR_CR,
+    COLOR_FA,
+    COLOR_GRAY,
+    COLOR_HIT,
+    COLOR_MISS,
+    COLOR_OFC,
+    LEARNING_STAGE_COLORS,
+)
 from Analysis.NPXL_analysis.npxl_single_unit_analysis import (
     multi_session_single_unit_analysis_panel,
     single_unit_analysis_panel,
 )
 from Analysis.NPXL_analysis.population_analysis import plot_population_heatmap, advanced_population_analysis_panel, plot_best_stimulus_panel
+from load_data.session_dprime import (
+    attach_session_dprime,
+    classify_learning_stage,
+    compute_session_metrics_from_mat,
+    order_session_types,
+)
 
 # Load the experimental data
 project_data = pd.read_csv(st.session_state.npxl_monitoring_path, delimiter=',', low_memory=False)
+
+if st.sidebar.button("Recompute d' / hit rate", help="Clear cached behavioral metrics and recompute from .mat files."):
+    compute_session_metrics_from_mat.clear()
+    st.rerun()
+
+with st.spinner("Computing session d' and hit rate from behavioral files..."):
+    project_data = attach_session_dprime(project_data, behavioral_file_col="behavioral file")
 
 # Session type is now provided explicitly by the monitoring table (column: 'Session Type')
 
@@ -53,6 +75,8 @@ def _prepare_multi_session_selection_table(source_df: pd.DataFrame) -> pd.DataFr
             "Animal",
             "Date",
             "Session Type",
+            "session_dprime",
+            "session_hit_rate",
             "spike glx file",
             "Recording Assessment ",
             "Acx good units",
@@ -91,6 +115,18 @@ if page_view == "Multi-Session Units":
                 help="Recording folder that contains analysis_output and probe mapping files.",
                 disabled=True,
             ),
+            "session_dprime": st.column_config.NumberColumn(
+                "Session d'",
+                help="Mean d' from the behavioral .mat file (metric.d_prime, 10 s lick window).",
+                format="%.2f",
+                disabled=True,
+            ),
+            "session_hit_rate": st.column_config.NumberColumn(
+                "Hit rate",
+                help="Hit / (Hit + Miss) from the behavioral .mat file.",
+                format="%.2f",
+                disabled=True,
+            ),
         },
         key="multi_session_unit_session_selector",
     )
@@ -120,7 +156,19 @@ st_project_data = st.data_editor(
             help="Status of the recordings processing",
             default="Main",
             options=["Main", "Shared", "CAT", "KS", "Phy", "Tprime", "Bombcell"]
-        )
+        ),
+        "session_dprime": st.column_config.NumberColumn(
+            "Session d'",
+            help="Mean d' from the behavioral .mat file (metric.d_prime, 10 s lick window).",
+            format="%.2f",
+            disabled=True,
+        ),
+        "session_hit_rate": st.column_config.NumberColumn(
+            "Hit rate",
+            help="Hit / (Hit + Miss) from the behavioral .mat file.",
+            format="%.2f",
+            disabled=True,
+        ),
     }
 )
 
@@ -349,11 +397,14 @@ if 'Session Type' in st_project_data.columns:
 
         fig_units = go.Figure()
         # ACx stacked
-        fig_units.add_trace(go.Bar(x=types, y=acx_good, name='ACx Good', marker_color='green', offsetgroup='acx'))
-        fig_units.add_trace(go.Bar(x=types, y=acx_mua, name='ACx MUA', marker_color='orange', offsetgroup='acx', base=None))
-        # OFC stacked (side-by-side with ACx) with requested colors
-        fig_units.add_trace(go.Bar(x=types, y=ofc_good, name='OFC Good', marker_color='#4C763B', offsetgroup='ofc'))
-        fig_units.add_trace(go.Bar(x=types, y=ofc_mua, name='OFC MUA', marker_color='#FF9013', offsetgroup='ofc', base=None))
+        fig_units.add_trace(go.Bar(x=types, y=acx_good, name='ACx Good', marker_color=COLOR_ACX, offsetgroup='acx'))
+        fig_units.add_trace(
+            go.Bar(x=types, y=acx_mua, name='ACx MUA', marker_color=COLOR_ACX, opacity=0.55, offsetgroup='acx', base=None)
+        )
+        fig_units.add_trace(go.Bar(x=types, y=ofc_good, name='OFC Good', marker_color=COLOR_OFC, offsetgroup='ofc'))
+        fig_units.add_trace(
+            go.Bar(x=types, y=ofc_mua, name='OFC MUA', marker_color=COLOR_OFC, opacity=0.55, offsetgroup='ofc', base=None)
+        )
 
         fig_units.update_layout(
             barmode='stack',
@@ -363,6 +414,195 @@ if 'Session Type' in st_project_data.columns:
             height=440
         )
         st.plotly_chart(fig_units, use_container_width=True)
+
+
+# Sessions below this hit rate are drawn as open circles on the d' plot.
+_LOW_HIT_RATE_THRESHOLD = 0.6
+
+# Session d' by Session Type — jittered points per session, colored by learning stage,
+# with mean +/- SEM overlay (d' computed from behavioral .mat files).
+if (
+    "Session Type" in st_project_data.columns
+    and "session_dprime" in st_project_data.columns
+    and st_project_data["session_dprime"].notna().any()
+):
+    st.subheader("Session d' by Session Type")
+    dprime_df = st_project_data.dropna(subset=["session_dprime", "Session Type"]).copy()
+    dprime_df["session_dprime"] = pd.to_numeric(dprime_df["session_dprime"], errors="coerce")
+    dprime_df = dprime_df.dropna(subset=["session_dprime"])
+
+    if not dprime_df.empty:
+        dprime_df["learning_stage"] = dprime_df["Session Type"].map(classify_learning_stage)
+        stage_order = ["Novice", "1b Expert", "2b Expert", "Other"]
+        present_stages = [s for s in stage_order if (dprime_df["learning_stage"] == s).any()]
+        default_stages = [s for s in stage_order[:3] if s in present_stages]
+        if not default_stages:
+            default_stages = present_stages
+
+        selected_stages = st.multiselect(
+            "Learning stages to include",
+            options=present_stages,
+            default=default_stages,
+            key="monitoring_dprime_learning_stages",
+        )
+
+        if not selected_stages:
+            st.info("Select at least one learning stage to display the plot.")
+        else:
+            ordered_stages = [s for s in stage_order if s in selected_stages]
+            dprime_plot_df = dprime_df[dprime_df["learning_stage"].isin(ordered_stages)].copy()
+
+            fig_dprime = go.Figure()
+            rng = np.random.default_rng(seed=42)
+            x_pos_map = {stage: i for i, stage in enumerate(ordered_stages)}
+            legend_shown_stages: set[str] = set()
+            has_low_hit_sessions = False
+
+            hover_cols = ["Animal", "Date", "learning_stage", "Session Type"]
+            if "session_hit_rate" in dprime_plot_df.columns:
+                hover_cols.append("session_hit_rate")
+
+            for stage in ordered_stages:
+                stage_sub = dprime_plot_df[dprime_plot_df["learning_stage"] == stage].copy()
+                if stage_sub.empty:
+                    continue
+                line_color = LEARNING_STAGE_COLORS.get(stage, ("#888888", ""))[0]
+                jitter = rng.uniform(-0.15, 0.15, size=len(stage_sub))
+                stage_sub["_x"] = x_pos_map[stage] + jitter
+
+                hit_rate = (
+                    pd.to_numeric(stage_sub["session_hit_rate"], errors="coerce")
+                    if "session_hit_rate" in stage_sub.columns
+                    else pd.Series(np.nan, index=stage_sub.index)
+                )
+                low_hit_mask = hit_rate.notna() & (hit_rate < _LOW_HIT_RATE_THRESHOLD)
+                has_low_hit_sessions = has_low_hit_sessions or bool(low_hit_mask.any())
+
+                def _hover_template(include_hit: bool) -> str:
+                    base = (
+                        "%{customdata[0]} | %{customdata[1]}<br>"
+                        "Stage: %{customdata[2]}<br>"
+                        "Session Type: %{customdata[3]}<br>"
+                    )
+                    if include_hit:
+                        base += "Hit rate: %{customdata[4]:.1%}<br>"
+                    return base + "d': %{y:.2f}<extra></extra>"
+
+                filled_sub = stage_sub[~low_hit_mask]
+                if not filled_sub.empty:
+                    fig_dprime.add_trace(
+                        go.Scatter(
+                            x=filled_sub["_x"],
+                            y=filled_sub["session_dprime"],
+                            mode="markers",
+                            marker=dict(color=line_color, size=10, line=dict(width=1, color="white")),
+                            name=stage,
+                            legendgroup=stage,
+                            showlegend=stage not in legend_shown_stages,
+                            hovertemplate=_hover_template("session_hit_rate" in filled_sub.columns),
+                            customdata=filled_sub[hover_cols].to_numpy(),
+                        )
+                    )
+                    legend_shown_stages.add(stage)
+
+                open_sub = stage_sub[low_hit_mask]
+                if not open_sub.empty:
+                    fig_dprime.add_trace(
+                        go.Scatter(
+                            x=open_sub["_x"],
+                            y=open_sub["session_dprime"],
+                            mode="markers",
+                            marker=dict(
+                                color=line_color,
+                                size=11,
+                                symbol="circle-open",
+                                line=dict(width=2, color=line_color),
+                            ),
+                            name=stage,
+                            legendgroup=stage,
+                            showlegend=False,
+                            hovertemplate=_hover_template("session_hit_rate" in open_sub.columns),
+                            customdata=open_sub[hover_cols].to_numpy(),
+                        )
+                    )
+
+            if has_low_hit_sessions:
+                fig_dprime.add_trace(
+                    go.Scatter(
+                        x=[None],
+                        y=[None],
+                        mode="markers",
+                        marker=dict(
+                            size=11,
+                            symbol="circle-open",
+                            color="white",
+                            line=dict(width=2, color=COLOR_GRAY),
+                        ),
+                        name=f"<{_LOW_HIT_RATE_THRESHOLD:.0%} hit rate",
+                        showlegend=True,
+                        hoverinfo="skip",
+                    )
+                )
+
+            # Mean +/- SEM overlay per learning stage.
+            summary = (
+                dprime_plot_df.groupby("learning_stage", observed=True)["session_dprime"]
+                .agg(
+                    mean="mean",
+                    sem=lambda s: float(s.std(ddof=1) / np.sqrt(len(s))) if len(s) > 1 else 0.0,
+                    n="count",
+                )
+                .reindex(ordered_stages)
+                .reset_index()
+            )
+            summary_x = [x_pos_map[s] for s in summary["learning_stage"]]
+            fig_dprime.add_trace(
+                go.Scatter(
+                    x=summary_x,
+                    y=summary["mean"],
+                    error_y=dict(type="data", array=summary["sem"], visible=True, thickness=2),
+                    mode="markers",
+                    marker=dict(color="black", symbol="line-ew", size=18, line=dict(width=3, color="black")),
+                    name="Mean +/- SEM",
+                    hovertemplate=(
+                        "%{customdata[0]}<br>n=%{customdata[1]}<br>mean=%{y:.2f}<extra></extra>"
+                    ),
+                    customdata=np.stack([summary["learning_stage"].to_numpy(), summary["n"].to_numpy()], axis=-1),
+                )
+            )
+
+            # Expert threshold reference line — typical d' >= 1.5 indicates trained behavior.
+            fig_dprime.add_hline(
+                y=1.0,
+                line=dict(color="gray", dash="dash", width=2),
+            )
+
+            fig_dprime.update_layout(
+                title="Session d' by Learning Stage",
+                xaxis_title="Learning Stage",
+                yaxis_title="Session d'",
+                height=460,
+                legend_title="Learning stage",
+            )
+            fig_dprime.update_xaxes(
+                tickmode="array",
+                tickvals=list(x_pos_map.values()),
+                ticktext=list(x_pos_map.keys()),
+                range=[-0.5, len(ordered_stages) - 0.5],
+            )
+
+            st.plotly_chart(fig_dprime, use_container_width=True)
+            if "session_hit_rate" in dprime_plot_df.columns:
+                st.caption(
+                    f"Filled circles: hit rate ≥ {_LOW_HIT_RATE_THRESHOLD:.0%}. "
+                    f"Open circles: hit rate < {_LOW_HIT_RATE_THRESHOLD:.0%}."
+                )
+
+        n_missing = int(st_project_data["session_dprime"].isna().sum())
+        if n_missing:
+            st.caption(
+                f"{n_missing} session(s) missing d' (no behavioral .mat path or could not compute from file)."
+            )
 
 
 # Check if 'Checkbox' column exists and has any True values

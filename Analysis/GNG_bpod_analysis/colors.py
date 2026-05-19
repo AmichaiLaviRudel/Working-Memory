@@ -14,6 +14,59 @@ COLOR_LOW_BD_TRANSPARENT = "rgba(255, 72, 0, 0.2)"
 COLOR_HIGH_BD  = '#ffb600'
 COLOR_HIGH_BD_TRANSPARENT = "rgba(255, 182, 0, 0.2)"
 
+# NPXL dual-probe areas (imec0 = ACx, imec1 = OFC)
+COLOR_ACX = "#577077"
+COLOR_OFC = "#2C9E87"  # same hue as COLOR_LOW_BD
+AREA_COLORS: dict[str, str] = {
+    "ACx": COLOR_ACX,
+    "OFC": COLOR_OFC,
+}
+
+
+def get_area_color(area: str, default: str = "#888888") -> str:
+    """Return plot color for ACx / OFC (case-sensitive keys)."""
+    return AREA_COLORS.get(str(area), default)
+
+
+def hex_to_rgba(hex_color: str, alpha: float = 1.0) -> str:
+    """Convert ``#RRGGBB`` to an ``rgba(...)`` string."""
+    h = hex_color.lstrip("#")
+    if len(h) == 3:
+        h = "".join(ch * 2 for ch in h)
+    r, g, b = (int(h[i : i + 2], 16) for i in (0, 2, 4))
+    return f"rgba({r},{g},{b},{alpha})"
+
+
+def area_color_rgba(area: str, alpha: float = 0.2, default: str = "#888888") -> str:
+    """Semi-transparent fill for ACx / OFC PSTH shading."""
+    return hex_to_rgba(get_area_color(area, default), alpha)
+
+
+def probe_label_area_color(label: str | None) -> str:
+    """Map monitoring probe labels (e.g. ``ACx (imec0)``) to area color."""
+    text = (label or "").upper()
+    if "OFC" in text or "IMEC1" in text:
+        return COLOR_OFC
+    return COLOR_ACX
+
+
+def recolor_plotly_accent_html(html: str, color: str) -> str:
+    """Replace legacy COLOR_ACCENT styling in saved Plotly HTML with *color*."""
+    fill_rgba = hex_to_rgba(color, 0.2)
+    h = color.lstrip("#")
+    rgb = f"rgb({int(h[0:2], 16)}, {int(h[2:4], 16)}, {int(h[4:6], 16)})"
+    replacements = (
+        ("#1E90FA", color),
+        ("#1e90fa", color),
+        ("rgb(30, 144, 250)", rgb),
+        ("rgba(30, 144, 250, 0.2)", fill_rgba),
+        ("rgba(30,144,250,0.2)", fill_rgba),
+    )
+    out = html
+    for old, new in replacements:
+        out = out.replace(old, new)
+    return out
+
 COLOR_D_PRIME = "#FF7F0E"  # Orange
 COLOR_ORANGE = "#FF7F0E"   # Orange (general purpose)
 # ─── Outcome Colors ─────────────────────────────────────────────
@@ -174,7 +227,7 @@ def get_subject_color_map(subject_names):
 LEARNING_STAGE_COLORS: dict[str, tuple[str, str]] = {
     "Novice":    (COLOR_ACCENT, COLOR_ACCENT_TRANSPARENT),
     "1b Expert": (COLOR_LOW_BD, COLOR_LOW_BD_TRANSPARENT),
-    "2b Expert": ("#00CC96", "rgba(0,204,150,0.15)")
+    "2b Expert": ("#00838F", "rgba(0,131,143,0.15)")
 }
 
 # ─── Line Width ─────────────────────────────────────────────────

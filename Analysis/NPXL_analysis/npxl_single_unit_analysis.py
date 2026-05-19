@@ -32,6 +32,20 @@ def ensure_plotlyjs_inline(html: str) -> str:
     if not _CDN_PLOTLY_RE.search(html):
         return html
     return _CDN_PLOTLY_RE.sub(_plotly_js_inline(), html, count=1)
+
+
+def _render_saved_plotly_html(
+    html_path: str,
+    *,
+    height: int = 500,
+    area_color: str | None = None,
+) -> None:
+    """Embed a saved Plotly HTML file; optionally recolor legacy accent traces."""
+    with open(html_path, "r", encoding="utf-8") as f:
+        html = f.read()
+    if area_color:
+        html = recolor_plotly_accent_html(html, area_color)
+    components.html(ensure_plotlyjs_inline(html), height=height, scrolling=False)
             
 # Import single unit metrics functions from single_unit_offline_analysis
 from Analysis.NPXL_analysis.single_unit_offline_analysis.single_unit_metrics import (
@@ -55,7 +69,23 @@ from Analysis.NPXL_analysis.single_unit_offline_analysis.visualization import (
     plot_unit_heatmap,
     get_trial_statistics,
 )
-from Analysis.GNG_bpod_analysis.colors import COLOR_GO, COLOR_GRAY, COLOR_NOGO, COLOR_HIT, COLOR_FA, COLOR_CR, COLOR_MISS, COLOR_BLUE, COLOR_BLUE_TRANSPARENT, COLOR_ACCENT, COLOR_ACCENT_TRANSPARENT, LEARNING_STAGE_COLORS
+from Analysis.GNG_bpod_analysis.colors import (
+    COLOR_GO,
+    COLOR_GRAY,
+    COLOR_NOGO,
+    COLOR_HIT,
+    COLOR_FA,
+    COLOR_CR,
+    COLOR_MISS,
+    COLOR_BLUE,
+    COLOR_BLUE_TRANSPARENT,
+    LEARNING_STAGE_COLORS,
+    area_color_rgba,
+    get_area_color,
+    hex_to_rgba,
+    probe_label_area_color,
+    recolor_plotly_accent_html,
+)
 from Analysis.GNG_bpod_analysis.GNG_bpod_general import normalize_workspace_path, resolve_analysis_path
 def save_pvalues_to_folder(pvals, selected_folder, window=(-1, 2), bin_size=0.01):
     """
@@ -235,6 +265,7 @@ def plot_unit_psth(
     unit_rank,
     bin_size=0.005,
     analysis_output_dir=None,
+    area_color: str | None = None,
 ):
     """Plot a single-unit PSTH aligned to events and compute significance metrics.
 
@@ -264,6 +295,8 @@ def plot_unit_psth(
         if html_path and os.path.exists(html_path):
             with open(html_path, "r", encoding="utf-8") as f:
                 html_content = f.read()
+            if area_color:
+                html_content = recolor_plotly_accent_html(html_content, area_color)
             return html_content, None, True
 
     # Fallback: compute PSTH from matrices
@@ -294,6 +327,9 @@ def plot_unit_psth(
     
     # Calculate comprehensive PSTH metrics
     psth_metrics = calculate_psth_metrics(unit_data, psth_time_axis)
+
+    line_color = area_color or get_area_color("ACx")
+    fill_color = hex_to_rgba(line_color, 0.2)
     
     # Create PSTH plot with proper time axis
     psth_fig = go.Figure()
@@ -304,7 +340,7 @@ def plot_unit_psth(
         y=psth_mean,
         mode='lines',
         name='Mean Firing Rate',
-        line=dict(color=COLOR_ACCENT, width=3)
+        line=dict(color=line_color, width=3)
     ))
     
     # Add shaded area for SEM
@@ -312,7 +348,7 @@ def plot_unit_psth(
         x=np.concatenate([psth_time_axis, psth_time_axis[::-1]]),
         y=np.concatenate([psth_mean + psth_sem, (psth_mean - psth_sem)[::-1]]),
         fill='toself',
-        fillcolor=f'rgba(0,0,255,0.2)',
+        fillcolor=fill_color,
         line=dict(color='rgba(255,255,255,0)'),
         showlegend=False,
         name='SEM'
@@ -977,9 +1013,11 @@ def _render_selected_unit_preview(filtered_df: pd.DataFrame) -> None:
         key="multi_unit_saved_plot_select",
     )
     plot_path = resolve_analysis_path(row[available_plots[selected_plot]])
+    area_color = None
+    if selected_plot == "Tone PSTH" and "brain_area" in row:
+        area_color = get_area_color(str(row["brain_area"]))
     try:
-        with open(plot_path, "r", encoding="utf-8") as f:
-            components.html(ensure_plotlyjs_inline(f.read()), height=520, scrolling=False)
+        _render_saved_plotly_html(plot_path, height=520, area_color=area_color)
     except Exception as e:
         st.warning(f"Could not render saved plot: {e}")
 
@@ -1176,7 +1214,7 @@ def _render_responsive_units_panel(filtered_df: pd.DataFrame) -> None:
             y=area_df["mean"],
             error_y=dict(type="data", array=area_df["sem"].tolist(), visible=True),
             name=area,
-            marker_color=palette[idx % len(palette)],
+            marker_color=get_area_color(str(area), palette[idx % len(palette)]),
         ))
 
     fig.update_layout(
@@ -2076,10 +2114,13 @@ def single_unit_analysis_panel(selected_recording_dir=None, selected_area=None, 
                         html_tone_path = resolve_analysis_path(row["psth_tone_path"], analysis_output_dir)
                 if html_tone_path and os.path.exists(html_tone_path):
                     try:
-                        with open(html_tone_path, "r", encoding="utf-8") as f:
-                            psth_render = f.read()
-                        st.markdown(f"### Tone PSTH")
-                        components.html(ensure_plotlyjs_inline(psth_render), height=500, scrolling=False)
+                        st.markdown("### Tone PSTH")
+                        tone_area_color = probe_label_area_color(selected_area)
+                        _render_saved_plotly_html(
+                            html_tone_path,
+                            height=500,
+                            area_color=tone_area_color,
+                        )
                     except Exception as e:
                         st.warning(f"Error loading PSTH plot: {e}")
                 else:

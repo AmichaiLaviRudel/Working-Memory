@@ -8,13 +8,13 @@ import plotly.graph_objects as go
 from Analysis.GNG_bpod_analysis.colors import (
     OUTCOME_COLOR_MAP,
     SUBJECT_COLORS,
-    COLOR_ACCENT,
-    COLOR_ACCENT_TRANSPARENT,
     COLOR_GRAY,
     COLOR_HIT,
     COLOR_FA,
     COLOR_CR,
     COLOR_MISS,
+    area_color_rgba,
+    get_area_color,
 )
 from Analysis.NPXL_analysis.single_unit_offline_analysis.utils import save_plot_to_html
 
@@ -277,7 +277,9 @@ def plot_raw_psth(
     
     # Calculate PSTH (mean and SEM across all trials)
     psth_mean, psth_sem = _nanmean_sem(unit_data_windowed)
-    
+    line_color = get_area_color(region_name)
+    fill_color = area_color_rgba(region_name)
+
     # Create figure
     fig = go.Figure()
     
@@ -287,7 +289,7 @@ def plot_raw_psth(
         y=psth_mean,
         mode='lines',
         name='Mean Firing Rate',
-        line=dict(color=COLOR_ACCENT, width=2)
+        line=dict(color=line_color, width=2)
     ))
     
     # SEM shading
@@ -295,7 +297,7 @@ def plot_raw_psth(
         x=np.concatenate([time_axis_windowed, time_axis_windowed[::-1]]),
         y=np.concatenate([psth_mean + psth_sem, (psth_mean - psth_sem)[::-1]]),
         fill='toself',
-        fillcolor=COLOR_ACCENT_TRANSPARENT,
+        fillcolor=fill_color,
         line=dict(color='rgba(255,255,255,0)'),
         showlegend=False,
         hoverinfo='skip'

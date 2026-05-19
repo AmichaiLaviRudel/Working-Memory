@@ -4,6 +4,8 @@ Color schemes and font styling for GLM visualizations.
 import matplotlib
 import matplotlib.pyplot as plt
 
+from Analysis.GNG_bpod_analysis.colors import AREA_COLORS
+
 # ============================================================================
 # Font Configuration
 # ============================================================================
@@ -26,13 +28,10 @@ def configure_fonts():
 # Color Palettes
 # ============================================================================
 
-# Region colors (for ACx vs OFC comparisons)
-REGION_COLORS = {
-    'ACx': '#4A90E2',  # Blue
-    'OFC': '#E74C3C',  # Red
-}
+# Region colors (for ACx vs OFC comparisons) — shared with GNG_bpod_analysis.colors
+REGION_COLORS = dict(AREA_COLORS)
 
-# Feature type colors
+# Feature type colors (distinct from brain-area palette)
 FEATURE_COLORS = {
     'temporal': '#4A90E2',      # Blue for temporal features
     'categorical': '#50C878',   # Green for categorical features
@@ -106,10 +105,7 @@ def get_coefficient_colors(coefficients, positive_color='tab:blue', negative_col
 # Plotly Colors
 # ============================================================================
 
-PLOTLY_REGION_COLORS = {
-    'ACx': '#4A90E2',
-    'OFC': '#E74C3C',
-}
+PLOTLY_REGION_COLORS = dict(AREA_COLORS)
 
 PLOTLY_FEATURE_LABELS = {
     'stimulus': 'Stimulus ID',
@@ -120,4 +116,3 @@ PLOTLY_FEATURE_LABELS = {
     'tone_onset': 'Tone Onset',
     'outcome_onset': 'Outcome Onset',
 }
-

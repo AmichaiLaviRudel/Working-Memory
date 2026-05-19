@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+from plotly.subplots import make_subplots
 from sklearn.decomposition import PCA
 from sklearn.exceptions import ConvergenceWarning
 from sklearn.linear_model import LogisticRegression
@@ -23,12 +24,19 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
 
 from Analysis.GNG_bpod_analysis.GNG_bpod_general import get_plotly_config
-from Analysis.GNG_bpod_analysis.colors import COLOR_GO, COLOR_GRAY, COLOR_NOGO
+from Analysis.GNG_bpod_analysis.colors import (
+    AREA_COLORS,
+    COLOR_GO,
+    COLOR_GRAY,
+    COLOR_NOGO,
+    LEARNING_STAGE_COLORS,
+)
 from Analysis.NPXL_analysis.single_unit_offline_analysis.data_loading import (
     load_full_event_windows_data,
     load_histology_matched_unit_indices,
     load_unit_indices_by_type,
 )
+from load_data.session_dprime import attach_session_dprime, merge_behavioral_file_from_monitoring
 
 
 # Probe naming matches the rest of the NPXL monitoring stack (SpikeGLX imec0/imec1).
@@ -97,30 +105,6 @@ def _session_label(row: pd.Series) -> str:
     )
 
 
-def _pick_session_dprime_column(columns: list[str]) -> str | None:
-    # Prefer explicit names first; fall back to any column containing both "d" and "prime".
-    preferred = [
-        "session_dprime",
-        "session dprime",
-        "session d prime",
-        "d_prime",
-        "dprime",
-        "d prime",
-        "d-prime",
-        "D Prime",
-    ]
-    lookup = {str(col).strip().lower(): col for col in columns}
-    for key in preferred:
-        if key in lookup:
-            return str(lookup[key])
-
-    for col in columns:
-        text = str(col).strip().lower()
-        if "prime" in text and "d" in text:
-            return str(col)
-    return None
-
-
 @st.cache_data(show_spinner=False)
 def _histology_summary_for_session(session_dir: str) -> dict[str, float]:
     summary: dict[str, float] = {}
@@ -175,11 +159,7 @@ def load_valid_sessions(monitoring_csv_path: str) -> pd.DataFrame:
         | (sessions_df["ofc_total_units"] >= UNIT_THRESHOLD)
     ) & sessions_df.get("current_dir", pd.Series("", index=sessions_df.index)).fillna("").astype(str).str.strip().ne("")
     valid_sessions = sessions_df.loc[valid_mask].copy()
-    dprime_col = _pick_session_dprime_column(valid_sessions.columns.tolist())
-    if dprime_col is not None:
-        valid_sessions["session_dprime"] = pd.to_numeric(valid_sessions[dprime_col], errors="coerce")
-    else:
-        valid_sessions["session_dprime"] = np.nan
+    valid_sessions = attach_session_dprime(valid_sessions, behavioral_file_col="behavioral file")
 
     histology_records: list[dict[str, float]] = []
     for session_dir in valid_sessions.get("current_dir", pd.Series("", index=valid_sessions.index)).fillna("").astype(str):
@@ -1470,6 +1450,7 @@ def _prepare_session_selection_table(valid_sessions_df: pd.DataFrame) -> pd.Data
             "Date",
             "Session Type",
             "session_dprime",
+            "session_hit_rate",
             "acx_total_units",
             "ofc_total_units",
             "acx_histology_matched",
@@ -1589,12 +1570,14 @@ def _run_one_session_batch(
         bm = behavior_results[area]["metrics"]
         gm = gt_results[area]["metrics"]
         dprime_val = session_meta.get("session_dprime", np.nan)
+        hit_rate_val = session_meta.get("session_hit_rate", np.nan)
         records.append(
             {
                 "animal": str(session_meta.get("Animal", "")),
                 "date": str(session_meta.get("Date", "")),
                 "session_type": str(session_meta.get("Session Type", "")),
                 "session_dprime": float(dprime_val) if pd.notna(dprime_val) else np.nan,
+                "session_hit_rate": float(hit_rate_val) if pd.notna(hit_rate_val) else np.nan,
                 "area": area,
                 "n_units": int(session_data[area]["unit_count"]),
                 "n_trials": int(len(labels_df)),
@@ -1657,29 +1640,260 @@ def _batch_decode_all_sessions(
     return pd.DataFrame(records), failures
 
 
+# Batch CSV names produced by run_npxl_group_decoder.sbatch (see OUTPUT_CSV + --no_histology).
+_GROUP_DECODER_CSV_CANDIDATES: dict[bool, tuple[str, ...]] = {
+    True: (
+        "npxl_group_decoder_results_with_histology_histology.csv",
+        "npxl_group_decoder_results_histology.csv",
+    ),
+    False: (
+        "npxl_group_decoder_results_no_histology.csv",
+        "npxl_group_decoder_results_no_histology_no_histology.csv",
+    ),
+}
+
+
+def _group_decoder_results_dir() -> str:
+    """Directory where run_npxl_group_decoder.sbatch / npxl_group_decoder_batch.py write CSVs."""
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "Results")
+
+
+def _group_decoder_results_path(use_histology: bool) -> str:
+    """Preferred batch CSV path for histology-filtered vs all good+MUA runs."""
+    name = _GROUP_DECODER_CSV_CANDIDATES[use_histology][0]
+    return os.path.join(_group_decoder_results_dir(), name)
+
+
+def _group_decoder_failures_path(results_path: str) -> str:
+    return f"{os.path.splitext(results_path)[0]}_failures.csv"
+
+
+@st.cache_data(show_spinner=False)
+def _read_group_decoder_csv(csv_path: str) -> pd.DataFrame:
+    return pd.read_csv(csv_path)
+
+
+def _resolve_group_decoder_results_path(use_histology: bool) -> str | None:
+    """Return the first existing batch CSV for the requested histology mode."""
+    results_dir = _group_decoder_results_dir()
+    for name in _GROUP_DECODER_CSV_CANDIDATES[use_histology]:
+        path = os.path.join(results_dir, name)
+        if os.path.isfile(path):
+            return path
+    legacy = os.path.join(results_dir, "npxl_group_decoder_results.csv")
+    if os.path.isfile(legacy):
+        return legacy
+    return None
+
+
+def _load_group_decoder_batch_results(
+    use_histology: bool,
+) -> tuple[pd.DataFrame, list[dict[str, str]], str | None]:
+    """Load pre-computed group decoder output from the cluster batch job."""
+    results_path = _resolve_group_decoder_results_path(use_histology)
+    if results_path is None:
+        return pd.DataFrame(), [], None
+
+    batch_df = _read_group_decoder_csv(results_path)
+    failures_path = _group_decoder_failures_path(results_path)
+    failures: list[dict[str, str]] = []
+    if os.path.isfile(failures_path):
+        failures = pd.read_csv(failures_path).to_dict("records")
+    return batch_df, failures, results_path
+
+
 def _build_group_summary_table(batch_df: pd.DataFrame) -> pd.DataFrame:
-    """Mean ± SEM per (session_type × area) for accuracy and ROC-AUC."""
+    """Mean ± SEM per (session_type × area) for decoder accuracy."""
     def _sem(x: pd.Series) -> float:
         return float(x.std(ddof=1) / np.sqrt(len(x))) if len(x) > 1 else np.nan
 
-    return (
+    agg: dict[str, tuple[str, str]] = {
+        "n_sessions": ("accuracy", "count"),
+        "mean_accuracy": ("accuracy", "mean"),
+        "sem_accuracy": ("accuracy", _sem),
+        "mean_accuracy_gt": ("accuracy_gt", "mean"),
+        "sem_accuracy_gt": ("accuracy_gt", _sem),
+    }
+    if "session_dprime" in batch_df.columns:
+        agg["mean_session_dprime"] = ("session_dprime", "mean")
+        agg["sem_session_dprime"] = ("session_dprime", _sem)
+    if "session_hit_rate" in batch_df.columns:
+        agg["mean_hit_rate"] = ("session_hit_rate", "mean")
+        agg["sem_hit_rate"] = ("session_hit_rate", _sem)
+
+    summary = (
         batch_df.groupby(["session_type", "area"], observed=True)
-        .agg(
-            n_sessions=("accuracy", "count"),
-            mean_accuracy=("accuracy", "mean"),
-            sem_accuracy=("accuracy", _sem),
-            mean_roc_auc=("roc_auc", "mean"),
-            sem_roc_auc=("roc_auc", _sem),
-            mean_accuracy_gt=("accuracy_gt", "mean"),
-            sem_accuracy_gt=("accuracy_gt", _sem),
-            mean_roc_auc_gt=("roc_auc_gt", "mean"),
-            sem_roc_auc_gt=("roc_auc_gt", _sem),
-        )
+        .agg(**agg)
         .reset_index()
+    )
+    type_order = {s: i for i, s in enumerate(_order_session_types(summary["session_type"]))}
+    summary["_sort"] = summary["session_type"].map(type_order)
+    return summary.sort_values(["_sort", "area"]).drop(columns="_sort").reset_index(drop=True)
+
+
+_GROUP_STAGE_RANK: dict[str, int] = {"Novice": 0, "1b Expert": 1, "2b Expert": 2, "Other": 99}
+
+
+def _classify_learning_stage(session_type: str) -> str:
+    """Map session_type label to Novice / 1b Expert / 2b Expert (matches NPXL naming)."""
+    s = str(session_type).lower()
+    if "novice" in s:
+        return "Novice"
+    if "2b" in s:
+        return "2b Expert"
+    if "1b" in s:
+        return "1b Expert"
+    return "Other"
+
+
+def _order_session_types(session_types: Any) -> list[str]:
+    """Left-to-right plot order: Novice → 1b Expert → 2b Expert → other."""
+    unique = {str(s) for s in session_types if pd.notna(s) and str(s).strip()}
+    return sorted(
+        unique,
+        key=lambda s: (_GROUP_STAGE_RANK.get(_classify_learning_stage(s), 99), s),
     )
 
 
-_GROUP_AREA_COLORS: dict[str, str] = {"ACx": "#2E86AB", "OFC": "#E84855"}
+def _p_value_to_sig(p: float) -> str:
+    if not np.isfinite(p):
+        return ""
+    if p < 0.001:
+        return "***"
+    if p < 0.01:
+        return "**"
+    if p < 0.05:
+        return "*"
+    return "ns"
+
+
+def _accuracy_groups_by_session_type(
+    batch_df: pd.DataFrame,
+    area: str,
+    metric_col: str,
+    *,
+    min_n: int = 2,
+) -> dict[str, np.ndarray]:
+    """Session-level accuracy values per session_type for one area (unpaired groups)."""
+    area_df = batch_df[batch_df["area"] == area]
+    groups: dict[str, np.ndarray] = {}
+    for stype in _order_session_types(area_df["session_type"]):
+        vals = pd.to_numeric(
+            area_df.loc[area_df["session_type"].astype(str) == stype, metric_col],
+            errors="coerce",
+        ).dropna()
+        if len(vals) >= min_n:
+            groups[stype] = vals.to_numpy(dtype=float)
+    return groups
+
+
+def _run_group_accuracy_session_type_tests(
+    batch_df: pd.DataFrame,
+    metric_col: str,
+    *,
+    min_n: int = 2,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Kruskal-Wallis (≥3 groups) + pairwise Mann-Whitney U within each area."""
+    from itertools import combinations
+
+    from scipy.stats import kruskal, mannwhitneyu
+
+    omnibus_rows: list[dict[str, Any]] = []
+    pairwise_rows: list[dict[str, Any]] = []
+
+    for area in sorted(batch_df["area"].dropna().astype(str).unique()):
+        groups = _accuracy_groups_by_session_type(batch_df, area, metric_col, min_n=min_n)
+        testable = list(groups.keys())
+        if len(testable) < 2:
+            continue
+
+        if len(testable) >= 3:
+            stat, p = kruskal(*(groups[g] for g in testable))
+            omnibus_rows.append(
+                {
+                    "area": area,
+                    "test": "Kruskal-Wallis",
+                    "groups": ", ".join(testable),
+                    "statistic": float(stat),
+                    "p": float(p),
+                    "sig": _p_value_to_sig(float(p)),
+                }
+            )
+
+        pair_stats: list[dict[str, Any]] = []
+        for group_a, group_b in combinations(testable, 2):
+            vals_a = groups[group_a]
+            vals_b = groups[group_b]
+            try:
+                stat_u, p = mannwhitneyu(vals_a, vals_b, alternative="two-sided")
+            except ValueError:
+                stat_u, p = np.nan, np.nan
+            pair_stats.append(
+                {
+                    "area": area,
+                    "group_a": group_a,
+                    "group_b": group_b,
+                    "n_a": len(vals_a),
+                    "n_b": len(vals_b),
+                    "U": float(stat_u) if np.isfinite(stat_u) else np.nan,
+                    "p": float(p) if np.isfinite(p) else np.nan,
+                }
+            )
+
+        n_tests = sum(1 for row in pair_stats if np.isfinite(row["p"]))
+        for row in pair_stats:
+            p_raw = row["p"]
+            p_adj = min(1.0, p_raw * n_tests) if np.isfinite(p_raw) and n_tests > 0 else np.nan
+            pairwise_rows.append(
+                {
+                    **row,
+                    "p_adj": p_adj,
+                    "sig": _p_value_to_sig(p_adj) if np.isfinite(p_adj) else "",
+                }
+            )
+
+    return pd.DataFrame(omnibus_rows), pd.DataFrame(pairwise_rows)
+
+
+def _render_group_accuracy_stats(
+    batch_df: pd.DataFrame,
+    metric_col: str,
+    title: str,
+) -> None:
+    """Show omnibus and pairwise tests for session-type accuracy differences (per area)."""
+    omnibus_df, pairwise_df = _run_group_accuracy_session_type_tests(batch_df, metric_col)
+    if omnibus_df.empty and pairwise_df.empty:
+        st.caption(f"{title}: not enough sessions per group (need ≥2 per session type and area).")
+        return
+
+    st.markdown(f"**{title}**")
+    st.caption(
+        "Session-level cross-validated accuracy; unpaired Mann-Whitney U between session types "
+        "(within ACx or within OFC only). Bonferroni correction across pairwise tests per area."
+    )
+    if not omnibus_df.empty:
+        st.dataframe(
+            omnibus_df,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "statistic": st.column_config.NumberColumn(format="%.3f"),
+                "p": st.column_config.NumberColumn(format="%.4g"),
+            },
+        )
+    if not pairwise_df.empty:
+        st.dataframe(
+            pairwise_df,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "n_a": st.column_config.NumberColumn(format="%d"),
+                "n_b": st.column_config.NumberColumn(format="%d"),
+                "U": st.column_config.NumberColumn(format="%.1f"),
+                "p": st.column_config.NumberColumn(format="%.4g"),
+                "p_adj": st.column_config.NumberColumn("p (Bonferroni)", format="%.4g"),
+            },
+        )
 
 
 def _plot_group_accuracy_strip(
@@ -1696,7 +1910,7 @@ def _plot_group_accuracy_strip(
                 x=area_df["session_type"],
                 y=area_df[metric_col],
                 name=area,
-                marker_color=_GROUP_AREA_COLORS.get(area, "#888888"),
+                marker_color=AREA_COLORS.get(area, "#888888"),
                 boxpoints="all",
                 jitter=0.35,
                 pointpos=0,
@@ -1704,6 +1918,11 @@ def _plot_group_accuracy_strip(
                 marker_size=8,
             )
         )
+    ordered_types = _order_session_types(batch_df["session_type"])
+    fig.add_hline(
+        y=0.5,
+        line=dict(color=COLOR_GRAY, dash="dash", width=2),
+    )
     fig.update_layout(
         title=title,
         xaxis_title="Session Type",
@@ -1713,6 +1932,7 @@ def _plot_group_accuracy_strip(
         height=450,
         legend_title="Area",
     )
+    fig.update_xaxes(categoryorder="array", categoryarray=ordered_types)
     return fig
 
 
@@ -1727,7 +1947,7 @@ def _plot_group_beta_diff(batch_df: pd.DataFrame) -> go.Figure | None:
     if dual_df.empty:
         return None
 
-    session_types = sorted(dual_df["session_type"].unique())
+    session_types = _order_session_types(dual_df["session_type"])
     palette = ["#2E86AB", "#E84855", "#52B788", "#F4A261", "#9B5DE5"]
 
     fig = go.Figure()
@@ -1754,7 +1974,315 @@ def _plot_group_beta_diff(batch_df: pd.DataFrame) -> go.Figure | None:
         yaxis_title="Beta Difference (ACx \u2212 OFC)",
         height=420,
     )
+    fig.update_xaxes(categoryorder="array", categoryarray=session_types)
     return fig
+
+
+# Stage line colors (opaque); pulled from the shared LEARNING_STAGE_COLORS palette.
+_STAGE_LINE_COLORS: dict[str, str] = {
+    stage: pair[0] for stage, pair in LEARNING_STAGE_COLORS.items()
+}
+_STAGE_LINE_COLORS.setdefault("Other", "#888888")
+
+
+def _attach_learning_stage(view_df: pd.DataFrame) -> pd.DataFrame:
+    """Add a `learning_stage` column derived from session_type (cached on view_df)."""
+    out = view_df.copy()
+    out["learning_stage"] = out["session_type"].map(_classify_learning_stage)
+    return out
+
+
+def _spearman_dprime_accuracy_label(
+    x: pd.Series,
+    y: pd.Series,
+    *,
+    min_n: int = 3,
+) -> str:
+    """One-line Spearman label for subplot annotation."""
+    from scipy.stats import spearmanr
+
+    x_arr = pd.to_numeric(x, errors="coerce").to_numpy(dtype=float)
+    y_arr = pd.to_numeric(y, errors="coerce").to_numpy(dtype=float)
+    valid = np.isfinite(x_arr) & np.isfinite(y_arr)
+    n = int(valid.sum())
+    if n < min_n:
+        return f"n = {n}"
+    r, p = spearmanr(x_arr[valid], y_arr[valid])
+    if not np.isfinite(r):
+        return f"n = {n}"
+    parts = [f"Spearman r = {r:.2f}", f"p = {p:.3g}" if np.isfinite(p) else None, f"n = {n}"]
+    label = ", ".join(p for p in parts if p)
+    if np.isfinite(p):
+        sig = _p_value_to_sig(float(p))
+        if sig and sig != "ns":
+            label += f" ({sig})"
+    return label
+
+
+_DPRIME_ACCURACY_TARGETS: tuple[tuple[str, str], ...] = (
+    ("accuracy", "Behavior target"),
+    ("accuracy_gt", "Ground truth target"),
+)
+
+
+def _add_dprime_accuracy_panel(
+    fig: go.Figure,
+    plot_df: pd.DataFrame,
+    *,
+    area: str,
+    metric_col: str,
+    row: int,
+    col: int,
+    x_lo: float,
+    x_hi: float,
+    legend_shown: set[str],
+    show_regression_legend: bool,
+) -> tuple[set[str], bool]:
+    """Scatter + OLS + Spearman annotation for one (target, area) panel."""
+    area_df = plot_df[(plot_df["area"] == area) & plot_df[metric_col].notna()].copy()
+    if area_df.empty:
+        return legend_shown, show_regression_legend
+
+    stage_order = ["Novice", "1b Expert", "2b Expert", "Other"]
+    for stage in stage_order:
+        stage_df = area_df[area_df["learning_stage"] == stage]
+        if stage_df.empty:
+            continue
+        color = _STAGE_LINE_COLORS.get(stage, "#888888")
+        show_legend = stage not in legend_shown
+        legend_shown.add(stage)
+
+        fig.add_trace(
+            go.Scatter(
+                x=stage_df["session_dprime"],
+                y=stage_df[metric_col],
+                mode="markers",
+                name=stage,
+                legendgroup=stage,
+                showlegend=show_legend,
+                marker=dict(color=color, size=10, line=dict(width=1, color="white")),
+                hovertemplate=(
+                    f"{area}<br>"
+                    "Animal: %{customdata[0]}<br>"
+                    "Date: %{customdata[1]}<br>"
+                    "d': %{x:.2f}<br>"
+                    "Accuracy: %{y:.3f}<extra></extra>"
+                ),
+                customdata=stage_df[["animal", "date"]].to_numpy(),
+            ),
+            row=row,
+            col=col,
+        )
+
+    if len(area_df) >= 3:
+        x_vals = area_df["session_dprime"].to_numpy(dtype=float)
+        y_vals = area_df[metric_col].to_numpy(dtype=float)
+        slope, intercept = np.polyfit(x_vals, y_vals, 1)
+        line_x = np.array([x_lo, x_hi])
+        line_y = slope * line_x + intercept
+        fig.add_trace(
+            go.Scatter(
+                x=line_x,
+                y=line_y,
+                mode="lines",
+                name="OLS fit",
+                legendgroup="regression",
+                showlegend=show_regression_legend,
+                line=dict(color=COLOR_GRAY, width=2.5),
+                hoverinfo="skip",
+            ),
+            row=row,
+            col=col,
+        )
+        show_regression_legend = False
+
+    fig.add_annotation(
+        text=_spearman_dprime_accuracy_label(area_df["session_dprime"], area_df[metric_col]),
+        row=row,
+        col=col,
+        xref="x domain",
+        yref="y domain",
+        x=0.05,
+        y=0.95,
+        xanchor="left",
+        yanchor="top",
+        showarrow=False,
+        font=dict(size=12),
+        bgcolor="rgba(255,255,255,0.85)",
+        borderpad=4,
+    )
+
+    fig.add_hline(
+        y=0.5,
+        line=dict(color=COLOR_GRAY, dash="dash", width=2),
+        row=row,
+        col=col,
+    )
+    return legend_shown, show_regression_legend
+
+
+def _plot_dprime_vs_accuracy(view_df: pd.DataFrame) -> go.Figure | None:
+    """Scatter of session d' vs decoder accuracy — behavior row, GT row; one column per area.
+
+    Returns None when no session has a valid (d', accuracy) pair for any target.
+    """
+    if "session_dprime" not in view_df.columns:
+        return None
+
+    targets = [
+        (col, label)
+        for col, label in _DPRIME_ACCURACY_TARGETS
+        if col in view_df.columns and not view_df.dropna(subset=["session_dprime", col]).empty
+    ]
+    if not targets:
+        return None
+
+    plot_df = view_df.dropna(subset=["session_dprime"]).copy()
+    plot_df = _attach_learning_stage(plot_df)
+    areas_present = [a for a in ("ACx", "OFC") if a in plot_df["area"].unique()]
+    if not areas_present:
+        return None
+
+    x_min = float(plot_df["session_dprime"].min())
+    x_max = float(plot_df["session_dprime"].max())
+    x_pad = max(0.1, 0.05 * (x_max - x_min) if x_max > x_min else 0.5)
+    x_lo, x_hi = x_min - x_pad, x_max + x_pad
+
+    n_rows = len(targets)
+    n_cols = len(areas_present)
+    fig = make_subplots(
+        rows=n_rows,
+        cols=n_cols,
+        subplot_titles=areas_present * n_rows,
+        row_titles=[label for _, label in targets],
+        shared_xaxes=True,
+        shared_yaxes=True,
+        vertical_spacing=0.14,
+        horizontal_spacing=0.08,
+    )
+
+    legend_shown: set[str] = set()
+    show_regression_legend = True
+    for row_idx, (metric_col, _) in enumerate(targets, start=1):
+        for col_idx, area in enumerate(areas_present, start=1):
+            legend_shown, show_regression_legend = _add_dprime_accuracy_panel(
+                fig,
+                plot_df,
+                area=area,
+                metric_col=metric_col,
+                row=row_idx,
+                col=col_idx,
+                x_lo=x_lo,
+                x_hi=x_hi,
+                legend_shown=legend_shown,
+                show_regression_legend=show_regression_legend,
+            )
+
+    for row_idx in range(1, n_rows + 1):
+        for col_idx in range(1, n_cols + 1):
+            fig.update_xaxes(
+                title_text="Session d'" if row_idx == n_rows else None,
+                range=[x_lo, x_hi],
+                row=row_idx,
+                col=col_idx,
+            )
+            fig.update_yaxes(
+                title_text="Decoder accuracy" if col_idx == 1 else None,
+                range=[0, 1.05],
+                row=row_idx,
+                col=col_idx,
+            )
+
+    fig.update_layout(
+        title="Session d' vs Decoder Accuracy",
+        height=380 + 320 * n_rows,
+        legend_title="Learning stage",
+    )
+    return fig
+
+
+def _run_dprime_accuracy_correlations(
+    view_df: pd.DataFrame,
+    metric_col: str = "accuracy",
+    *,
+    min_n: int = 3,
+) -> pd.DataFrame:
+    """Spearman r between session d' and decoder accuracy, per (area, stage) + pooled.
+
+    Bonferroni correction is applied only to the per-(area, stage) tests; the
+    pooled-per-area rows are shown for context with raw p only.
+    """
+    from scipy.stats import spearmanr
+
+    if "session_dprime" not in view_df.columns:
+        return pd.DataFrame()
+
+    plot_df = view_df.dropna(subset=["session_dprime", metric_col]).copy()
+    if plot_df.empty:
+        return pd.DataFrame()
+    plot_df = _attach_learning_stage(plot_df)
+
+    per_stage_rows: list[dict[str, Any]] = []
+    pooled_rows: list[dict[str, Any]] = []
+
+    for area in sorted(plot_df["area"].dropna().astype(str).unique()):
+        area_df = plot_df[plot_df["area"] == area]
+
+        # Per-stage correlations (only Novice / 1b Expert / 2b Expert).
+        for stage in ("Novice", "1b Expert", "2b Expert"):
+            stage_df = area_df[area_df["learning_stage"] == stage]
+            n = int(len(stage_df))
+            if n < min_n:
+                per_stage_rows.append(
+                    {
+                        "area": area,
+                        "stage": stage,
+                        "n": n,
+                        "Spearman r": np.nan,
+                        "p": np.nan,
+                        "p_adj": np.nan,
+                        "sig": "",
+                    }
+                )
+                continue
+            r, p = spearmanr(stage_df["session_dprime"], stage_df[metric_col])
+            per_stage_rows.append(
+                {
+                    "area": area,
+                    "stage": stage,
+                    "n": n,
+                    "Spearman r": float(r) if np.isfinite(r) else np.nan,
+                    "p": float(p) if np.isfinite(p) else np.nan,
+                    "p_adj": np.nan,
+                    "sig": "",
+                }
+            )
+
+        # Pooled (all stages) — reported without Bonferroni since it's a separate question.
+        n_pool = int(len(area_df))
+        if n_pool >= min_n:
+            r, p = spearmanr(area_df["session_dprime"], area_df[metric_col])
+            pooled_rows.append(
+                {
+                    "area": area,
+                    "stage": "All (pooled)",
+                    "n": n_pool,
+                    "Spearman r": float(r) if np.isfinite(r) else np.nan,
+                    "p": float(p) if np.isfinite(p) else np.nan,
+                    "p_adj": np.nan,
+                    "sig": _p_value_to_sig(float(p)) if np.isfinite(p) else "",
+                }
+            )
+
+    n_tests = sum(1 for row in per_stage_rows if np.isfinite(row["p"]))
+    for row in per_stage_rows:
+        p_raw = row["p"]
+        if np.isfinite(p_raw) and n_tests > 0:
+            p_adj = min(1.0, p_raw * n_tests)
+            row["p_adj"] = p_adj
+            row["sig"] = _p_value_to_sig(p_adj)
+
+    return pd.DataFrame(per_stage_rows + pooled_rows)
 
 
 # --- Streamlit UI (script runs top-to-bottom on each interaction) ---
@@ -1793,6 +2321,7 @@ def _render_single_session_tab(valid_sessions_df: pd.DataFrame, monitoring_path:
             "acx_total_units": st.column_config.NumberColumn("ACx units", disabled=True),
             "ofc_total_units": st.column_config.NumberColumn("OFC units", disabled=True),
             "session_dprime": st.column_config.NumberColumn("Session d'", format="%.3f", disabled=True),
+            "session_hit_rate": st.column_config.NumberColumn("Hit rate", format="%.2f", disabled=True),
             "acx_histology_matched": st.column_config.NumberColumn("ACx histology n", format="%d", disabled=True),
             "ofc_histology_matched": st.column_config.NumberColumn("OFC histology n", format="%d", disabled=True),
             "acx_histology_match_pct": st.column_config.NumberColumn("ACx histology %", format="%.1f", disabled=True),
@@ -2301,7 +2830,9 @@ def _render_group_analysis_tab(valid_sessions_df: pd.DataFrame, monitoring_path:
     st.caption(
         f"Batch-run ACx/OFC decoders on all {len(valid_sessions_df)} valid sessions "
         "and aggregate accuracy / ROC-AUC by area and session type. "
-        "Decodes both behavior (lick) and ground truth (tone) targets in a single pass per session."
+        "Decodes both behavior (lick) and ground truth (tone) targets in a single pass per session. "
+        "Pre-computed cluster results are loaded from "
+        f"`{_group_decoder_results_dir()}` (see `run_npxl_group_decoder.sbatch`)."
     )
 
     g_col1, g_col2, g_col3 = st.columns(3)
@@ -2347,7 +2878,47 @@ def _render_group_analysis_tab(valid_sessions_df: pd.DataFrame, monitoring_path:
             "Use all good+MUA units (skip histology filter)",
             value=True,
             key="npxl_group_use_all_units",
+            help=(
+                "Off: `npxl_group_decoder_results_with_histology_histology.csv`. "
+                "On: `npxl_group_decoder_results_no_histology.csv`."
+            ),
         )
+
+    histology_label = "histology-matched units" if g_use_histology else "all good+MUA (no histology filter)"
+    expected_csv = _group_decoder_results_path(g_use_histology)
+
+    load_col, run_col = st.columns([1, 1])
+    with load_col:
+        reload_batch = st.button("Reload batch results", key="npxl_group_reload_batch")
+    with run_col:
+        run_interactive = st.button("Run Group Analysis (interactive)", key="npxl_group_run")
+
+    if reload_batch:
+        _read_group_decoder_csv.clear()
+
+    # Reload from disk unless showing a fresh interactive run (toggle/reload switches back to batch CSVs).
+    histology_changed = st.session_state.get("_group_loaded_histology") != g_use_histology
+    batch_source_state = st.session_state.get("_group_batch_source")
+    load_from_disk = (
+        batch_source_state != "interactive"
+        or reload_batch
+        or histology_changed
+    )
+    if load_from_disk:
+        loaded_df, loaded_failures, loaded_path = _load_group_decoder_batch_results(g_use_histology)
+        if loaded_path is not None:
+            st.session_state["_group_batch_df"] = loaded_df
+            st.session_state["_group_batch_failures"] = loaded_failures
+            st.session_state["_group_batch_source"] = "batch"
+            st.session_state["_group_batch_source_path"] = loaded_path
+            st.session_state["_group_loaded_histology"] = g_use_histology
+            st.session_state.pop("_group_settings_run", None)
+        elif histology_changed or reload_batch:
+            st.session_state["_group_batch_df"] = pd.DataFrame()
+            st.session_state["_group_batch_failures"] = []
+            st.session_state["_group_batch_source"] = "batch"
+            st.session_state.pop("_group_batch_source_path", None)
+            st.session_state["_group_loaded_histology"] = g_use_histology
 
     current_settings = (
         tuple(g_decode_window),
@@ -2358,7 +2929,7 @@ def _render_group_analysis_tab(valid_sessions_df: pd.DataFrame, monitoring_path:
         g_use_histology,
     )
 
-    if st.button("Run Group Analysis", type="primary", key="npxl_group_run"):
+    if run_interactive:
         with st.spinner(f"Decoding {len(valid_sessions_df)} sessions — this may take a while..."):
             batch_df, failures = _batch_decode_all_sessions(
                 monitoring_path,
@@ -2367,29 +2938,59 @@ def _render_group_analysis_tab(valid_sessions_df: pd.DataFrame, monitoring_path:
         st.session_state["_group_batch_df"] = batch_df
         st.session_state["_group_batch_failures"] = failures
         st.session_state["_group_settings_run"] = current_settings
+        st.session_state["_group_batch_source"] = "interactive"
+        st.session_state["_group_loaded_histology"] = g_use_histology
+        st.session_state.pop("_group_batch_source_path", None)
 
     batch_df: pd.DataFrame = st.session_state.get("_group_batch_df", pd.DataFrame())
     failures: list[dict[str, str]] = st.session_state.get("_group_batch_failures", [])
     settings_run = st.session_state.get("_group_settings_run")
+    batch_source = st.session_state.get("_group_batch_source", "batch")
+    batch_source_path = st.session_state.get("_group_batch_source_path")
+
+    if batch_source == "batch" and batch_source_path:
+        st.info(f"Showing batch results ({histology_label}) from `{os.path.basename(batch_source_path)}`.")
+    elif batch_source == "interactive":
+        st.info(f"Showing interactive run ({histology_label}).")
 
     if settings_run is not None and settings_run != current_settings:
-        st.warning("Settings have changed since the last run. Click **Run Group Analysis** to update.")
+        st.warning(
+            "Decoder settings have changed since the last interactive run. "
+            "Click **Run Group Analysis (interactive)** to update, or toggle histology to reload batch CSVs."
+        )
 
     if batch_df.empty and not failures:
-        st.info("Click **Run Group Analysis** to start batch decoding across all sessions.")
+        st.warning(
+            f"No batch results found for **{histology_label}**. "
+            f"Expected file: `{expected_csv}`. "
+            "Submit `run_npxl_group_decoder.sbatch` once with and once without `--no_histology`, "
+            "or click **Run Group Analysis (interactive)**."
+        )
         return
 
     if not batch_df.empty:
-        n_sessions = batch_df[["animal", "date", "session_type"]].drop_duplicates().shape[0]
+        all_session_types = _order_session_types(batch_df["session_type"])
+        selected_session_types = st.multiselect(
+            "Session types to show",
+            options=all_session_types,
+            default=all_session_types,
+            key="npxl_group_session_types_filter",
+        )
+        if not selected_session_types:
+            st.info("Select one or more session types above to display results.")
+            return
+
+        view_df = batch_df[batch_df["session_type"].astype(str).isin(selected_session_types)].copy()
+        n_sessions = view_df[["animal", "date", "session_type"]].drop_duplicates().shape[0]
         st.success(
-            f"Decoded {n_sessions} sessions — "
-            f"{batch_df[batch_df['area'] == 'ACx'].shape[0]} ACx rows, "
-            f"{batch_df[batch_df['area'] == 'OFC'].shape[0]} OFC rows."
+            f"Showing {n_sessions} sessions ({len(selected_session_types)}/{len(all_session_types)} session types) — "
+            f"{view_df[view_df['area'] == 'ACx'].shape[0]} ACx rows, "
+            f"{view_df[view_df['area'] == 'OFC'].shape[0]} OFC rows."
         )
 
         # --- Summary table ---
         st.markdown("### Summary by Session Type \u00d7 Area")
-        summary_df = _build_group_summary_table(batch_df)
+        summary_df = _build_group_summary_table(view_df)
         st.dataframe(
             summary_df,
             use_container_width=True,
@@ -2398,47 +2999,73 @@ def _render_group_analysis_tab(valid_sessions_df: pd.DataFrame, monitoring_path:
                 "n_sessions": st.column_config.NumberColumn("N", format="%d"),
                 "mean_accuracy": st.column_config.NumberColumn("Mean Acc (behavior)", format="%.3f"),
                 "sem_accuracy": st.column_config.NumberColumn("SEM Acc (behavior)", format="%.3f"),
-                "mean_roc_auc": st.column_config.NumberColumn("Mean AUC (behavior)", format="%.3f"),
-                "sem_roc_auc": st.column_config.NumberColumn("SEM AUC (behavior)", format="%.3f"),
                 "mean_accuracy_gt": st.column_config.NumberColumn("Mean Acc (GT)", format="%.3f"),
                 "sem_accuracy_gt": st.column_config.NumberColumn("SEM Acc (GT)", format="%.3f"),
-                "mean_roc_auc_gt": st.column_config.NumberColumn("Mean AUC (GT)", format="%.3f"),
-                "sem_roc_auc_gt": st.column_config.NumberColumn("SEM AUC (GT)", format="%.3f"),
+                "mean_session_dprime": st.column_config.NumberColumn("Mean d'", format="%.3f"),
+                "sem_session_dprime": st.column_config.NumberColumn("SEM d'", format="%.3f"),
+                "mean_hit_rate": st.column_config.NumberColumn("Mean hit rate", format="%.2f"),
+                "sem_hit_rate": st.column_config.NumberColumn("SEM hit rate", format="%.2f"),
             },
         )
 
-        # --- Accuracy strip+box plots ---
+        # --- Accuracy box plots ---
         st.markdown("### Decoder Accuracy by Area and Session Type")
         acc_col1, acc_col2 = st.columns(2)
         with acc_col1:
             st.plotly_chart(
-                _plot_group_accuracy_strip(batch_df, "accuracy", "Accuracy \u2014 Behavior Target"),
+                _plot_group_accuracy_strip(view_df, "accuracy", "Accuracy \u2014 Behavior Target"),
                 use_container_width=True,
                 config=get_plotly_config("group_accuracy_behavior"),
             )
         with acc_col2:
             st.plotly_chart(
-                _plot_group_accuracy_strip(batch_df, "accuracy_gt", "Accuracy \u2014 Ground Truth Target"),
+                _plot_group_accuracy_strip(view_df, "accuracy_gt", "Accuracy \u2014 Ground Truth Target"),
                 use_container_width=True,
                 config=get_plotly_config("group_accuracy_gt"),
             )
 
-        auc_col1, auc_col2 = st.columns(2)
-        with auc_col1:
-            st.plotly_chart(
-                _plot_group_accuracy_strip(batch_df, "roc_auc", "ROC-AUC \u2014 Behavior Target"),
-                use_container_width=True,
-                config=get_plotly_config("group_auc_behavior"),
+        # --- Session d' vs decoder accuracy ---
+        monitoring_sessions = load_valid_sessions(monitoring_path)
+        view_df = merge_behavioral_file_from_monitoring(
+            view_df,
+            monitoring_sessions,
+            animal_col="animal",
+            date_col="date",
+        )
+        view_df = attach_session_dprime(view_df, behavioral_file_col="behavioral file")
+        st.markdown("### Session d' vs Decoder Accuracy")
+        st.caption(
+            "Decoder accuracy vs session d' (from behavioral .mat): behavior target (top), "
+            "ground truth target (bottom). Points are colored by learning stage; the gray line "
+            "is a single OLS fit per panel. Spearman r is shown on each panel."
+        )
+        dprime_fig = _plot_dprime_vs_accuracy(view_df)
+        if dprime_fig is None:
+            st.info(
+                "No session d' values could be computed (missing behavioral .mat path or load error)."
             )
-        with auc_col2:
+        else:
             st.plotly_chart(
-                _plot_group_accuracy_strip(batch_df, "roc_auc_gt", "ROC-AUC \u2014 Ground Truth Target"),
+                dprime_fig,
                 use_container_width=True,
-                config=get_plotly_config("group_auc_gt"),
+                config=get_plotly_config("group_dprime_accuracy"),
             )
+            # Count missing sessions on a per-session basis (one row per area).
+            acx_view = view_df[view_df["area"] == "ACx"]
+            n_missing = int(acx_view["session_dprime"].isna().sum()) if not acx_view.empty else int(
+                view_df["session_dprime"].isna().sum()
+            )
+            if n_missing:
+                st.caption(
+                    f"{n_missing} session(s) missing d' (no behavioral .mat or could not compute)."
+                )
+
+        st.markdown("### Statistical comparisons (accuracy)")
+        _render_group_accuracy_stats(view_df, "accuracy", "Behavior target")
+        _render_group_accuracy_stats(view_df, "accuracy_gt", "Ground truth target")
 
         # --- Area weighting (dual-area sessions only) ---
-        beta_fig = _plot_group_beta_diff(batch_df)
+        beta_fig = _plot_group_beta_diff(view_df)
         if beta_fig is not None:
             st.markdown("### Area Weighting: ACx vs OFC (dual-area sessions)")
             st.plotly_chart(
@@ -2447,7 +3074,7 @@ def _render_group_analysis_tab(valid_sessions_df: pd.DataFrame, monitoring_path:
                 config=get_plotly_config("group_beta_diff"),
             )
             dual_summary = (
-                batch_df[batch_df["area"] == "ACx"]
+                view_df[view_df["area"] == "ACx"]
                 .dropna(subset=["beta_diff"])
                 .groupby("session_type", observed=True)
                 .agg(
@@ -2472,8 +3099,8 @@ def _render_group_analysis_tab(valid_sessions_df: pd.DataFrame, monitoring_path:
             )
 
         st.download_button(
-            "Download all session results CSV",
-            data=batch_df.to_csv(index=False).encode("utf-8"),
+            "Download filtered session results CSV",
+            data=view_df.to_csv(index=False).encode("utf-8"),
             file_name="npxl_group_decoder_results.csv",
             mime="text/csv",
         )

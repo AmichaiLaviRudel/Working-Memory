@@ -2129,7 +2129,7 @@ acx_coefs_pct = grouped_coefs_pct[:, acx_indices]
 features_to_plot = ['stimulus', 'category', 'licks', 'outcome', 'previous_outcome', 'tone_onset', 'outcome_onset']
 features_to_plot = [f for f in features_to_plot if f in grouped_feature_names]
 
-colors = {'ACx': '#4A90E2', 'OFC': '#E74C3C'}  # Blue for ACx, Red for OFC
+from colors import REGION_COLORS as colors
 
 feature_labels = {
     'stimulus': 'Stimulus ID',

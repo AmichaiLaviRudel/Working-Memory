@@ -18,7 +18,12 @@ from Analysis.NPXL_analysis.single_unit_offline_analysis.config import (
     COLOR_MISS,
 )
 from Analysis.NPXL_analysis.single_unit_offline_analysis.utils import save_plot_to_html
-from Analysis.GNG_bpod_analysis.colors import COLOR_LOW_BD, COLOR_HIGH_BD
+from Analysis.GNG_bpod_analysis.colors import (
+    COLOR_HIGH_BD,
+    COLOR_LOW_BD,
+    area_color_rgba,
+    get_area_color,
+)
 
 
 def _hex_to_rgba(hex_color: str, alpha: float = 0.2) -> str:
@@ -218,7 +223,9 @@ def plot_raw_psth(
     # Calculate PSTH (mean and SEM across all trials)
     psth_mean = np.mean(unit_data_windowed, axis=1)
     psth_sem = np.std(unit_data_windowed, axis=1) / np.sqrt(unit_data_windowed.shape[1])
-    
+    line_color = get_area_color(region_name)
+    fill_color = area_color_rgba(region_name)
+
     # Create figure
     fig = go.Figure()
     
@@ -228,7 +235,7 @@ def plot_raw_psth(
         y=psth_mean,
         mode='lines',
         name='Mean Firing Rate',
-        line=dict(color=COLOR_ACCENT, width=2)
+        line=dict(color=line_color, width=2)
     ))
     
     # SEM shading
@@ -236,7 +243,7 @@ def plot_raw_psth(
         x=np.concatenate([time_axis_windowed, time_axis_windowed[::-1]]),
         y=np.concatenate([psth_mean + psth_sem, (psth_mean - psth_sem)[::-1]]),
         fill='toself',
-        fillcolor=COLOR_ACCENT_TRANSPARENT,
+        fillcolor=fill_color,
         line=dict(color='rgba(255,255,255,0)'),
         showlegend=False,
         hoverinfo='skip'

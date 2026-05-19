@@ -22,7 +22,7 @@ python npxl_group_decoder_batch.py \\
 
 Output columns
 --------------
-animal, date, session_type, session_dprime, area, n_units, n_trials, n_folds,
+animal, date, session_type, session_dprime, session_hit_rate, area, n_units, n_trials, n_folds,
 accuracy, precision, recall, roc_auc,          (behavior target)
 accuracy_gt, precision_gt, recall_gt, roc_auc_gt,  (ground-truth target)
 acx_beta, ofc_beta, beta_diff, beta_diff_ci_low, beta_diff_ci_high,
@@ -61,6 +61,25 @@ from npxl_agreement_decoder import (  # noqa: E402
     _run_one_session_batch,
     load_valid_sessions,
 )
+
+
+# Windows → Linux path remapping table.
+# The monitoring CSV stores Windows paths; on the cluster these must be translated.
+# Add or modify entries to match your cluster's mount points.
+_PATH_REMAPS: list[tuple[str, str]] = [
+    (r"Z:\Shared\Amichai", "/ems/elsc-labs/mizrahi-a/Shared/Amichai"),
+    (r"Z:/Shared/Amichai", "/ems/elsc-labs/mizrahi-a/Shared/Amichai"),
+]
+
+
+def _remap_path(path: str) -> str:
+    """Translate a Windows path from the monitoring CSV to the cluster Linux path."""
+    for win_prefix, linux_prefix in _PATH_REMAPS:
+        if path.startswith(win_prefix):
+            remainder = path[len(win_prefix):].replace("\\", "/")
+            return linux_prefix + remainder
+    # Also handle plain backslash → forward slash for paths not matched above
+    return path.replace("\\", "/")
 
 
 def _parse_args() -> argparse.Namespace:
@@ -129,6 +148,12 @@ def main() -> None:
     decode_window: tuple[float, float] = (args.decode_window[0], args.decode_window[1])
     use_histology = not args.no_histology
 
+    # Append a histology suffix to the output filename so runs with different
+    # filter settings never overwrite each other.
+    histology_suffix = "histology" if use_histology else "no_histology"
+    base, ext = os.path.splitext(output_path)
+    output_path = f"{base}_{histology_suffix}{ext}"
+
     print("=" * 70)
     print("NPXL Group-Level Decoder  —  batch mode")
     print("=" * 70)
@@ -140,6 +165,8 @@ def main() -> None:
     print(f"  Random state   : {args.random_state}")
     print(f"  Min trials/cls : {args.min_trials}")
     print(f"  Use histology  : {use_histology}")
+    if _PATH_REMAPS:
+        print(f"  Path remapping : {_PATH_REMAPS[0][0]!r} → {_PATH_REMAPS[0][1]!r}")
     print()
 
     print(f"Loading sessions from: {monitoring_csv}")
@@ -159,7 +186,7 @@ def main() -> None:
     t_start = time.time()
 
     for i, (_, row) in enumerate(sessions_df.iterrows(), 1):
-        session_dir = str(row.get("current_dir", "")).strip()
+        session_dir = _remap_path(str(row.get("current_dir", "")).strip())
         label = str(row.get("session_label", f"session_{i}"))
         elapsed = time.time() - t_start
         eta_str = ""
@@ -214,7 +241,7 @@ def main() -> None:
 
     # --- Failures ---
     if failures:
-        failures_path = output_path.replace(".csv", "_failures.csv")
+        failures_path = f"{os.path.splitext(output_path)[0]}_failures.csv"
         pd.DataFrame(failures).to_csv(failures_path, index=False)
         print(f"\nFailed: {len(failures)} sessions — see {failures_path}")
         for f in failures:
