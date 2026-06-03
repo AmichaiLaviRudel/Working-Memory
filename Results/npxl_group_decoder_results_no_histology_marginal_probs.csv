@@ -1,0 +1,147 @@
+animal,date,session_type,session_dprime,session_hit_rate,histology_fallback,expression,n_condition,n_go,n_nogo,p_go,p_nogo
+G3A3,13/02/2025,(1b Expert) 1b Categorization,,,False,P(Mouse=Go | ACx=No-Go),167,75,92,0.4491017964071856,0.5508982035928144
+G3A3,13/02/2025,(1b Expert) 1b Categorization,,,False,P(Mouse=Go | ACx=Go),202,106,96,0.5247524752475248,0.4752475247524752
+G3A3,13/02/2025,(1b Expert) 1b Categorization,,,False,P(GroundTruth=Go | ACx=No-Go),167,71,96,0.4251497005988024,0.5748502994011976
+G3A3,13/02/2025,(1b Expert) 1b Categorization,,,False,P(GroundTruth=Go | ACx=Go),202,113,89,0.5594059405940595,0.44059405940594054
+G3A3,13/02/2025,(1b Expert) 1b Categorization,,,False,P(Mouse=Go | OFC=No-Go),166,34,132,0.20481927710843373,0.7951807228915663
+G3A3,13/02/2025,(1b Expert) 1b Categorization,,,False,P(Mouse=Go | OFC=Go),203,147,56,0.7241379310344828,0.27586206896551724
+G3A3,13/02/2025,(1b Expert) 1b Categorization,,,False,P(GroundTruth=Go | OFC=No-Go),166,31,135,0.18674698795180722,0.8132530120481928
+G3A3,13/02/2025,(1b Expert) 1b Categorization,,,False,P(GroundTruth=Go | OFC=Go),203,153,50,0.7536945812807881,0.24630541871921185
+G3A5,18/2/2025,(1b Expert) 1b Categorization,,,False,P(Mouse=Go | ACx=No-Go),58,19,39,0.3275862068965517,0.6724137931034483
+G3A5,18/2/2025,(1b Expert) 1b Categorization,,,False,P(Mouse=Go | ACx=Go),196,127,69,0.6479591836734694,0.3520408163265306
+G3A5,18/2/2025,(1b Expert) 1b Categorization,,,False,P(GroundTruth=Go | ACx=No-Go),58,15,43,0.25862068965517243,0.7413793103448276
+G3A5,18/2/2025,(1b Expert) 1b Categorization,,,False,P(GroundTruth=Go | ACx=Go),196,144,52,0.7346938775510204,0.26530612244897955
+G3A5,18/2/2025,(1b Expert) 1b Categorization,,,False,P(Mouse=Go | OFC=No-Go),64,21,43,0.328125,0.671875
+G3A5,18/2/2025,(1b Expert) 1b Categorization,,,False,P(Mouse=Go | OFC=Go),190,125,65,0.6578947368421053,0.3421052631578947
+G3A5,18/2/2025,(1b Expert) 1b Categorization,,,False,P(GroundTruth=Go | OFC=No-Go),64,14,50,0.21875,0.78125
+G3A5,18/2/2025,(1b Expert) 1b Categorization,,,False,P(GroundTruth=Go | OFC=Go),190,145,45,0.7631578947368421,0.23684210526315785
+G4A5,7/4/2025,(1b Expert) 1b Categorization,,,False,P(Mouse=Go | ACx=No-Go),139,96,43,0.6906474820143885,0.3093525179856115
+G4A5,7/4/2025,(1b Expert) 1b Categorization,,,False,P(Mouse=Go | ACx=Go),161,120,41,0.7453416149068323,0.25465838509316774
+G4A5,7/4/2025,(1b Expert) 1b Categorization,,,False,P(GroundTruth=Go | ACx=No-Go),139,76,63,0.5467625899280576,0.4532374100719424
+G4A5,7/4/2025,(1b Expert) 1b Categorization,,,False,P(GroundTruth=Go | ACx=Go),161,74,87,0.45962732919254656,0.5403726708074534
+G4A5,7/4/2025,(1b Expert) 1b Categorization,,,False,P(Mouse=Go | OFC=No-Go),133,95,38,0.7142857142857143,0.2857142857142857
+G4A5,7/4/2025,(1b Expert) 1b Categorization,,,False,P(Mouse=Go | OFC=Go),167,121,46,0.7245508982035929,0.27544910179640714
+G4A5,7/4/2025,(1b Expert) 1b Categorization,,,False,P(GroundTruth=Go | OFC=No-Go),133,71,62,0.5338345864661654,0.46616541353383456
+G4A5,7/4/2025,(1b Expert) 1b Categorization,,,False,P(GroundTruth=Go | OFC=Go),167,79,88,0.47305389221556887,0.5269461077844311
+G4A6,7/4/2025,(1b Expert) 1b Categorization,,,False,P(Mouse=Go | ACx=No-Go),146,103,43,0.7054794520547946,0.29452054794520544
+G4A6,7/4/2025,(1b Expert) 1b Categorization,,,False,P(Mouse=Go | ACx=Go),154,109,45,0.7077922077922078,0.29220779220779225
+G4A6,7/4/2025,(1b Expert) 1b Categorization,,,False,P(GroundTruth=Go | ACx=No-Go),146,73,73,0.5,0.5
+G4A6,7/4/2025,(1b Expert) 1b Categorization,,,False,P(GroundTruth=Go | ACx=Go),154,77,77,0.5,0.5
+G5A3,31/7/2025,(1b Expert) 1b Categorization,,,False,P(Mouse=Go | ACx=No-Go),53,12,41,0.22641509433962265,0.7735849056603774
+G5A3,31/7/2025,(1b Expert) 1b Categorization,,,False,P(Mouse=Go | ACx=Go),59,40,19,0.6779661016949152,0.3220338983050848
+G5A3,31/7/2025,(1b Expert) 1b Categorization,,,False,P(GroundTruth=Go | ACx=No-Go),53,12,41,0.22641509433962265,0.7735849056603774
+G5A3,31/7/2025,(1b Expert) 1b Categorization,,,False,P(GroundTruth=Go | ACx=Go),59,44,15,0.7457627118644068,0.2542372881355932
+G5A3,31/7/2025,(1b Expert) 1b Categorization,,,False,P(Mouse=Go | OFC=No-Go),65,30,35,0.46153846153846156,0.5384615384615384
+G5A3,31/7/2025,(1b Expert) 1b Categorization,,,False,P(Mouse=Go | OFC=Go),47,22,25,0.46808510638297873,0.5319148936170213
+G5A3,31/7/2025,(1b Expert) 1b Categorization,,,False,P(GroundTruth=Go | OFC=No-Go),65,34,31,0.5230769230769231,0.4769230769230769
+G5A3,31/7/2025,(1b Expert) 1b Categorization,,,False,P(GroundTruth=Go | OFC=Go),47,22,25,0.46808510638297873,0.5319148936170213
+G6A5,30/9/2025,(1b Expert) 1b Categorization,,,False,P(Mouse=Go | ACx=No-Go),102,19,83,0.18627450980392157,0.8137254901960784
+G6A5,30/9/2025,(1b Expert) 1b Categorization,,,False,P(Mouse=Go | ACx=Go),226,26,200,0.11504424778761062,0.8849557522123894
+G6A5,30/9/2025,(1b Expert) 1b Categorization,,,False,P(GroundTruth=Go | ACx=No-Go),102,60,42,0.5882352941176471,0.4117647058823529
+G6A5,30/9/2025,(1b Expert) 1b Categorization,,,False,P(GroundTruth=Go | ACx=Go),226,104,122,0.46017699115044247,0.5398230088495575
+G7A1,12/11/2025,(1b Expert) 1b Categorization,,,False,P(Mouse=Go | ACx=No-Go),168,130,38,0.7738095238095238,0.22619047619047616
+G7A1,12/11/2025,(1b Expert) 1b Categorization,,,False,P(Mouse=Go | ACx=Go),232,180,52,0.7758620689655172,0.22413793103448276
+G7A1,12/11/2025,(1b Expert) 1b Categorization,,,False,P(GroundTruth=Go | ACx=No-Go),168,77,91,0.4583333333333333,0.5416666666666667
+G7A1,12/11/2025,(1b Expert) 1b Categorization,,,False,P(GroundTruth=Go | ACx=Go),232,124,108,0.5344827586206896,0.4655172413793104
+G7A1,12/11/2025,(1b Expert) 1b Categorization,,,False,P(Mouse=Go | OFC=No-Go),165,128,37,0.7757575757575758,0.22424242424242424
+G7A1,12/11/2025,(1b Expert) 1b Categorization,,,False,P(Mouse=Go | OFC=Go),235,182,53,0.774468085106383,0.225531914893617
+G7A1,12/11/2025,(1b Expert) 1b Categorization,,,False,P(GroundTruth=Go | OFC=No-Go),165,77,88,0.4666666666666667,0.5333333333333333
+G7A1,12/11/2025,(1b Expert) 1b Categorization,,,False,P(GroundTruth=Go | OFC=Go),235,124,111,0.5276595744680851,0.4723404255319149
+G4A6,7/4/2025,(1b Expert) 2b Categorization,,,False,P(Mouse=Go | ACx=No-Go),87,26,61,0.2988505747126437,0.7011494252873562
+G4A6,7/4/2025,(1b Expert) 2b Categorization,,,False,P(Mouse=Go | ACx=Go),213,67,146,0.3145539906103286,0.6854460093896714
+G4A6,7/4/2025,(1b Expert) 2b Categorization,,,False,P(GroundTruth=Go | ACx=No-Go),87,47,40,0.5402298850574713,0.45977011494252873
+G4A6,7/4/2025,(1b Expert) 2b Categorization,,,False,P(GroundTruth=Go | ACx=Go),213,103,110,0.4835680751173709,0.5164319248826291
+G5A3,31/7/2025,(1b Expert) 2b Categorization,,,False,P(Mouse=Go | ACx=No-Go),57,5,52,0.08771929824561403,0.9122807017543859
+G5A3,31/7/2025,(1b Expert) 2b Categorization,,,False,P(Mouse=Go | ACx=Go),124,19,105,0.1532258064516129,0.8467741935483871
+G5A3,31/7/2025,(1b Expert) 2b Categorization,,,False,P(GroundTruth=Go | ACx=No-Go),57,32,25,0.5614035087719298,0.4385964912280702
+G5A3,31/7/2025,(1b Expert) 2b Categorization,,,False,P(GroundTruth=Go | ACx=Go),124,59,65,0.47580645161290325,0.5241935483870968
+G5A3,31/7/2025,(1b Expert) 2b Categorization,,,False,P(Mouse=Go | OFC=No-Go),65,7,58,0.1076923076923077,0.8923076923076922
+G5A3,31/7/2025,(1b Expert) 2b Categorization,,,False,P(Mouse=Go | OFC=Go),116,17,99,0.14655172413793102,0.853448275862069
+G5A3,31/7/2025,(1b Expert) 2b Categorization,,,False,P(GroundTruth=Go | OFC=No-Go),65,36,29,0.5538461538461539,0.4461538461538461
+G5A3,31/7/2025,(1b Expert) 2b Categorization,,,False,P(GroundTruth=Go | OFC=Go),116,55,61,0.47413793103448276,0.5258620689655172
+G3A3,20/2/2025,(2b Expert) 2b Categorization,,,False,P(Mouse=Go | ACx=No-Go),64,9,55,0.140625,0.859375
+G3A3,20/2/2025,(2b Expert) 2b Categorization,,,False,P(Mouse=Go | ACx=Go),237,141,96,0.5949367088607594,0.40506329113924056
+G3A3,20/2/2025,(2b Expert) 2b Categorization,,,False,P(GroundTruth=Go | ACx=No-Go),64,22,42,0.34375,0.65625
+G3A3,20/2/2025,(2b Expert) 2b Categorization,,,False,P(GroundTruth=Go | ACx=Go),237,166,71,0.70042194092827,0.29957805907172996
+G3A3,20/2/2025,(2b Expert) 2b Categorization,,,False,P(Mouse=Go | OFC=Go),301,150,151,0.4983388704318937,0.5016611295681064
+G3A3,20/2/2025,(2b Expert) 2b Categorization,,,False,P(GroundTruth=Go | OFC=Go),301,188,113,0.6245847176079734,0.3754152823920266
+G4A2,8/4/2025,(2b Expert) 2b Categorization,,,False,P(Mouse=Go | ACx=No-Go),216,123,93,0.5694444444444444,0.4305555555555556
+G4A2,8/4/2025,(2b Expert) 2b Categorization,,,False,P(Mouse=Go | ACx=Go),284,201,83,0.7077464788732394,0.2922535211267606
+G4A2,8/4/2025,(2b Expert) 2b Categorization,,,False,P(GroundTruth=Go | ACx=No-Go),216,76,140,0.35185185185185186,0.6481481481481481
+G4A2,8/4/2025,(2b Expert) 2b Categorization,,,False,P(GroundTruth=Go | ACx=Go),284,174,110,0.6126760563380281,0.38732394366197187
+G4A2,8/4/2025,(2b Expert) 2b Categorization,,,False,P(Mouse=Go | OFC=No-Go),96,69,27,0.71875,0.28125
+G4A2,8/4/2025,(2b Expert) 2b Categorization,,,False,P(Mouse=Go | OFC=Go),404,255,149,0.6311881188118812,0.3688118811881188
+G4A2,8/4/2025,(2b Expert) 2b Categorization,,,False,P(GroundTruth=Go | OFC=No-Go),96,51,45,0.53125,0.46875
+G4A2,8/4/2025,(2b Expert) 2b Categorization,,,False,P(GroundTruth=Go | OFC=Go),404,199,205,0.49257425742574257,0.5074257425742574
+G4A3,6/4/2025,(2b Expert) 2b Categorization,,,False,P(Mouse=Go | ACx=No-Go),148,98,50,0.6621621621621622,0.33783783783783783
+G4A3,6/4/2025,(2b Expert) 2b Categorization,,,False,P(Mouse=Go | ACx=Go),186,146,40,0.7849462365591398,0.21505376344086025
+G4A3,6/4/2025,(2b Expert) 2b Categorization,,,False,P(GroundTruth=Go | ACx=No-Go),148,80,68,0.5405405405405406,0.45945945945945943
+G4A3,6/4/2025,(2b Expert) 2b Categorization,,,False,P(GroundTruth=Go | ACx=Go),186,86,100,0.46236559139784944,0.5376344086021505
+G4A3,6/4/2025,(2b Expert) 2b Categorization,,,False,P(Mouse=Go | OFC=No-Go),134,96,38,0.7164179104477612,0.28358208955223885
+G4A3,6/4/2025,(2b Expert) 2b Categorization,,,False,P(Mouse=Go | OFC=Go),200,148,52,0.74,0.26
+G4A3,6/4/2025,(2b Expert) 2b Categorization,,,False,P(GroundTruth=Go | OFC=No-Go),134,68,66,0.5074626865671642,0.4925373134328358
+G4A3,6/4/2025,(2b Expert) 2b Categorization,,,False,P(GroundTruth=Go | OFC=Go),200,98,102,0.49,0.51
+G4A5,9/4/2025,(2b Expert) 2b Categorization,,,False,P(Mouse=Go | ACx=No-Go),250,213,37,0.852,0.14800000000000002
+G4A5,9/4/2025,(2b Expert) 2b Categorization,,,False,P(Mouse=Go | ACx=Go),250,205,45,0.82,0.18000000000000005
+G4A5,9/4/2025,(2b Expert) 2b Categorization,,,False,P(GroundTruth=Go | ACx=No-Go),250,125,125,0.5,0.5
+G4A5,9/4/2025,(2b Expert) 2b Categorization,,,False,P(GroundTruth=Go | ACx=Go),250,125,125,0.5,0.5
+G4A6,9/4/2025,(2b Expert) 2b Categorization,,,False,P(Mouse=Go | ACx=No-Go),195,144,51,0.7384615384615385,0.2615384615384615
+G4A6,9/4/2025,(2b Expert) 2b Categorization,,,False,P(Mouse=Go | ACx=Go),305,200,105,0.6557377049180327,0.34426229508196726
+G4A6,9/4/2025,(2b Expert) 2b Categorization,,,False,P(GroundTruth=Go | ACx=No-Go),195,106,89,0.5435897435897435,0.45641025641025645
+G4A6,9/4/2025,(2b Expert) 2b Categorization,,,False,P(GroundTruth=Go | ACx=Go),305,144,161,0.4721311475409836,0.5278688524590164
+G5A1,16/7,(Novice) 1b Categorization,,,False,P(Mouse=Go | ACx=No-Go),73,18,55,0.2465753424657534,0.7534246575342466
+G5A1,16/7,(Novice) 1b Categorization,,,False,P(Mouse=Go | ACx=Go),77,12,65,0.15584415584415584,0.8441558441558441
+G5A1,16/7,(Novice) 1b Categorization,,,False,P(GroundTruth=Go | ACx=No-Go),73,35,38,0.4794520547945205,0.5205479452054795
+G5A1,16/7,(Novice) 1b Categorization,,,False,P(GroundTruth=Go | ACx=Go),77,40,37,0.5194805194805194,0.48051948051948057
+G5A1,16/7,(Novice) 1b Categorization,,,False,P(Mouse=Go | OFC=No-Go),67,16,51,0.23880597014925373,0.7611940298507462
+G5A1,16/7,(Novice) 1b Categorization,,,False,P(Mouse=Go | OFC=Go),83,14,69,0.1686746987951807,0.8313253012048193
+G5A1,16/7,(Novice) 1b Categorization,,,False,P(GroundTruth=Go | OFC=No-Go),67,26,41,0.3880597014925373,0.6119402985074627
+G5A1,16/7,(Novice) 1b Categorization,,,False,P(GroundTruth=Go | OFC=Go),83,49,34,0.5903614457831325,0.40963855421686746
+G4A4,27/3/2025,(Novice) 1b Categorization,,,False,P(Mouse=Go | ACx=No-Go),79,37,42,0.46835443037974683,0.5316455696202531
+G4A4,27/3/2025,(Novice) 1b Categorization,,,False,P(Mouse=Go | ACx=Go),125,67,58,0.536,0.46399999999999997
+G4A4,27/3/2025,(Novice) 1b Categorization,,,False,P(GroundTruth=Go | ACx=No-Go),79,40,39,0.5063291139240507,0.49367088607594933
+G4A4,27/3/2025,(Novice) 1b Categorization,,,False,P(GroundTruth=Go | ACx=Go),125,63,62,0.504,0.496
+G4A4,27/3/2025,(Novice) 1b Categorization,,,False,P(Mouse=Go | OFC=No-Go),88,43,45,0.48863636363636365,0.5113636363636364
+G4A4,27/3/2025,(Novice) 1b Categorization,,,False,P(Mouse=Go | OFC=Go),116,61,55,0.5258620689655172,0.47413793103448276
+G4A4,27/3/2025,(Novice) 1b Categorization,,,False,P(GroundTruth=Go | OFC=No-Go),88,42,46,0.4772727272727273,0.5227272727272727
+G4A4,27/3/2025,(Novice) 1b Categorization,,,False,P(GroundTruth=Go | OFC=Go),116,61,55,0.5258620689655172,0.47413793103448276
+G4A4,27/3/2025,(Novice) 2b Categorization,,,False,P(Mouse=Go | ACx=No-Go),113,43,70,0.3805309734513274,0.6194690265486726
+G4A4,27/3/2025,(Novice) 2b Categorization,,,False,P(Mouse=Go | ACx=Go),177,65,112,0.3672316384180791,0.6327683615819208
+G4A4,27/3/2025,(Novice) 2b Categorization,,,False,P(GroundTruth=Go | ACx=No-Go),113,66,47,0.584070796460177,0.415929203539823
+G4A4,27/3/2025,(Novice) 2b Categorization,,,False,P(GroundTruth=Go | ACx=Go),177,79,98,0.4463276836158192,0.5536723163841808
+G4A4,27/3/2025,(Novice) 2b Categorization,,,False,P(Mouse=Go | OFC=No-Go),106,37,69,0.3490566037735849,0.6509433962264151
+G4A4,27/3/2025,(Novice) 2b Categorization,,,False,P(Mouse=Go | OFC=Go),184,71,113,0.3858695652173913,0.6141304347826086
+G4A4,27/3/2025,(Novice) 2b Categorization,,,False,P(GroundTruth=Go | OFC=No-Go),106,56,50,0.5283018867924528,0.4716981132075472
+G4A4,27/3/2025,(Novice) 2b Categorization,,,False,P(GroundTruth=Go | OFC=Go),184,89,95,0.483695652173913,0.5163043478260869
+G5A1,16/7,(Novice) 2b Categorization,,,False,P(Mouse=Go | OFC=No-Go),31,13,18,0.41935483870967744,0.5806451612903225
+G5A1,16/7,(Novice) 2b Categorization,,,False,P(Mouse=Go | OFC=Go),51,18,33,0.35294117647058826,0.6470588235294117
+G5A1,16/7,(Novice) 2b Categorization,,,False,P(GroundTruth=Go | OFC=No-Go),31,18,13,0.5806451612903226,0.4193548387096774
+G5A1,16/7,(Novice) 2b Categorization,,,False,P(GroundTruth=Go | OFC=Go),51,23,28,0.45098039215686275,0.5490196078431373
+G5A3,17/7,(Novice) 2b Categorization,,,False,P(Mouse=Go | ACx=No-Go),107,40,67,0.37383177570093457,0.6261682242990654
+G5A3,17/7,(Novice) 2b Categorization,,,False,P(Mouse=Go | ACx=Go),192,59,133,0.3072916666666667,0.6927083333333333
+G5A3,17/7,(Novice) 2b Categorization,,,False,P(GroundTruth=Go | ACx=No-Go),107,57,50,0.5327102803738317,0.4672897196261683
+G5A3,17/7,(Novice) 2b Categorization,,,False,P(GroundTruth=Go | ACx=Go),192,93,99,0.484375,0.515625
+G5A3,17/7,(Novice) 2b Categorization,,,False,P(Mouse=Go | OFC=No-Go),119,43,76,0.36134453781512604,0.6386554621848739
+G5A3,17/7,(Novice) 2b Categorization,,,False,P(Mouse=Go | OFC=Go),180,56,124,0.3111111111111111,0.6888888888888889
+G5A3,17/7,(Novice) 2b Categorization,,,False,P(GroundTruth=Go | OFC=No-Go),119,65,54,0.5462184873949579,0.45378151260504207
+G5A3,17/7,(Novice) 2b Categorization,,,False,P(GroundTruth=Go | OFC=Go),180,85,95,0.4722222222222222,0.5277777777777778
+G7A2,28/10/2025,(Novice) 2b Categorization,,,False,P(Mouse=Go | ACx=No-Go),182,59,123,0.3241758241758242,0.6758241758241759
+G7A2,28/10/2025,(Novice) 2b Categorization,,,False,P(Mouse=Go | ACx=Go),168,76,92,0.4523809523809524,0.5476190476190477
+G7A2,28/10/2025,(Novice) 2b Categorization,,,False,P(GroundTruth=Go | ACx=No-Go),182,63,119,0.34615384615384615,0.6538461538461539
+G7A2,28/10/2025,(Novice) 2b Categorization,,,False,P(GroundTruth=Go | ACx=Go),168,112,56,0.6666666666666666,0.33333333333333337
+G7A2,28/10/2025,(Novice) 2b Categorization,,,False,P(Mouse=Go | OFC=No-Go),127,51,76,0.4015748031496063,0.5984251968503937
+G7A2,28/10/2025,(Novice) 2b Categorization,,,False,P(Mouse=Go | OFC=Go),223,84,139,0.37668161434977576,0.6233183856502242
+G7A2,28/10/2025,(Novice) 2b Categorization,,,False,P(GroundTruth=Go | OFC=No-Go),127,60,67,0.47244094488188976,0.5275590551181102
+G7A2,28/10/2025,(Novice) 2b Categorization,,,False,P(GroundTruth=Go | OFC=Go),223,115,108,0.515695067264574,0.48430493273542596
+G7A3,28/10/2025,(Novice) 2b Categorization,,,False,P(Mouse=Go | OFC=No-Go),151,69,82,0.45695364238410596,0.543046357615894
+G7A3,28/10/2025,(Novice) 2b Categorization,,,False,P(Mouse=Go | OFC=Go),199,91,108,0.457286432160804,0.542713567839196
+G7A3,28/10/2025,(Novice) 2b Categorization,,,False,P(GroundTruth=Go | OFC=No-Go),151,77,74,0.5099337748344371,0.49006622516556286
+G7A3,28/10/2025,(Novice) 2b Categorization,,,False,P(GroundTruth=Go | OFC=Go),199,98,101,0.49246231155778897,0.507537688442211
+G7A1,28/10/2025,(Novice) FRA,,,False,P(Mouse=Go | ACx=No-Go),180,40,140,0.2222222222222222,0.7777777777777778
+G7A1,28/10/2025,(Novice) FRA,,,False,P(Mouse=Go | ACx=Go),170,46,124,0.27058823529411763,0.7294117647058824
+G7A1,28/10/2025,(Novice) FRA,,,False,P(GroundTruth=Go | ACx=No-Go),180,98,82,0.5444444444444444,0.4555555555555556
+G7A1,28/10/2025,(Novice) FRA,,,False,P(GroundTruth=Go | ACx=Go),170,77,93,0.45294117647058824,0.5470588235294118
+G7A1,28/10/2025,(Novice) FRA,,,False,P(Mouse=Go | OFC=No-Go),173,36,137,0.20809248554913296,0.791907514450867
+G7A1,28/10/2025,(Novice) FRA,,,False,P(Mouse=Go | OFC=Go),177,50,127,0.2824858757062147,0.7175141242937852
+G7A1,28/10/2025,(Novice) FRA,,,False,P(GroundTruth=Go | OFC=No-Go),173,86,87,0.49710982658959535,0.5028901734104047
+G7A1,28/10/2025,(Novice) FRA,,,False,P(GroundTruth=Go | OFC=Go),177,89,88,0.5028248587570622,0.4971751412429378

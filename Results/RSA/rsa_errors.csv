@@ -1,0 +1,42 @@
+session,area,error
+G4A3 | 1/4/2025 | (1b Expert) 1b Categorization,ACx,ACx: no usable units after filtering (use_histology=True).
+G4A3 | 1/4/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A2_1b_4t_g0
+G3A3 | 14/02/2025 | (1b Expert) 1b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G3A3_rec2_g0
+G3A3 | 14/02/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G3A3_rec2_g0
+G3A5 | 18/2/2025 | (1b Expert) 1b Categorization,ACx,ACx: no usable units after filtering (use_histology=True).
+G3A5 | 18/2/2025 | (1b Expert) 1b Categorization,OFC,OFC: no usable units after filtering (use_histology=True).
+G4A2 | 6/4/2025 | (1b Expert) 1b Categorization,ACx,ACx: no usable units after filtering (use_histology=True).
+G4A2 | 6/4/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A2_1b_4t_g0
+G4A5 | 7/4/2025 | (1b Expert) 1b Categorization,ACx,ACx: no usable units after filtering (use_histology=True).
+G4A6 | 7/4/2025 | (1b Expert) 1b Categorization,ACx,ACx: no usable units after filtering (use_histology=True).
+G4A6 | 7/4/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A6_1b_4t_expert_g0
+G6A5 | 30/9/2025 | (1b Expert) 1b Categorization,ACx,ACx: no usable units after filtering (use_histology=True).
+G6A5 | 30/9/2025 | (1b Expert) 1b Categorization,OFC,OFC: no usable units after filtering (use_histology=True).
+G7A1 | 12/11/2025 | (1b Expert) 1b Categorization,ACx,ACx: no usable units after filtering (use_histology=True).
+G7A1 | 12/11/2025 | (1b Expert) 1b Categorization,OFC,OFC: no usable units after filtering (use_histology=True).
+G3A3 | 20/2/2025 | (2b Expert) 2b Categorization,ACx,ACx: no usable units after filtering (use_histology=True).
+G3A5 | 20/2/2026 | (2b Expert) 2b Categorization,ACx,ACx: no usable units after filtering (use_histology=True).
+G3A5 | 20/2/2026 | (2b Expert) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G3A5_rec2_g0
+G4A2 | 8/4/2025 | (2b Expert) 2b Categorization,ACx,ACx: no usable units after filtering (use_histology=True).
+G4A2 | 8/4/2025 | (2b Expert) 2b Categorization,OFC,OFC: no usable units after filtering (use_histology=True).
+G4A3 | 6/4/2025 | (2b Expert) 2b Categorization,ACx,ACx: no usable units after filtering (use_histology=True).
+G4A5 | 9/4/2025 | (2b Expert) 2b Categorization,ACx,ACx: no usable units after filtering (use_histology=True).
+G4A5 | 9/4/2025 | (2b Expert) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A5_2b_4t_expert_g0
+G4A6 | 9/4/2025 | (2b Expert) 2b Categorization,ACx,ACx: no usable units after filtering (use_histology=True).
+G4A6 | 9/4/2025 | (2b Expert) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A6_2b_4t_expert_g0
+G4A2 | 26/3/2025 | (Novice) 2b Categorization,ACx,ACx: no usable units after filtering (use_histology=True).
+G4A2 | 26/3/2025 | (Novice) 2b Categorization,OFC,OFC: no usable units after filtering (use_histology=True).
+G4A3 | 26/3/2025 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A3_novice_2boudaries4_g0
+G4A3 | 26/3/2025 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A3_novice_2boudaries4_g0
+G4A4 | 27/3/2025 | (Novice) 2b Categorization,OFC,OFC: no usable units after filtering (use_histology=True).
+G4A5 | 27/3/2025 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A5_novice_2b_4t_g0
+G4A5 | 27/3/2025 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A5_novice_2b_4t_g0
+G5A1 | 16/7 | (Novice) 2b Categorization,ACx,ACx: no usable units after filtering (use_histology=True).
+G5A1 | 16/7 | (Novice) 2b Categorization,OFC,OFC: no usable units after filtering (use_histology=True).
+G5A1 | 16/7 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G5A1_naive_2b_4t_high_and_low_g0
+G5A1 | 16/7 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G5A1_naive_2b_4t_high_and_low_g0
+G5A2 | 16/7 | (Novice) 2b Categorization,ACx,ACx: no usable units after filtering (use_histology=True).
+G5A2 | 16/7 | (Novice) 2b Categorization,OFC,OFC: no usable units after filtering (use_histology=True).
+G7A1 | 28/10/2025 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G7A1_novice_2b_4t_g0
+G7A1 | 28/10/2025 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G7A1_novice_2b_4t_g0
+G7A3 | 28/10/2025 | (Novice) 2b Categorization,ACx,ACx: no usable units after filtering (use_histology=True).

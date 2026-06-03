@@ -7,15 +7,22 @@ import pandas as pd
 import streamlit as st
 import numpy as np
 import plotly.graph_objects as go
+from scipy.stats import norm
 
 from load_data.params_extraction import compute_metrics_for_loaded_data
 from Analysis.GNG_bpod_analysis.GNG_bpod_general import render_global_early_response_filter_checkbox, get_plotly_config
 from Analysis.GNG_bpod_analysis import colors as plot_colors
 
 
+def _global_dataset_plotly_config(filename_prefix: str) -> dict:
+    """Plotly mode-bar config with SVG download (see ``get_plotly_config``)."""
+    return get_plotly_config(filename_prefix)
+
+
 # Default 2B boundaries (kHz) for region-wise stats
 _LOW_BOUNDARY = 0.983
 _HIGH_BOUNDARY = 1.525
+_OCTAVE_DISTANCE_BINS = (0.25, 0.5, 0.75, 1.0)
 
 
 def _rates_by_region_2b(df: pd.DataFrame, idx, low_bound: float, high_bound: float):
@@ -60,6 +67,88 @@ def _has_metrics_columns(df: pd.DataFrame) -> bool:
     """Check if DataFrame already has computed performance metrics."""
     required_metrics = ["d_prime", "Hit_Rate", "False_Alarm_Rate"]
     return all(col in df.columns for col in required_metrics)
+
+
+def _parse_array_value(value, *, numeric: bool = False) -> np.ndarray:
+    if isinstance(value, str):
+        try:
+            parsed = ast.literal_eval(value)
+            return np.asarray(parsed, dtype=float if numeric else object)
+        except Exception:
+            return np.fromstring(value.strip("[]\n"), sep=" ", dtype=float) if numeric else np.array([])
+
+    if isinstance(value, (list, tuple, np.ndarray)):
+        return np.asarray(value, dtype=float if numeric else object)
+
+    return np.array([], dtype=float if numeric else object)
+
+
+def _dprime_from_outcomes(outcomes: np.ndarray) -> float:
+    outcome_labels = np.asarray([str(outcome).strip() for outcome in outcomes])
+    hit_n = int(np.sum(outcome_labels == "Hit"))
+    miss_n = int(np.sum(outcome_labels == "Miss"))
+    fa_n = int(np.sum(outcome_labels == "False Alarm"))
+    cr_n = int(np.sum(np.isin(outcome_labels, ["CR", "Correct Reject", "Correct Rejection"])))
+
+    go_n = hit_n + miss_n
+    nogo_n = fa_n + cr_n
+    if go_n == 0 or nogo_n == 0:
+        return np.nan
+
+    # Avoid infinite z-scores when performance is exactly 0% or 100%.
+    hit_rate = np.clip(hit_n / go_n, 1e-3, 1 - 1e-3)
+    fa_rate = np.clip(fa_n / nogo_n, 1e-3, 1 - 1e-3)
+    return float(norm.ppf(hit_rate) - norm.ppf(fa_rate))
+
+
+def _pairwise_dprime_by_octave(
+    df: pd.DataFrame,
+    *,
+    setup_col: str = "Setup",
+    octave_bins: tuple[float, ...] = _OCTAVE_DISTANCE_BINS,
+) -> pd.DataFrame:
+    required_cols = {setup_col, "MouseName", "Stimuli", "Outcomes"}
+    if not required_cols.issubset(df.columns):
+        return pd.DataFrame()
+
+    valid_bins = set(octave_bins)
+    rows = []
+    for _, row in df.iterrows():
+        setup = row.get(setup_col)
+        mouse_name = row.get("MouseName")
+        stimuli = _parse_array_value(row.get("Stimuli"), numeric=True)
+        outcomes = _parse_array_value(row.get("Outcomes"))
+        if pd.isna(setup) or pd.isna(mouse_name) or len(stimuli) == 0 or len(stimuli) != len(outcomes):
+            continue
+
+        unique_stims = np.sort(np.unique(np.round(stimuli.astype(float), 6)))
+        for i, lo in enumerate(unique_stims[:-1]):
+            if lo <= 0:
+                continue
+
+            for hi in unique_stims[i + 1:]:
+                octave_dist = round(float(np.log2(hi / lo)) * 4) / 4
+                if octave_dist not in valid_bins:
+                    continue
+
+                pair_mask = np.isclose(stimuli, lo, atol=1e-6) | np.isclose(stimuli, hi, atol=1e-6)
+                if int(np.sum(pair_mask)) < 5:
+                    continue
+
+                dprime = _dprime_from_outcomes(outcomes[pair_mask])
+                if not np.isfinite(dprime):
+                    continue
+
+                rows.append(
+                    {
+                        "Setup": str(setup),
+                        "MouseName": str(mouse_name),
+                        "Octave Distance": float(octave_dist),
+                        "d_prime": dprime,
+                    }
+                )
+
+    return pd.DataFrame(rows)
 
 
 def render_global_dataset_page() -> None:
@@ -521,6 +610,88 @@ def render_global_dataset_page() -> None:
                             
                             setup_stats_df = pd.DataFrame(setup_stats)
                             st.dataframe(setup_stats_df, use_container_width=True, hide_index=True)
+
+                            # Statistical comparison of per-mouse success between setup groups.
+                            # Mann-Whitney U compares the binary per-mouse success distributions.
+                            if len(setup_stats_df) == 2:
+                                setup_a, setup_b = sorted(unique_setups)
+                                comparisons = []
+                                from scipy import stats
+
+                                for n_boundaries, label in [(1, "1B"), (2, "2B")]:
+                                    setup_a_data = df_filtered[
+                                        (df_filtered["Setup"] == setup_a) & (df_filtered["N_Boundaries"] == n_boundaries)
+                                    ]
+                                    setup_b_data = df_filtered[
+                                        (df_filtered["Setup"] == setup_b) & (df_filtered["N_Boundaries"] == n_boundaries)
+                                    ]
+
+                                    n_a = int(setup_a_data["MouseName"].nunique())
+                                    n_b = int(setup_b_data["MouseName"].nunique())
+                                    if n_a == 0 or n_b == 0:
+                                        comparisons.append(
+                                            {
+                                                "Task": label,
+                                                f"{setup_a} Achieved": "-",
+                                                f"{setup_b} Achieved": "-",
+                                                "Test": "Insufficient data",
+                                                "p-value": "-",
+                                            }
+                                        )
+                                        continue
+
+                                    if "d_prime" in df_filtered.columns and "Hit_Rate" in df_filtered.columns:
+                                        mask_a = (
+                                            (pd.to_numeric(setup_a_data["d_prime"], errors="coerce") > dprime_threshold)
+                                            & (pd.to_numeric(setup_a_data["Hit_Rate"], errors="coerce") > hit_rate_threshold)
+                                        )
+                                        mask_b = (
+                                            (pd.to_numeric(setup_b_data["d_prime"], errors="coerce") > dprime_threshold)
+                                            & (pd.to_numeric(setup_b_data["Hit_Rate"], errors="coerce") > hit_rate_threshold)
+                                        )
+                                        # Per-mouse binary success: 1 if mouse achieved criteria in any session.
+                                        status_a = (
+                                            setup_a_data.assign(_achieved=mask_a.astype(int))
+                                            .groupby("MouseName", as_index=True)["_achieved"]
+                                            .max()
+                                        )
+                                        status_b = (
+                                            setup_b_data.assign(_achieved=mask_b.astype(int))
+                                            .groupby("MouseName", as_index=True)["_achieved"]
+                                            .max()
+                                        )
+                                        achieved_a = int(status_a.sum())
+                                        achieved_b = int(status_b.sum())
+                                    else:
+                                        achieved_a = 0
+                                        achieved_b = 0
+                                        status_a = pd.Series(dtype=int)
+                                        status_b = pd.Series(dtype=int)
+
+                                    if len(status_a) == 0 or len(status_b) == 0:
+                                        test_name = "Insufficient data"
+                                        p_text = "-"
+                                    else:
+                                        _, p_val = stats.mannwhitneyu(
+                                            status_a.values,
+                                            status_b.values,
+                                            alternative="two-sided",
+                                        )
+                                        test_name = "Mann-Whitney U"
+                                        p_text = f"{p_val:.4g}"
+
+                                    comparisons.append(
+                                        {
+                                            "Task": label,
+                                            f"{setup_a} Achieved": f"{achieved_a}/{n_a}",
+                                            f"{setup_b} Achieved": f"{achieved_b}/{n_b}",
+                                            "Test": test_name,
+                                            "p-value": p_text,
+                                        }
+                                    )
+
+                                st.markdown(f"##### Setup comparison tests ({setup_a} vs {setup_b})")
+                                st.dataframe(pd.DataFrame(comparisons), use_container_width=True, hide_index=True)
                     
                     # Combined comparison: d' box plot + psychometric curves in 3 columns
                     if "d_prime" in df_filtered.columns and "Stimuli" in df_filtered.columns and "Outcomes" in df_filtered.columns:
@@ -613,7 +784,100 @@ def render_global_dataset_page() -> None:
                                     plot_colors.apply_standard_font_sizes(fig)
                                     fig.add_hline(y=dprime_threshold, line_dash="dash", line_color=plot_colors.COLOR_GRAY)
                                     
-                                    st.plotly_chart(fig, use_container_width=True, config=get_plotly_config(f"dprime_{group_col.lower()}_comparison"))
+                                    st.plotly_chart(fig, use_container_width=True, config=_global_dataset_plotly_config(f"dprime_{group_col.lower()}_comparison"))
+
+                            df_oct = _pairwise_dprime_by_octave(df_psych)
+                            if not df_oct.empty:
+                                st.markdown("##### d' by Octave Distance (Platform Comparison)")
+                                df_oct_mouse = (
+                                    df_oct.groupby(["Setup", "MouseName", "Octave Distance"], as_index=False)["d_prime"]
+                                    .mean()
+                                )
+                                st.caption("Values are averaged per mouse within each platform and octave distance before plotting/testing.")
+
+                                fig_oct = go.Figure()
+                                setup_levels = sorted(df_oct_mouse["Setup"].unique())
+                                for setup_idx, setup_name in enumerate(setup_levels):
+                                    setup_color = plot_colors.get_setup_color(setup_name, setup_idx)
+                                    setup_df = df_oct_mouse[df_oct_mouse["Setup"] == setup_name]
+
+                                    for dist in _OCTAVE_DISTANCE_BINS:
+                                        dvals = setup_df[np.isclose(setup_df["Octave Distance"], dist)]["d_prime"]
+                                        if dvals.empty:
+                                            continue
+
+                                        fig_oct.add_trace(
+                                            go.Box(
+                                                y=dvals,
+                                                x=[f"{dist:g}"] * len(dvals),
+                                                name=setup_name,
+                                                marker_color=setup_color,
+                                                boxmean=True,
+                                                legendgroup=setup_name,
+                                                showlegend=(dist == _OCTAVE_DISTANCE_BINS[0]),
+                                            )
+                                        )
+
+                                fig_oct.update_layout(
+                                    title=None,
+                                    yaxis_title="d'",
+                                    xaxis_title="Octave Distance",
+                                    boxmode="group",
+                                    boxgap=0.15,
+                                    boxgroupgap=0.2,
+                                    showlegend=True,
+                                    height=360,
+                                    margin=dict(l=40, r=10, t=10, b=40),
+                                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
+                                )
+                                fig_oct.add_hline(y=dprime_threshold, line_dash="dash", line_color=plot_colors.COLOR_GRAY)
+                                plot_colors.apply_standard_font_sizes(fig_oct)
+                                st.plotly_chart(fig_oct, use_container_width=True, config=_global_dataset_plotly_config("dprime_by_octave_platforms"))
+
+                                if len(setup_levels) == 2:
+                                    setup_a, setup_b = setup_levels
+                                    distance_tests = []
+
+                                    for dist in _OCTAVE_DISTANCE_BINS:
+                                        vals_a = df_oct_mouse[
+                                            (df_oct_mouse["Setup"] == setup_a)
+                                            & (np.isclose(df_oct_mouse["Octave Distance"], dist))
+                                        ]["d_prime"].to_numpy()
+                                        vals_b = df_oct_mouse[
+                                            (df_oct_mouse["Setup"] == setup_b)
+                                            & (np.isclose(df_oct_mouse["Octave Distance"], dist))
+                                        ]["d_prime"].to_numpy()
+                                        if vals_a.size == 0 or vals_b.size == 0:
+                                            distance_tests.append(
+                                                {
+                                                    "Octave Distance": dist,
+                                                    f"{setup_a} (n)": int(vals_a.size),
+                                                    f"{setup_b} (n)": int(vals_b.size),
+                                                    "Test": "Insufficient data",
+                                                    "U": "-",
+                                                    "p-value": "-",
+                                                }
+                                            )
+                                            continue
+
+                                        u_stat, p_val = stats.mannwhitneyu(vals_a, vals_b, alternative="two-sided")
+                                        distance_tests.append(
+                                            {
+                                                "Octave Distance": dist,
+                                                f"{setup_a} (n)": int(vals_a.size),
+                                                f"{setup_b} (n)": int(vals_b.size),
+                                                "Test": "Mann-Whitney U",
+                                                "U": round(float(u_stat), 2),
+                                                "p-value": f"{float(p_val):.4g}",
+                                            }
+                                        )
+
+                                    st.markdown(f"##### Per-distance tests ({setup_a} vs {setup_b})")
+                                    st.dataframe(pd.DataFrame(distance_tests), use_container_width=True, hide_index=True)
+                                else:
+                                    st.caption("Per-distance Mann-Whitney tests are shown when exactly 2 setups are present.")
+                            else:
+                                st.caption("No valid pairwise d' values for octave bins 0.25, 0.5, 0.75, 1.0.")
                             
                             # Columns 2 & 3: Psychometric curves for 1B and 2B (multi-animal style)
                             for col, boundary, boundary_label in [(col_1b, 1, "1B"), (col_2b, 2, "2B")]:
@@ -739,7 +1003,7 @@ def render_global_dataset_page() -> None:
                                         hovermode="x unified"
                                     )
                                     plot_colors.apply_standard_font_sizes(fig_psych)
-                                    st.plotly_chart(fig_psych, use_container_width=True, config=get_plotly_config(f"mean_psychometric_{boundary_label}"))
+                                    st.plotly_chart(fig_psych, use_container_width=True, config=_global_dataset_plotly_config(f"mean_psychometric_{boundary_label}"))
                             
                             # Statistical analysis: 1B and 2B each use Low Go / Middle NoGo / High Go; Bonferroni correction
                             with st.expander("Statistical Analysis (Mann-Whitney U, corrected)", expanded=False):

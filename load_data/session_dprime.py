@@ -228,13 +228,19 @@ def merge_behavioral_file_from_monitoring(
 
 
 def classify_learning_stage(session_type: object) -> str:
-    """Map a session_type label to Novice / 1b Expert / 2b Expert / Other."""
+    """Map a session_type label to Novice / 1b Expert / 2b Expert / Other.
+
+    Anchor on the expert-tier tag (``"1b expert"`` / ``"2b expert"``) rather than any
+    ``"1b"`` / ``"2b"`` substring. Otherwise a ``"1b Expert 2b Categorization"``
+    session (a 1b-Expert animal tested on a 2b boundary) would be mis-classified as
+    ``"2b Expert"`` because of the ``"2b"`` in the categorization-boundary part.
+    """
     s = str(session_type).lower() if session_type is not None else ""
     if "novice" in s:
         return "Novice"
-    if "2b" in s:
+    if "2b expert" in s:
         return "2b Expert"
-    if "1b" in s:
+    if "1b expert" in s:
         return "1b Expert"
     return "Other"
 

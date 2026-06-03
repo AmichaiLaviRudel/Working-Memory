@@ -20,6 +20,7 @@ from Analysis.NPXL_analysis.npxl_single_unit_analysis import (
     single_unit_analysis_panel,
 )
 from Analysis.NPXL_analysis.population_analysis import plot_population_heatmap, advanced_population_analysis_panel, plot_best_stimulus_panel
+from Analysis.NPXL_analysis.rsa_analysis import prepare_rsa_selection_table, regional_rsa_panel
 from load_data.session_dprime import (
     attach_session_dprime,
     classify_learning_stage,
@@ -90,9 +91,59 @@ def _prepare_multi_session_selection_table(source_df: pd.DataFrame) -> pd.DataFr
 
 page_view = st.sidebar.radio(
     "Neuropixels Monitoring",
-    options=["Monitoring", "Multi-Session Units"],
+    options=["Monitoring", "Multi-Session Units", "Regional RSA"],
     key="npxl_monitoring_page_view",
 )
+
+if page_view == "Regional RSA":
+    st.title("Regional RSA (ACx vs OFC)")
+    st.caption(
+        "Novice 2b, 1b Expert 1b, and 2b Expert 2b Categorization sessions only. "
+        "RSA matrices are averaged within each cohort × area."
+    )
+
+    rsa_selection_df = prepare_rsa_selection_table(project_data)
+    if rsa_selection_df.empty:
+        st.warning(
+            "No RSA cohort sessions in the monitoring table "
+            "(Novice 2b / 1b Expert 1b / 2b Expert 2b Categorization)."
+        )
+        st.stop()
+    edited_rsa_selection_df = st.data_editor(
+        rsa_selection_df,
+        height=360,
+        use_container_width=True,
+        hide_index=False,
+        column_config={
+            "Checkbox": st.column_config.CheckboxColumn(
+                "Include?",
+                help="Select cohort sessions to include (Novice 2b / 1b Expert 1b / 2b Expert 2b).",
+                default=True,
+            ),
+            "current_dir": st.column_config.TextColumn(
+                "current_dir",
+                help="Recording folder that contains analysis_output and probe mapping files.",
+                disabled=True,
+            ),
+            "session_dprime": st.column_config.NumberColumn(
+                "Session d'", format="%.2f", disabled=True,
+            ),
+            "session_hit_rate": st.column_config.NumberColumn(
+                "Hit rate", format="%.2f", disabled=True,
+            ),
+        },
+        key="rsa_session_selector",
+    )
+
+    selected_rsa_df = edited_rsa_selection_df[edited_rsa_selection_df["Checkbox"] == True].copy()
+    if selected_rsa_df.empty:
+        st.info("Select one or more sessions above to compute RSA matrices.")
+        st.stop()
+
+    # Map back to original rows so loader-side metadata/path columns are present.
+    selected_rsa_df = project_data.loc[selected_rsa_df.index].copy()
+    regional_rsa_panel(selected_rsa_df)
+    st.stop()
 
 if page_view == "Multi-Session Units":
     st.title("Multi-Session Single Unit Analysis")

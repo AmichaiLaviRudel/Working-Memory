@@ -1,0 +1,14 @@
+{
+  "timestamp_utc": "2026-05-25T08:17:08Z",
+  "results_dir": "\\\\ems.elsc.huji.ac.il\\mizrahi-lab\\Shared\\Amichai\\Code\\DB\\Results\\RSA",
+  "low_boundary_khz": 0.983,
+  "high_boundary_khz": 1.525,
+  "decode_window_start_s": 0.0,
+  "decode_window_stop_s": 0.25,
+  "aggregation": "Mean",
+  "use_histology": true,
+  "min_trials_per_stimulus": 3,
+  "n_sessions_selected": 27,
+  "n_per_session_metrics": 13,
+  "n_failures": 41
+}

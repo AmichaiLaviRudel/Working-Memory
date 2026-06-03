@@ -86,7 +86,20 @@ from Analysis.GNG_bpod_analysis.colors import (
     probe_label_area_color,
     recolor_plotly_accent_html,
 )
-from Analysis.GNG_bpod_analysis.GNG_bpod_general import normalize_workspace_path, resolve_analysis_path
+from Analysis.GNG_bpod_analysis.GNG_bpod_general import (
+    get_plotly_config,
+    normalize_workspace_path,
+    resolve_analysis_path,
+)
+
+
+def _npxl_plotly_config(filename_prefix: str) -> dict:
+    """Plotly mode-bar config with SVG download (see ``get_plotly_config``)."""
+    return get_plotly_config(filename_prefix)
+
+
+def _safe_plot_prefix(prefix: str) -> str:
+    return re.sub(r"[^\w.-]+", "_", str(prefix)).strip("_") or "plot"
 def save_pvalues_to_folder(pvals, selected_folder, window=(-1, 2), bin_size=0.01):
     """
     Save p-values to the analysis output folder.
@@ -430,6 +443,91 @@ def _category_boundary_khz() -> tuple[float, float]:
         return _default_lo, _default_hi
 
 
+# Categorization tones are stored as kHz/10 (0.7 → 7 kHz); FRA sweeps use true kHz on the axis.
+_CAT_FREQ_STORAGE_SCALE = 10.0
+_FRA_AXIS_KHZ_THRESHOLD = 5.0
+
+
+def _freq_display_scale(x_hi: float) -> float:
+    """Label multiplier: 10 for categorization storage units, 1 for FRA/broadband axes."""
+    return 1.0 if x_hi >= _FRA_AXIS_KHZ_THRESHOLD else _CAT_FREQ_STORAGE_SCALE
+
+
+def _format_freq_khz_label(freq: float, display_scale: float) -> str:
+    khz = freq * display_scale
+    if display_scale == 1.0:
+        if abs(khz - round(khz)) < 1e-6:
+            return str(int(round(khz)))
+        return f"{khz:g}"
+    rounded = round(khz * 2) / 2
+    if abs(khz - round(khz)) < 0.05:
+        return str(int(round(khz)))
+    if abs(rounded - round(rounded)) < 1e-6:
+        return str(int(round(rounded)))
+    return f"{rounded:.1f}"
+
+
+# Min separation (true kHz) before adding a boundary tick on top of a grid tick.
+_FREQ_TICK_MERGE_KHZ = 0.4
+
+
+def _freq_axis_tick_cfg(
+    x_min: float,
+    x_max: float,
+    display_scale: float,
+    *,
+    use_log_scale: bool,
+    extra_ticks: tuple[float, ...] = (),
+) -> dict:
+    """Plotly tickmode/tickvals/ticktext; tickvals stay in data coordinates."""
+    if x_min > x_max:
+        x_min, x_max = x_max, x_min
+    candidates: list[float] = []
+    if display_scale == 1.0:
+        lo_i = max(1, int(np.floor(x_min)))
+        hi_i = int(np.ceil(x_max))
+        for t in range(lo_i, hi_i + 1):
+            candidates.append(float(t))
+        for t in (5.0, 6.0, 7.0, 8.0, 10.0, 12.0, 15.0, 20.0, 25.0, 30.0, 40.0):
+            if x_min <= t <= x_max:
+                candidates.append(t)
+    else:
+        for t in (0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.2, 1.5, 2.0, 2.5, 3.0, 4.0):
+            candidates.append(t)
+    display_khz = [c * display_scale for c in candidates]
+    for t in extra_ticks:
+        if not np.isfinite(t):
+            continue
+        t = float(t)
+        if not (x_min - 1e-9 <= t <= x_max + 1e-9 and t > 0):
+            continue
+        t_khz = t * display_scale
+        if any(abs(t_khz - dk) < _FREQ_TICK_MERGE_KHZ for dk in display_khz):
+            continue
+        candidates.append(t)
+        display_khz.append(t_khz)
+    tickvals = sorted({t for t in candidates if x_min - 1e-9 <= t <= x_max + 1e-9 and t > 0})
+    if not tickvals:
+        return {}
+    # Same label at two nearby positions (e.g. 1.0 and 0.983 both → "10") → one tick.
+    by_label: dict[str, float] = {}
+    for t in tickvals:
+        txt = _format_freq_khz_label(t, display_scale)
+        if txt not in by_label:
+            by_label[txt] = t
+            continue
+        prev = by_label[txt]
+        try:
+            target = float(txt)
+        except ValueError:
+            target = t * display_scale
+        if abs(t * display_scale - target) < abs(prev * display_scale - target):
+            by_label[txt] = t
+    tickvals = sorted(by_label.values())
+    ticktext = [_format_freq_khz_label(t, display_scale) for t in tickvals]
+    return dict(tickmode="array", tickvals=tickvals, ticktext=ticktext)
+
+
 def plot_tuning_curves_heatmap(
     selectivity_df,
     use_log_scale=True,
@@ -606,8 +704,18 @@ def plot_tuning_curves_heatmap(
         vertical_spacing=0.02,
     )
 
+    freq_display_scale = _freq_display_scale(max_stim)
+    freq_display = x_common * freq_display_scale
+    bf_display = bf_arr * freq_display_scale
+
     # --- Heatmap ---
-    customdata_matrix = np.tile(bf_arr[:, np.newaxis], (1, len(x_common)))
+    customdata_matrix = np.stack(
+        [
+            np.tile(bf_display[:, np.newaxis], (1, len(x_common))),
+            np.tile(freq_display[np.newaxis, :], (len(bf_arr), 1)),
+        ],
+        axis=-1,
+    )
     fig.add_trace(go.Heatmap(
         z=heatmap_matrix,
         x=x_common,
@@ -617,7 +725,10 @@ def plot_tuning_curves_heatmap(
             title="Norm. Response" if normalize_per_unit else "Firing Rate (sp/s)",
             len=0.82, y=0.59, yanchor='middle',
         ),
-        hovertemplate='Unit: %{y}<br>Frequency: %{x:.2f} kHz<br>Response: %{z:.3f}<br>Best Freq: %{customdata:.2f} kHz<extra></extra>',
+        hovertemplate=(
+            "Unit: %{y}<br>Frequency: %{customdata[1]:.1f} kHz<br>"
+            "Response: %{z:.3f}<br>Best Freq: %{customdata[0]:.1f} kHz<extra></extra>"
+        ),
         customdata=customdata_matrix,
     ), row=1, col=1)
 
@@ -629,7 +740,8 @@ def plot_tuning_curves_heatmap(
         fill='tozeroy',
         fillcolor='rgba(100,180,255,0.25)',
         line=dict(color='rgba(80,160,240,0.9)', width=1.5),
-        hovertemplate='Frequency: %{x:.2f} kHz<br>Density: %{y:.3f}<extra></extra>',
+        customdata=freq_display,
+        hovertemplate='Frequency: %{customdata:.1f} kHz<br>Density: %{y:.3f}<extra></extra>',
         name='Best-freq density',
         showlegend=False,
     ), row=2, col=1)
@@ -670,14 +782,25 @@ def plot_tuning_curves_heatmap(
             )
 
     x_axis_cfg: dict = dict(type='log' if use_log_scale else 'linear', showgrid=False)
+    axis_lo, axis_hi = float(min_stim), float(max_stim)
     if fixed_x_range is not None:
         lo, hi = float(fixed_x_range[0]), float(fixed_x_range[1])
         if lo > hi:
             lo, hi = hi, lo
+        axis_lo, axis_hi = lo, hi
         if use_log_scale and lo > 0 and hi > 0:
             x_axis_cfg["range"] = [np.log10(lo), np.log10(hi)]
         elif not use_log_scale:
             x_axis_cfg["range"] = [lo, hi]
+    x_axis_cfg.update(
+        _freq_axis_tick_cfg(
+            axis_lo,
+            axis_hi,
+            freq_display_scale,
+            use_log_scale=use_log_scale,
+            extra_ticks=(low_boundary, high_boundary),
+        )
+    )
     heatmap_height = min(700, max(300, 300 + len(tuning_data) * 3))
     fig.update_layout(
         title="Tuning Curves Heatmap (Sorted by Best Frequency - Lowest First)",
@@ -1070,6 +1193,8 @@ def _render_tuning_curves_panel(selectivity_df: pd.DataFrame) -> None:
 
     palette = px.colors.qualitative.Plotly
     color_idx = 0
+    tc_x_lo = float("inf")
+    tc_x_hi = float("-inf")
 
     for (session_type, brain_area), grp in plot_df.groupby(group_cols, dropna=False):
         # Collect all (stimuli, rates) pairs and interpolate onto a common grid
@@ -1105,6 +1230,9 @@ def _render_tuning_curves_panel(selectivity_df: pd.DataFrame) -> None:
         color_idx += 1
         label = f"{session_type} | {brain_area} (n={len(all_rates)})"
         x_vals = [float(s) for s in ref_stimuli]
+        if x_vals:
+            tc_x_lo = min(tc_x_lo, min(x_vals))
+            tc_x_hi = max(tc_x_hi, max(x_vals))
 
         fig.add_trace(go.Scatter(
             x=x_vals + x_vals[::-1],
@@ -1116,6 +1244,7 @@ def _render_tuning_curves_panel(selectivity_df: pd.DataFrame) -> None:
             showlegend=False,
             name=label + " (SEM)",
         ))
+        x_display = [v * _CAT_FREQ_STORAGE_SCALE for v in x_vals]
         fig.add_trace(go.Scatter(
             x=x_vals,
             y=mean_rates.tolist(),
@@ -1123,6 +1252,8 @@ def _render_tuning_curves_panel(selectivity_df: pd.DataFrame) -> None:
             name=label,
             line=dict(color=color, width=2),
             marker=dict(size=5),
+            customdata=x_display,
+            hovertemplate="Frequency: %{customdata:.1f} kHz<br>Rate: %{y:.2f} sp/s<extra></extra>",
         ))
 
     # Shade the category boundary region
@@ -1138,16 +1269,33 @@ def _render_tuning_curves_panel(selectivity_df: pd.DataFrame) -> None:
     )
 
     x_type = "log" if log_x else "linear"
+    if not np.isfinite(tc_x_lo):
+        tc_x_lo = _BOUNDARY_LOW_KHZ
+    if not np.isfinite(tc_x_hi):
+        tc_x_hi = _BOUNDARY_HIGH_KHZ
+    tc_display_scale = _freq_display_scale(tc_x_hi)
+    xaxis_cfg: dict = dict(title="Frequency (kHz)", type=x_type)
+    xaxis_cfg.update(
+        _freq_axis_tick_cfg(
+            tc_x_lo,
+            tc_x_hi,
+            tc_display_scale,
+            use_log_scale=log_x,
+            extra_ticks=(_BOUNDARY_LOW_KHZ, _BOUNDARY_HIGH_KHZ),
+        )
+    )
     fig.update_layout(
         title="Population Tuning Curves by Session Type",
-        xaxis=dict(title="Frequency (kHz)", type=x_type),
+        xaxis=xaxis_cfg,
         yaxis=dict(title="Mean firing rate (spikes/s)"),
         legend=dict(orientation="v"),
         height=480,
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, config=_npxl_plotly_config("population_tuning_curves"))
     st.caption(
-        f"Shaded band: category boundary ({_BOUNDARY_LOW_KHZ}–{_BOUNDARY_HIGH_KHZ} kHz). "
+        f"Shaded band: category boundary "
+        f"({_BOUNDARY_LOW_KHZ * _CAT_FREQ_STORAGE_SCALE:.1f}–"
+        f"{_BOUNDARY_HIGH_KHZ * _CAT_FREQ_STORAGE_SCALE:.1f} kHz). "
         "Ribbons = ± 1 SEM across units."
     )
 
@@ -1224,7 +1372,7 @@ def _render_responsive_units_panel(filtered_df: pd.DataFrame) -> None:
         barmode="group",
         height=440,
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, config=_npxl_plotly_config("responsive_units_by_session"))
     st.caption("Error bars = ± 1 SEM across recording sessions.")
 
 
@@ -1318,7 +1466,18 @@ def _render_best_frequency_panel(filtered_df: pd.DataFrame) -> None:
             )
 
     x_type = "log" if log_x else "linear"
-    fig.update_xaxes(title_text="Best frequency (kHz)", type=x_type)
+    bf_display_scale = _freq_display_scale(bf_max)
+    xaxis_cfg: dict = dict(title_text="Best frequency (kHz)", type=x_type)
+    xaxis_cfg.update(
+        _freq_axis_tick_cfg(
+            bf_min,
+            bf_max,
+            bf_display_scale,
+            use_log_scale=log_x,
+            extra_ticks=(_BOUNDARY_LOW_KHZ, _BOUNDARY_HIGH_KHZ),
+        )
+    )
+    fig.update_xaxes(**xaxis_cfg)
     fig.update_yaxes(title_text="Unit count", col=1)
     fig.update_layout(
         title="Best Frequency Distribution by Session Type",
@@ -1326,27 +1485,41 @@ def _render_best_frequency_panel(filtered_df: pd.DataFrame) -> None:
         height=440,
         legend=dict(orientation="h", yanchor="bottom", y=1.02),
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, config=_npxl_plotly_config("best_frequency_distribution"))
     st.caption(
-        f"Shaded band: category boundary ({_BOUNDARY_LOW_KHZ}–{_BOUNDARY_HIGH_KHZ} kHz). "
+        f"Shaded band: category boundary "
+        f"({_BOUNDARY_LOW_KHZ * _CAT_FREQ_STORAGE_SCALE:.1f}–"
+        f"{_BOUNDARY_HIGH_KHZ * _CAT_FREQ_STORAGE_SCALE:.1f} kHz). "
         "Includes stimulus-selective units only where best_stimulus is defined."
     )
 
 
-def _classify_learning_stage(session_type: str) -> str:
-    """Map a session_type string to a canonical learning stage label.
+# Reuse the canonical learning-stage classifier (`load_data.session_dprime`) instead
+# of duplicating it. The previous local copy anchored on a bare "1b"/"2b" substring,
+# which mis-classified e.g. "1b Expert 2b Categorization" as "2b Expert" because of
+# the "2b" inside the categorization-boundary part of the label.
+from load_data.session_dprime import classify_learning_stage as _classify_learning_stage
 
-    Matches the naming convention in recording folder names, e.g.
-    'catgt_G4A2_novice2_2b_4t_g0' → session_type contains 'novice', '1b', or '2b'.
-    Returns 'Novice', '1b Expert', '2b Expert', or 'Other'.
+
+def _classify_categorization_context(session_type: object) -> str:
+    """Return the task categorization context: '1b', '2b', 'FRA', or 'Other'.
+
+    Orthogonal to the animal's learning stage — a `"1b Expert 2b Categorization"`
+    session has learning_stage='1b Expert' but categorization_context='2b'.
     """
-    s = str(session_type).lower()
-    if "novice" in s:
-        return "Novice"
-    if "2b" in s:
-        return "2b Expert"
-    if "1b" in s:
-        return "1b Expert"
+    s = str(session_type).lower() if session_type is not None else ""
+    if "fra" in s:
+        return "FRA"
+    # Match the boundary-with-space form used by Session Type labels first;
+    # fall back to bare "1b"/"2b" tokens for legacy folder-style names.
+    if "1b categorization" in s:
+        return "1b"
+    if "2b categorization" in s:
+        return "2b"
+    if "1b" in s and "2b" not in s:
+        return "1b"
+    if "2b" in s and "1b" not in s:
+        return "2b"
     return "Other"
 
 
@@ -1354,6 +1527,37 @@ def _classify_learning_stage(session_type: str) -> str:
 _STAGE_COLORS = LEARNING_STAGE_COLORS
 
 KDE_BW_DENSITY = 0.08  # bandwidth factor for overlay density KDE (log space)
+
+
+# Canonical cortex_group / histology tokens per target probe area.
+# Mirrors `_AREA_HISTOLOGY_TOKENS` in single_unit_offline_analysis/data_loading.py
+# so we don't reach into a private symbol; keep the two in sync if either changes.
+_CORTEX_GROUP_TOKENS: dict[str, frozenset[str]] = {
+    "ACx": frozenset({"acx", "auditory", "auditory cortex", "a1", "tea"}),
+    "OFC": frozenset({"ofc", "orbitofrontal", "orbitofrontal cortex", "lo", "vmo", "mofc"}),
+}
+
+
+def _cortex_group_matches(value: object, allowed_groups: frozenset[str]) -> bool:
+    """True when ``value`` (cortex_group cell) maps to one of ``allowed_groups``.
+
+    Accepts both the canonical labels ("OFC"/"ACx") and the histology-region tokens
+    used upstream (e.g. "auditory", "lo", "mofc") so the filter still catches units
+    whose cortex_group was filled in directly from histology rather than normalized.
+    """
+    if not pd.notna(value):
+        return False
+    text = str(value).strip().lower()
+    if not text:
+        return False
+    for canonical in allowed_groups:
+        if text == canonical.lower():
+            return True
+        tokens = _CORTEX_GROUP_TOKENS.get(canonical, frozenset())
+        # Substring check handles compound labels like "ACx (A1)" or "OFC/LO".
+        if text in tokens or any(tok in text for tok in tokens):
+            return True
+    return False
 
 
 _BF_EXCLUDE_CENTER_KHZ = 1.5   # category boundary to exclude from density KDE
@@ -1410,6 +1614,11 @@ def _plot_best_freq_density_overlay(
     else:
         x_common = np.linspace(all_bf.min(), all_bf.max(), 300)
 
+    x_min, x_max = x_range if x_range is not None else (0.6, 2.2)
+    if x_min > x_max:
+        x_min, x_max = x_max, x_min
+    freq_display_scale = _freq_display_scale(x_max)
+
     fig = go.Figure()
     for stage in stage_labels:
         mask = plot_df["learning_stage"] == stage
@@ -1437,15 +1646,12 @@ def _plot_best_freq_density_overlay(
             fillcolor=fill_color,
             line=dict(color=line_color, width=2),
             name=f"{stage} (n={len(bf)})",
-            hovertemplate="Freq: %{x:.2f} kHz<br>Density: %{y:.3f}<extra></extra>",
+            customdata=x_common * freq_display_scale,
+            hovertemplate="Freq: %{customdata:.1f} kHz<br>Density: %{y:.3f}<extra></extra>",
         ))
 
     if not fig.data:
         return None
-
-    x_min, x_max = x_range if x_range is not None else (0.6, 2.2)
-    if x_min > x_max:
-        x_min, x_max = x_max, x_min
 
     lo_b, hi_b = _category_boundary_khz()
     for xv in (lo_b, hi_b):
@@ -1470,14 +1676,24 @@ def _plot_best_freq_density_overlay(
                     line_color="rgba(200, 95, 40, 0.92)",
                 )
 
+    xaxis_cfg: dict = dict(
+        type="log" if use_log_scale else "linear",
+        title="Frequency (kHz)" + (" [log scale]" if use_log_scale else ""),
+        range=[np.log10(x_min), np.log10(x_max)] if use_log_scale else [x_min, x_max],
+        showgrid=True,
+    )
+    xaxis_cfg.update(
+        _freq_axis_tick_cfg(
+            x_min,
+            x_max,
+            freq_display_scale,
+            use_log_scale=use_log_scale,
+            extra_ticks=(lo_b, hi_b),
+        )
+    )
     fig.update_layout(
         title=title,
-        xaxis=dict(
-            type="log" if use_log_scale else "linear",
-            title="Frequency (kHz)" + (" [log scale]" if use_log_scale else ""),
-            range=[np.log10(x_min), np.log10(x_max)] if use_log_scale else [x_min, x_max],
-            showgrid=True,
-        ),
+        xaxis=xaxis_cfg,
         yaxis=dict(title="Normalised density", showgrid=True, range=[0, 1.1]),
         plot_bgcolor="white",
         paper_bgcolor="white",
@@ -1541,11 +1757,15 @@ def _render_selectivity_heatmap_panel(
     if good_units_only and "unit_type" in filtered_df.columns:
         filtered_df = filtered_df[filtered_df["unit_type"].astype(str).str.lower() == "good"]
 
-    # Attach learning stage before splitting so both views share the same column
+    # Attach learning stage + categorization context before splitting so both views
+    # share the same columns. The two are orthogonal: "1b Expert 2b Categorization"
+    # → learning_stage="1b Expert", categorization_context="2b".
     if "session_type" in filtered_df.columns:
         filtered_df["learning_stage"] = filtered_df["session_type"].apply(_classify_learning_stage)
+        filtered_df["categorization_context"] = filtered_df["session_type"].apply(_classify_categorization_context)
     else:
         filtered_df["learning_stage"] = "Other"
+        filtered_df["categorization_context"] = "Other"
 
     # density_df: only needs best_stimulus — do NOT drop rows missing tuning curves
     density_df = filtered_df.dropna(subset=["best_stimulus"]).copy()
@@ -1596,7 +1816,7 @@ def _render_selectivity_heatmap_panel(
                     reference_vlines_khz=(10.0, 15.0),
                 )
                 if fig_fra is not None:
-                    st.plotly_chart(fig_fra, use_container_width=True)
+                    st.plotly_chart(fig_fra, use_container_width=True, config=_npxl_plotly_config("bf_density_fra"))
                     st.caption(
                         "BF density on **6–22 kHz** axis (FRA). "
                         "Orange dashed lines at **10** and **15 kHz**. "
@@ -1606,35 +1826,67 @@ def _render_selectivity_heatmap_panel(
                 else:
                     st.info(f"{area}: insufficient data for FRA stage comparison (need ≥3 units/stage).")
             else:
+                # 1b panel cohort composition (asymmetric — matches the canonical RSA
+                # pairing in rsa_analysis.py):
+                #   Novice    ← "Novice 2b Categorization" sessions
+                #                 (Novices are typically tested on 2b; no 1b-Cat data)
+                #   1b Expert ← "1b Expert 1b Categorization" sessions
+                # 2b panel cohort: everything recorded during 2b Categorization,
+                # traced by the animal's training stage.
+                ctx = area_df["categorization_context"]
+                stage = area_df["learning_stage"]
+                area_1b_df = area_df[
+                    ((stage == "Novice") & (ctx == "2b"))
+                    | ((stage == "1b Expert") & (ctx == "1b"))
+                ]
+                area_2b_df = area_df[ctx == "2b"]
+
+                # Shared x-axis lower bound across both panels for visual alignment.
+                x_range_1b = (0.6, 1.55)
+                x_range_2b = (0.6, 2.4)
+
                 dcol1, dcol2 = st.columns(2)
                 with dcol1:
+                    n_novice_1b = int(
+                        ((area_1b_df["learning_stage"] == "Novice")).sum()
+                    )
+                    n_expert_1b = int(
+                        ((area_1b_df["learning_stage"] == "1b Expert")).sum()
+                    )
                     fig_1b = _plot_best_freq_density_overlay(
-                        area_df,
+                        area_1b_df,
                         stage_labels=["Novice", "1b Expert"],
                         use_log_scale=log_x,
-                        title=f"{area} — 1b: Novice vs Expert",
-                        x_range=(0.68, 1.5),
+                        title=f"{area} — 1b panel: Novice (2b Cat.) vs 1b Expert (1b Cat.)",
+                        x_range=x_range_1b,
                         kde_bw=kde_bw,
                     )
                     if fig_1b is not None:
-                        st.plotly_chart(fig_1b, use_container_width=True)
-                        st.caption("1b context · 'novice' or '1b' sessions · BF ≠ 1.5±0.05 kHz")
+                        st.plotly_chart(fig_1b, use_container_width=True, config=_npxl_plotly_config("bf_density_1b"))
+                
                     else:
-                        st.info(f"{area}: insufficient data for 1b comparison (need ≥3 units/stage).")
+                        st.info(
+                            f"{area}: insufficient data for 1b panel "
+                            f"(need ≥3 units/stage; have Novice={n_novice_1b}, "
+                            f"1b Expert={n_expert_1b})."
+                        )
                 with dcol2:
                     fig_2b = _plot_best_freq_density_overlay(
-                        area_df,
+                        area_2b_df,
                         stage_labels=["Novice", "1b Expert", "2b Expert"],
                         use_log_scale=log_x,
-                        title=f"{area} — 2b: Novice / 1b Expert / 2b Expert",
-                        x_range=None,
+                        title=f"{area} — 2b Categorization: Novice / 1b Expert / 2b Expert",
+                        x_range=x_range_2b,
                         kde_bw=kde_bw,
                     )
                     if fig_2b is not None:
-                        st.plotly_chart(fig_2b, use_container_width=True)
-                        st.caption("2b context · 'novice', '1b', '2b' sessions · BF ≠ 1.5±0.05 kHz")
+                        st.plotly_chart(fig_2b, use_container_width=True, config=_npxl_plotly_config("bf_density_2b"))
+
                     else:
-                        st.info(f"{area}: insufficient data for 2b comparison (need ≥3 units/stage).")
+                        st.info(
+                            f"{area}: insufficient data for 2b-Categorization comparison "
+                            f"(need ≥3 units/stage; have {len(area_2b_df):,} total)."
+                        )
             st.divider()
 
     # One sub-tab per session type so heatmaps don't stack vertically
@@ -1660,7 +1912,11 @@ def _render_selectivity_heatmap_panel(
             fig.update_layout(
                 title=f"Tuning Curves Heatmap — {session_type} (n={len(st_df)} units, sorted by best frequency)"
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(
+                fig,
+                use_container_width=True,
+                config=_npxl_plotly_config(f"tuning_heatmap_{_safe_plot_prefix(session_type)}"),
+            )
             st.caption(
                 f"Each row = one unit. Columns = frequency (kHz). "
                 f"Color = {'normalised [0,1]' if normalize else 'firing rate (spikes/s)'}. "
@@ -1731,6 +1987,7 @@ def multi_session_single_unit_analysis_panel(
         st.plotly_chart(
             _plot_multi_session_unit_counts(filtered_df, compare_column),
             use_container_width=True,
+            config=_npxl_plotly_config(f"multi_unit_counts_{_safe_plot_prefix(compare_column)}"),
         )
 
     with plot_col2:
@@ -1753,7 +2010,11 @@ def multi_session_single_unit_analysis_panel(
                     title=f"{trait_metric.replace('_', ' ').title()} by Session Type",
                     labels={"session_type": "Session Type", trait_metric: trait_metric.replace("_", " ").title()},
                 )
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(
+                    fig,
+                    use_container_width=True,
+                    config=_npxl_plotly_config(f"trait_{_safe_plot_prefix(trait_metric)}"),
+                )
 
     if len(metric_options) >= 2:
         scatter_col1, scatter_col2, scatter_col3, scatter_col4 = st.columns(4)
@@ -1797,7 +2058,11 @@ def multi_session_single_unit_analysis_panel(
                 hover_data=hover_columns,
                 title=f"{x_metric.replace('_', ' ').title()} vs {y_metric.replace('_', ' ').title()}",
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(
+                fig,
+                use_container_width=True,
+                config=_npxl_plotly_config(f"scatter_{_safe_plot_prefix(x_metric)}_vs_{_safe_plot_prefix(y_metric)}"),
+            )
 
     st.subheader("Filtered Unit Table")
     display_columns = [
@@ -1898,11 +2163,17 @@ MUA and noise labels are available for comparison via the filter controls.
 
 **Best-frequency density comparison.**
 Population BF distributions are estimated with a **Gaussian KDE** (bandwidth adjustable via slider) applied
-separately for each brain area (ACx, OFC) and each learning stage:
-- *1b context* — Novice vs. 1b Expert (x-axis 0.68–1.5 kHz; the 1-boundary category boundary).
-- *2b context* — Novice, 1b Expert, and 2b Expert (x-axis 0.6–2.2 kHz; the 2-boundary category range).
+separately for each brain area (ACx, OFC). Cohort composition mirrors the canonical RSA pairings
+(see `rsa_analysis.py`): each trace is drawn from the categorization context the animals were actually
+recorded in, not from a single pooled set.
+- *1b panel* (x-axis 6–15.5 kHz) — **Novice** from `Novice 2b Categorization` sessions (Novices have
+  no 1b-Categorization recordings) vs. **1b Expert** from `1b Expert 1b Categorization` sessions.
+- *2b panel* (x-axis 6–24 kHz) — **Novice**, **1b Expert**, and **2b Expert** all from
+  `2b Categorization` sessions (so a `1b Expert 2b Categorization` session contributes here,
+  not to the 1b panel).
+- *FRA panel* (x-axis 6–22 kHz) — broadband sweep; axis labels are true kHz (no ×10 scaling).
 
-Units with BF within ±0.05 kHz of the 1.5 kHz boundary are excluded from density estimation to prevent the
+Units with BF within ±0.5 kHz of the 15 kHz boundary are excluded from density estimation to prevent the
 boundary itself from artificially inflating density in that region.
 
 **Heatmaps.**
@@ -1914,7 +2185,68 @@ projects the BF distribution of that session type.
     with st.spinner("Loading selectivity / tuning-curve data..."):
         selectivity_df = load_selectivity_data(selected_sessions_df)
 
-    _render_selectivity_heatmap_panel(selectivity_df, widget_key_prefix="sh")
+    # Optional histology filter: restrict heatmap + KDE to units whose
+    # cortex_group is OFC and/or ACx. Off by default to preserve the
+    # original Figure 5 behaviour for callers who haven't run histology yet.
+    sh_filt_col1, sh_filt_col2, sh_filt_col3 = st.columns([2, 2, 3])
+    with sh_filt_col1:
+        sh_apply_histology = st.checkbox(
+            "Filter by histology cortex group",
+            value=False,
+            key="sh_cortex_group_enabled",
+            help=(
+                "When on, keep only units whose `cortex_group` (histology) matches "
+                "one of the selected canonical labels."
+            ),
+        )
+    with sh_filt_col2:
+        sh_allowed_cortex_groups = st.multiselect(
+            "Histology cortex group",
+            options=list(_CORTEX_GROUP_TOKENS.keys()),
+            default=list(_CORTEX_GROUP_TOKENS.keys()),
+            key="sh_cortex_group_filter",
+            disabled=not sh_apply_histology,
+            help=(
+                "Variants from histology mapping (e.g. LO, VMO, auditory, A1, TEa) "
+                "are also accepted."
+            ),
+        )
+
+    if not sh_apply_histology:
+        sh_selectivity_filtered = selectivity_df
+    elif "cortex_group" not in selectivity_df.columns:
+        with sh_filt_col3:
+            st.warning(
+                "Selectivity data is missing the `cortex_group` column; "
+                "skipping histology filter."
+            )
+        sh_selectivity_filtered = selectivity_df
+    elif not sh_allowed_cortex_groups:
+        with sh_filt_col3:
+            st.info("Select at least one cortex group (OFC or ACx) to render the panel.")
+        sh_selectivity_filtered = selectivity_df.iloc[0:0]
+    else:
+        sh_allowed_set = frozenset(sh_allowed_cortex_groups)
+        sh_keep_mask = selectivity_df["cortex_group"].apply(
+            lambda v: _cortex_group_matches(v, sh_allowed_set)
+        )
+        sh_selectivity_filtered = selectivity_df.loc[sh_keep_mask].copy()
+        n_total = len(selectivity_df)
+        n_kept = len(sh_selectivity_filtered)
+        with sh_filt_col3:
+            st.caption(
+                f"Histology filter: kept **{n_kept:,}** of {n_total:,} units "
+                f"({n_total - n_kept:,} dropped — cortex_group not in "
+                f"{', '.join(sh_allowed_cortex_groups)})."
+            )
+
+    if sh_apply_histology and sh_selectivity_filtered is not None and sh_selectivity_filtered.empty:
+        st.info(
+            "No units remain after the histology filter "
+            "(no rows with the selected cortex group labels)."
+        )
+    else:
+        _render_selectivity_heatmap_panel(sh_selectivity_filtered, widget_key_prefix="sh")
 
     # ------------------------------------------------------------------
     # FRA sessions: same tuning landscape (all table rows with "FRA" in session type)
@@ -1968,12 +2300,61 @@ best-frequency KDE by learning stage). Only units from sessions whose **Session 
                 "on each recording, or verify analysis_output/tables/*_selectivity_metrics.csv)."
             )
         else:
-            _render_selectivity_heatmap_panel(
-                fra_selectivity_df,
-                widget_key_prefix="fra_sh",
-                fixed_tuning_x_range=(5.0, 40.0),
-                tuning_shade_x_range=(7.0, 21.0),
-            )
+            # Histology filter: keep only units whose cortex_group is OFC and/or ACx.
+            # Defaults to both so the heatmap/KDE exclude units lacking a clear cortex assignment
+            # (e.g. unmapped, midline, or out-of-target rows).
+            fra_filt_col1, fra_filt_col2 = st.columns([2, 3])
+            with fra_filt_col1:
+                allowed_cortex_groups = st.multiselect(
+                    "Histology cortex group",
+                    options=list(_CORTEX_GROUP_TOKENS.keys()),
+                    default=list(_CORTEX_GROUP_TOKENS.keys()),
+                    key="fra_sh_cortex_group_filter",
+                    help=(
+                        "Keep only units whose `cortex_group` (histology) matches "
+                        "OFC or ACx. Variants from histology mapping (e.g. LO, VMO, "
+                        "auditory, A1, TEa) are also accepted."
+                    ),
+                )
+
+            if "cortex_group" not in fra_selectivity_df.columns:
+                with fra_filt_col2:
+                    st.warning(
+                        "Selectivity data is missing the `cortex_group` column; "
+                        "skipping histology filter."
+                    )
+                fra_selectivity_filtered = fra_selectivity_df
+            elif not allowed_cortex_groups:
+                with fra_filt_col2:
+                    st.info("Select at least one cortex group (OFC or ACx) to render the panel.")
+                fra_selectivity_filtered = fra_selectivity_df.iloc[0:0]
+            else:
+                allowed_set = frozenset(allowed_cortex_groups)
+                keep_mask = fra_selectivity_df["cortex_group"].apply(
+                    lambda v: _cortex_group_matches(v, allowed_set)
+                )
+                fra_selectivity_filtered = fra_selectivity_df.loc[keep_mask].copy()
+                n_total = len(fra_selectivity_df)
+                n_kept = len(fra_selectivity_filtered)
+                with fra_filt_col2:
+                    st.caption(
+                        f"Histology filter: kept **{n_kept:,}** of {n_total:,} units "
+                        f"({n_total - n_kept:,} dropped — cortex_group not in "
+                        f"{', '.join(allowed_cortex_groups)})."
+                    )
+
+            if fra_selectivity_filtered.empty:
+                st.info(
+                    "No FRA units remain after the histology filter "
+                    "(no rows with the selected cortex group labels)."
+                )
+            else:
+                _render_selectivity_heatmap_panel(
+                    fra_selectivity_filtered,
+                    widget_key_prefix="fra_sh",
+                    fixed_tuning_x_range=(5.0, 40.0),
+                    tuning_shade_x_range=(7.0, 21.0),
+                )
 
 
 def single_unit_analysis_panel(selected_recording_dir=None, selected_area=None, raw_folder=None):
@@ -2259,7 +2640,11 @@ def single_unit_analysis_panel(selected_recording_dir=None, selected_area=None, 
                             normalize_heatmap = st.checkbox("Normalize per unit", value=True, key="normalize_heatmap")
                             heatmap_fig = plot_tuning_curves_heatmap(selectivity_df, use_log_scale=True, normalize_per_unit=normalize_heatmap)
                             if heatmap_fig is not None:
-                                st.plotly_chart(heatmap_fig, use_container_width=True)
+                                st.plotly_chart(
+                                    heatmap_fig,
+                                    use_container_width=True,
+                                    config=_npxl_plotly_config("single_session_tuning_heatmap"),
+                                )
                             else:
                                 st.info("No valid tuning curve data available for heatmap.")
                         except Exception as e:
@@ -2313,7 +2698,11 @@ def single_unit_analysis_panel(selected_recording_dir=None, selected_area=None, 
                                         use_log_scale=True
                                     )
                                     
-                                    st.plotly_chart(fig, use_container_width=True)
+                                    st.plotly_chart(
+                                        fig,
+                                        use_container_width=True,
+                                        config=_npxl_plotly_config(f"unit_{selected_unit_idx}_tuning_curve"),
+                                    )
                                 except Exception as e:
                                     st.warning(f"Could not display tuning curve: {e}")
                             

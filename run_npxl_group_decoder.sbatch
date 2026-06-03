@@ -7,11 +7,11 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
-#SBATCH --partition=elscn.q
+#SBATCH --partition=gpu.q
 # If submission fails, list partitions with: sinfo -s
 
 # Resource notes:
-# - No GPU needed (sklearn classifiers run on CPU)
+# - Uses gpu.q for queue availability; sklearn decoders run on CPU only (no --gres)
 # - 8 CPUs: sklearn uses OpenMP threading for SVM; Logistic Regression is single-threaded
 #   but multiple sessions can be processed faster with OMP parallelism
 # - 64 GB: each session loads event matrices (~units × time × trials), peak usage
@@ -33,6 +33,9 @@ MONITORING_CSV="${CODE_ROOT}/DB/users_data/Amichai/NPXL recordings _experimental
 # npxl_group_decoder_batch.py appends _histology or _no_histology to OUTPUT_CSV's base name.
 #   With histology:    OUTPUT_CSV=.../npxl_group_decoder_results_with_histology.csv  -> ..._with_histology_histology.csv
 #   No histology:      OUTPUT_CSV=.../npxl_group_decoder_results.csv + --no_histology -> ..._no_histology.csv
+# The batch script also writes sidecars next to the main CSV, including:
+#   *_joint_probs.csv, *_model_agreement.csv, *_kappa_agreement.csv,
+#   *_kappa_by_stimulus.csv, and psychometric agreement/disagreement CSVs.
 OUTPUT_DIR="${CODE_ROOT}/DB/Results"
 OUTPUT_CSV="${OUTPUT_DIR}/npxl_group_decoder_results.csv"
 
@@ -40,12 +43,12 @@ OUTPUT_CSV="${OUTPUT_DIR}/npxl_group_decoder_results.csv"
 DECODE_WINDOW_START=0.0      # seconds relative to tone onset
 DECODE_WINDOW_STOP=0.25
 AGGREGATION="Mean"            # Mean | Sum
-CLASSIFIER="Logistic Regression"   # "Logistic Regression" | "RBF SVM" | "Linear SVM"
+CLASSIFIER="RBF SVM"   # "Logistic Regression" | "RBF SVM" | "Linear SVM"
 RANDOM_STATE=42
-MIN_TRIALS=5
+MIN_TRIALS=20
 
 # Uncomment the next line to skip histology filtering (more units, no area guarantee):
-NO_HISTOLOGY_FLAG="--no_histology"
+# NO_HISTOLOGY_FLAG="--no_histology"
 
 # -----------------------------------------------------------------------
 # 1. Initialise conda

@@ -2022,15 +2022,19 @@ def plot_first_lick_latency_multiple_sessions(selected_data, animal_name="None",
     return results_df
 
 
-def plot_first_lick_hellinger_first_vs_last_day(project_data):
+def plot_first_lick_hellinger_first_vs_highest_dprime_day(project_data):
     """
-    Multi-animal: compare Hellinger(Go vs NoGo) first-lick on first day vs last day.
+    Multi-animal: compare Hellinger(Go vs NoGo) first-lick on first day vs highest-d' day.
     First day = first session per animal where the NoGo first-lick array is non-empty;
-    last day = last session per animal. Groups all animals together and runs paired
+    highest-d' day = session with max numeric d_prime. Groups all animals together and runs paired
     statistical comparison (Wilcoxon signed-rank).
     """
     from Analysis.GNG_bpod_analysis.GNG_bpod_general import get_sessions_for_animal
     from scipy.stats import wilcoxon
+
+    if "d_prime" not in project_data.columns:
+        st.warning("Need a d_prime column to select each animal's highest-d' day.")
+        return
 
     animals = project_data["MouseName"].unique()
     filter_early = get_global_early_response_filter()
@@ -2058,12 +2062,15 @@ def plot_first_lick_hellinger_first_vs_last_day(project_data):
         if first_idx is None:
             continue
 
-        last_idx = session_indices[-1]
-        if first_idx == last_idx:
-            continue  # need two distinct days for comparison
+        animal_sessions = project_data.loc[session_indices].copy()
+        animal_sessions["_d_prime_numeric"] = pd.to_numeric(animal_sessions["d_prime"], errors="coerce")
+        if animal_sessions["_d_prime_numeric"].isna().all():
+            continue
 
-        first_w = np.nan
-        last_w = np.nan
+        best_idx = animal_sessions["_d_prime_numeric"].idxmax()
+        best_dprime = float(animal_sessions.at[best_idx, "_d_prime_numeric"])
+        first_h = np.nan
+        best_h = np.nan
         try:
             g_go, g_nogo, _ = process_and_plot_lick_data(
                 project_data, first_idx, plot=False, filter_early_response=filter_early
@@ -2077,20 +2084,21 @@ def plot_first_lick_hellinger_first_vs_last_day(project_data):
             pass
         try:
             g_go, g_nogo, _ = process_and_plot_lick_data(
-                project_data, last_idx, plot=False, filter_early_response=filter_early
+                project_data, best_idx, plot=False, filter_early_response=filter_early
             )
             go_t = g_go["First Lick Time (s)"].values if g_go is not None and not g_go.empty else np.array([])
             nogo_t = g_nogo["First Lick Time (s)"].values if g_nogo is not None and not g_nogo.empty else np.array([])
             go_t = go_t[(go_t >= 0) & (go_t <= FIRST_LICK_LATENCY_MAX_S)] if go_t.size else go_t
             nogo_t = nogo_t[(nogo_t >= 0) & (nogo_t <= FIRST_LICK_LATENCY_MAX_S)] if nogo_t.size else nogo_t
-            last_h = hellinger_first_lick_distributions(go_t, nogo_t)
+            best_h = hellinger_first_lick_distributions(go_t, nogo_t)
         except Exception:
             pass
 
         rows.append({
             "MouseName": animal,
             "first_day_hellinger": first_h,
-            "last_day_hellinger": last_h,
+            "highest_dprime_day_hellinger": best_h,
+            "highest_dprime": best_dprime,
         })
 
     if not rows:
@@ -2098,25 +2106,25 @@ def plot_first_lick_hellinger_first_vs_last_day(project_data):
         return
 
     df = pd.DataFrame(rows)
-    valid = df.dropna(subset=["first_day_hellinger", "last_day_hellinger"])
+    valid = df.dropna(subset=["first_day_hellinger", "highest_dprime_day_hellinger"])
     if valid.empty:
-        st.warning("No animals with both first-day and last-day Hellinger.")
+        st.warning("No animals with both first-day and highest-d' day Hellinger.")
         return
 
-    # Grouped comparison: all animals together, First day vs Last day
+    # Grouped paired comparison: one first-day and one highest-d' day value per animal.
     first_vals = valid["first_day_hellinger"].values
-    last_vals = valid["last_day_hellinger"].values
+    best_vals = valid["highest_dprime_day_hellinger"].values
     try:
-        stat, p_value = wilcoxon(first_vals, last_vals, alternative="two-sided")
+        stat, p_value = wilcoxon(first_vals, best_vals, alternative="two-sided")
     except Exception:
         stat, p_value = np.nan, np.nan
 
     st.write("**Grouped comparison (all animals)**")
     st.write(f"- First day: n={len(first_vals)}, median={np.nanmedian(first_vals):.4f}, mean={np.nanmean(first_vals):.4f}")
-    st.write(f"- Last day: n={len(last_vals)}, median={np.nanmedian(last_vals):.4f}, mean={np.nanmean(last_vals):.4f}")
-    st.write(f"- Wilcoxon signed-rank (first vs last): statistic={stat:.4f}, p={p_value:.3g}")
+    st.write(f"- Highest-d' day: n={len(best_vals)}, median={np.nanmedian(best_vals):.4f}, mean={np.nanmean(best_vals):.4f}")
+    st.write(f"- Wilcoxon signed-rank (first vs highest-d' day): statistic={stat:.4f}, p={p_value:.3g}")
 
-    # Box plot: First day vs Last day (all animals pooled)
+    # Box plot: First day vs highest-d' day (all animals paired)
     fig = go.Figure()
     fig.add_trace(go.Box(
         y=first_vals,
@@ -2127,15 +2135,28 @@ def plot_first_lick_hellinger_first_vs_last_day(project_data):
         pointpos=0,              # points on top of the box
     ))
     fig.add_trace(go.Box(
-        y=last_vals,
-        name="Last day",
+        y=best_vals,
+        name="Highest-d' day",
         marker_color=COLOR_ACCENT,
         boxpoints="all",
         jitter=0.2,              # small jitter for separation
         pointpos=0,              # points on top of the box
     ))
+    for _, animal_row in valid.iterrows():
+        fig.add_trace(go.Scatter(
+            x=["First day", "Highest-d' day"],
+            y=[animal_row["first_day_hellinger"], animal_row["highest_dprime_day_hellinger"]],
+            mode="lines+markers",
+            line=dict(color=COLOR_GRAY, width=1),
+            marker=dict(size=5, color=COLOR_GRAY),
+            hovertemplate=(
+                f"Animal: {animal_row['MouseName']}<br>"
+                "Day: %{x}<br>Hellinger: %{y:.4f}<extra></extra>"
+            ),
+            showlegend=False,
+        ))
     fig.update_layout(
-        title="First Lick Hellinger: First Day vs Last Day (all animals)",
+        title="First Lick Hellinger: First Day vs Highest-d' Day (all animals)",
         yaxis_title="Hellinger distance",
         showlegend=False,
         height=600,
@@ -2157,13 +2178,13 @@ def plot_first_lick_hellinger_first_vs_last_day(project_data):
     ))
     fig2.add_trace(go.Bar(
         x=x + width / 2,
-        y=df["last_day_hellinger"],
-        name="Last day",
+        y=df["highest_dprime_day_hellinger"],
+        name="Highest-d' day",
         marker_color=COLOR_NOGO,
         width=width,
     ))
     fig2.update_layout(
-        title="First Lick Hellinger: First Day vs Last Day (per animal)",
+        title="First Lick Hellinger: First Day vs Highest-d' Day (per animal)",
         xaxis_title="Animal",
         yaxis_title="Hellinger distance",
         barmode="group",
@@ -2176,9 +2197,14 @@ def plot_first_lick_hellinger_first_vs_last_day(project_data):
     st.dataframe(df, use_container_width=True, hide_index=True)
 
 
+def plot_first_lick_hellinger_first_vs_last_day(project_data):
+    """Backward-compatible wrapper for the dashboard entry now comparing against highest-d' day."""
+    return plot_first_lick_hellinger_first_vs_highest_dprime_day(project_data)
+
+
 def plot_go_first_lick_distance_to_reinforcement_first_vs_last_day(project_data):
     """
-    Multi-animal: distance from mean(Go first lick) to reinforcement delay on first day vs last day.
+    Multi-animal: latency from mean(Go first lick) to reinforcement delay on first day vs last day.
     First day = first session with non-empty Go first licks (0–2.5 s); last day = last session.
     Groups all animals and runs Wilcoxon signed-rank; box plot + per-animal bars + table.
     """
@@ -2244,8 +2270,8 @@ def plot_go_first_lick_distance_to_reinforcement_first_vs_last_day(project_data)
 
         rows.append({
             "MouseName": animal,
-            "first_day_distance": first_dist,
-            "last_day_distance": last_dist,
+            "first_day_latency": first_dist,
+            "last_day_latency": last_dist,
         })
 
     if not rows:
@@ -2253,13 +2279,13 @@ def plot_go_first_lick_distance_to_reinforcement_first_vs_last_day(project_data)
         return
 
     df = pd.DataFrame(rows)
-    valid = df.dropna(subset=["first_day_distance", "last_day_distance"])
+    valid = df.dropna(subset=["first_day_latency", "last_day_latency"])
     if valid.empty:
-        st.warning("No animals with both first-day and last-day distance to reinforcement delay.")
+        st.warning("No animals with both first-day and last-day latency to reinforcement delay.")
         return
 
-    first_vals = valid["first_day_distance"].values
-    last_vals = valid["last_day_distance"].values
+    first_vals = valid["first_day_latency"].values
+    last_vals = valid["last_day_latency"].values
     try:
         stat, p_value = wilcoxon(first_vals, last_vals, alternative="two-sided")
     except Exception:
@@ -2290,15 +2316,28 @@ def plot_go_first_lick_distance_to_reinforcement_first_vs_last_day(project_data)
         pointpos=0,              # points on top of the box
         marker=dict(size=6),
     ))
+    for _, animal_row in valid.iterrows():
+        fig.add_trace(go.Scatter(
+            x=["First day", "Last day"],
+            y=[animal_row["first_day_latency"], animal_row["last_day_latency"]],
+            mode="lines+markers",
+            line=dict(color=COLOR_GRAY, width=1),
+            marker=dict(size=5, color=COLOR_GRAY),
+            hovertemplate=(
+                f"Animal: {animal_row['MouseName']}<br>"
+                "Day: %{x}<br>Latency: %{y:.3f} s<extra></extra>"
+            ),
+            showlegend=False,
+        ))
     fig.update_layout(
-        title="Go first-lick distance to reinforcement delay: First vs Last Day (all animals)",
-        yaxis_title="Distance (s)",
+        title="Go first-lick latency to reinforcement delay: First vs Last Day (all animals)",
+        yaxis_title="Latency (s)",
         showlegend=False,
         height=600,
     )
     fig.update_layout(
-        title="Go first-lick distance to reinforcement delay: First vs Last Day (all animals)",
-        yaxis_title="Distance (s)",
+        title="Go first-lick latency to reinforcement delay: First vs Last Day (all animals)",
+        yaxis_title="Latency (s)",
         showlegend=False,
         height=600,
     )
@@ -2309,12 +2348,12 @@ def plot_go_first_lick_distance_to_reinforcement_first_vs_last_day(project_data)
     fig2 = go.Figure()
     x = np.arange(len(df))
     width = 0.35
-    fig2.add_trace(go.Bar(x=x - width / 2, y=df["first_day_distance"], name="First day", marker_color=COLOR_GO, width=width))
-    fig2.add_trace(go.Bar(x=x + width / 2, y=df["last_day_distance"], name="Last day", marker_color=COLOR_NOGO, width=width))
+    fig2.add_trace(go.Bar(x=x - width / 2, y=df["first_day_latency"], name="First day", marker_color=COLOR_GO, width=width))
+    fig2.add_trace(go.Bar(x=x + width / 2, y=df["last_day_latency"], name="Last day", marker_color=COLOR_NOGO, width=width))
     fig2.update_layout(
-        title="Go first-lick distance to reinforcement delay (per animal)",
+        title="Go first-lick latency to reinforcement delay (per animal)",
         xaxis_title="Animal",
-        yaxis_title="Distance (s)",
+        yaxis_title="Latency (s)",
         barmode="group",
         xaxis=dict(tickvals=x, ticktext=df["MouseName"].tolist()),
         showlegend=True,

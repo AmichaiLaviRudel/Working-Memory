@@ -150,8 +150,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--base-dir",
         type=str,
-        default=r"Z:\Shared\Amichai\Data\pipeline_output",
-        help="Base directory to search for catgt folders (default: Z:\\Shared\\Amichai\\Data\\pipeline_output)"
+        default=r"Z:\Shared\Amichai\Data",
+        help="Base directory to search for catgt folders (default: Z:\\Shared\\Amichai\\Data)"
     )
     
     args = parser.parse_args()

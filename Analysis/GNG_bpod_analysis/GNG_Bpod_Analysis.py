@@ -335,20 +335,20 @@ def gng_bpod_analysis_multi_animal(project_data, index):
                     st.warning(f"Something went wrong with daily activity analysis :|\n\n{e}")
                     st.text(traceback.format_exc())
 
-        with st.expander("📏 First Lick Hellinger: First vs Last Day", expanded=False):
+        with st.expander("📏 First Lick Hellinger: First Day vs Highest d' Day", expanded=False):
             if st.button("Run analysis", key="run_hellinger_multi"):
                 try:
-                    plot_first_lick_hellinger_first_vs_last_day(project_data)
+                    plot_first_lick_hellinger_first_vs_highest_dprime_day(project_data)
                 except Exception as e:
                     st.warning(f"Something went wrong with first-lick Hellinger comparison :|\n\n{e}")
                     st.text(traceback.format_exc())
 
-        with st.expander("📏 Go first-lick distance to reinforcement delay: First vs Last Day", expanded=False):
+        with st.expander("📏 Go first-lick latency to reinforcement delay: First vs Last Day", expanded=False):
             if st.button("Run analysis", key="run_go_dist_reinf_multi"):
                 try:
                     plot_go_first_lick_distance_to_reinforcement_first_vs_last_day(project_data)
                 except Exception as e:
-                    st.warning(f"Something went wrong with Go first-lick distance to reinforcement delay :|\n\n{e}")
+                    st.warning(f"Something went wrong with Go first-lick latency to reinforcement delay :|\n\n{e}")
                     st.text(traceback.format_exc())
 
         with st.expander("👅 First Lick by Distance (by learning phase)", expanded=False):
