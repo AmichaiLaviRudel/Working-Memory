@@ -191,7 +191,15 @@ def _load_metrics_csv(session_dir: str, area: str) -> Optional[pd.DataFrame]:
     if not os.path.exists(metrics_path):
         return None
 
-    metrics_df = pd.read_csv(metrics_path, low_memory=False)
+    try:
+        metrics_df = pd.read_csv(metrics_path, low_memory=False)
+    except pd.errors.EmptyDataError:
+        # File exists but has no parseable columns (empty or header-only placeholder).
+        return None
+
+    if metrics_df.empty:
+        return None
+
     metrics_df["metrics_path"] = metrics_path
     return metrics_df
 
@@ -307,7 +315,13 @@ def _load_selectivity_csv(session_dir: str, area: str) -> Optional[pd.DataFrame]
     if not os.path.exists(path):
         return None
 
-    df = pd.read_csv(path, low_memory=False)
+    try:
+        df = pd.read_csv(path, low_memory=False)
+    except pd.errors.EmptyDataError:
+        return None
+
+    if df.empty:
+        return None
 
     # Parse JSON-encoded list columns produced by the offline analysis pipeline.
     for col in ("tuning_curve_stimuli", "tuning_curve", "tuning_curve_sem"):

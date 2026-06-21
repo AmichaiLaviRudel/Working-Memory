@@ -180,9 +180,9 @@ def render_global_dataset_page() -> None:
     if not isinstance(cached_df, pd.DataFrame) or cached_df.empty or cached_path != csv_path:
         try:
             df_loaded = pd.read_csv(csv_path, delimiter=",", low_memory=False)
-            # Map legacy "Bpod" values to "Rig" in Setup column
+            # Map legacy "Bpod" values to "Set" in Setup column
             if "Setup" in df_loaded.columns:
-                df_loaded["Setup"] = df_loaded["Setup"].replace("Bpod", "Rig")
+                df_loaded["Setup"] = df_loaded["Setup"].replace("Bpod", "Set")
             st.session_state["global_training_perf_df"] = df_loaded
             st.session_state["global_training_csv_path"] = csv_path
             st.success(f"Loaded {len(df_loaded)} sessions from: {csv_path}")
@@ -284,7 +284,7 @@ def render_global_dataset_page() -> None:
                 col_setup, col_group = st.columns(2)
                 
                 with col_setup:
-                    # Setup filter (Rig, Educage, etc.)
+                    # Setup filter (Set, Educage, etc.)
                     available_setups = sorted(df["Setup"].dropna().unique().tolist()) if "Setup" in df.columns else []
                     if available_setups:
                         setup_filter = st.multiselect(
@@ -541,7 +541,7 @@ def render_global_dataset_page() -> None:
                     group_df = group_df.sort_values(["Setup", "Group"]).reset_index(drop=True)
                     st.dataframe(group_df, use_container_width=True, hide_index=True)
 
-                    # Detailed breakdown by Setup (Rig vs Educage comparison) with 1B/2B split
+                    # Detailed breakdown by Setup (Set vs Educage comparison) with 1B/2B split
                     if "Setup" in df_filtered.columns:
                         unique_setups = df_filtered["Setup"].dropna().unique()
                         if len(unique_setups) > 1:
@@ -739,6 +739,11 @@ def render_global_dataset_page() -> None:
                             df_plot = df_filtered[[group_col, "N_Boundaries", "d_prime"]].copy()
                             df_plot["d_prime"] = pd.to_numeric(df_plot["d_prime"], errors="coerce")
                             df_plot = df_plot.dropna(subset=["d_prime", group_col])
+                            n_by_category_boundary = (
+                                df_plot.groupby([group_col, "N_Boundaries"], observed=True)
+                                .size()
+                                .to_dict()
+                            )
                             
                             unique_categories = sorted(df_plot[group_col].unique())
                             use_gray_lines = (group_col == "Group")
@@ -759,10 +764,11 @@ def render_global_dataset_page() -> None:
                                             data = df_plot[(df_plot[group_col] == category) & (df_plot["N_Boundaries"] == boundary)]["d_prime"]
                                             
                                             if len(data) > 0:
+                                                n_sessions = int(n_by_category_boundary[(category, boundary)])
                                                 fig.add_trace(go.Box(
                                                     y=data,
                                                     x=[boundary_label] * len(data),
-                                                    name=category,
+                                                    name=f"{category} (n={n_sessions})",
                                                     marker_color=color,
                                                     boxmean=True,
                                                     legendgroup=category,
@@ -1163,7 +1169,7 @@ def render_global_dataset_page() -> None:
                                 "Analyse?", help="Select rows for analysis", default=False
                             ),
                             "Setup": st.column_config.Column(
-                                "Setup", help="Setup type: Rig or Educage", width="small"
+                                "Setup", help="Setup type: Set or Educage", width="small"
                             ),
                             "groupID": st.column_config.Column(
                                 "Group ID", help="Project/group identifier", width="medium"

@@ -764,6 +764,7 @@ _KAPPA_PAIR_SPECS: tuple[tuple[str, str, str], ...] = (
 _KAPPA_METRIC_COLUMNS: tuple[str, ...] = tuple(f"cohen_{suffix}" for _, _, suffix in _KAPPA_PAIR_SPECS) + (
     "fleiss_mouse_acx_ofc",
     "fleiss_mouse_acx_ofc_gt",
+    "var_agree_acx_ofc",  # Bernoulli variance of per-trial ACx==OFC agreement.
 )
 
 
@@ -835,6 +836,12 @@ def _kappa_summary_row(results_df: pd.DataFrame) -> dict[str, Any]:
         right_col = _KAPPA_SOURCE_COLUMNS[right]
         row[f"cohen_{suffix}"] = _cohen_kappa_binary(results_df[left_col], results_df[right_col])
         row[f"p_agree_{suffix}"] = _raw_agreement(results_df[left_col], results_df[right_col])
+
+    # Bernoulli variance of the per-trial ACx==OFC agreement indicator (var = p(1-p)).
+    p_acx_ofc = row.get("p_agree_acx_ofc", np.nan)
+    row["var_agree_acx_ofc"] = (
+        float(p_acx_ofc * (1.0 - p_acx_ofc)) if np.isfinite(p_acx_ofc) else np.nan
+    )
 
     row["fleiss_mouse_acx_ofc"] = _fleiss_kappa_binary(
         results_df[["behavior_go", "acx_pred", "ofc_pred"]]
@@ -3265,6 +3272,219 @@ def _attach_learning_stage(view_df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+_COHEN_KAPPA_STAGE_ORDER: tuple[str, ...] = ("Novice", "1b Expert", "2b Expert")
+
+
+def _kappa_groups_by_learning_stage(
+    kappa_df: pd.DataFrame,
+    metric_col: str,
+    *,
+    min_n: int = 2,
+    stages: tuple[str, ...] = _COHEN_KAPPA_STAGE_ORDER,
+) -> dict[str, np.ndarray]:
+    """Session-level Cohen's kappa values per training level."""
+    groups: dict[str, np.ndarray] = {}
+    for stage in stages:
+        vals = pd.to_numeric(
+            kappa_df.loc[kappa_df["learning_stage"] == stage, metric_col],
+            errors="coerce",
+        ).dropna()
+        if len(vals) >= min_n:
+            groups[stage] = vals.to_numpy(dtype=float)
+    return groups
+
+
+def _run_cohen_kappa_learning_stage_tests(
+    kappa_df: pd.DataFrame,
+    metric_col: str,
+    *,
+    min_n: int = 2,
+    stages: tuple[str, ...] = _COHEN_KAPPA_STAGE_ORDER,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Kruskal-Wallis across training levels + pairwise Mann-Whitney U (Bonferroni)."""
+    from itertools import combinations
+
+    from scipy.stats import kruskal, mannwhitneyu
+
+    groups = _kappa_groups_by_learning_stage(
+        kappa_df, metric_col, min_n=min_n, stages=stages
+    )
+    testable = list(groups.keys())
+    metric_label = _KAPPA_PLOT_METRICS.get(metric_col, metric_col)
+    omnibus_rows: list[dict[str, Any]] = []
+    pairwise_rows: list[dict[str, Any]] = []
+
+    if len(testable) < 2:
+        return pd.DataFrame(), pd.DataFrame()
+
+    if len(testable) >= 3:
+        stat, p = kruskal(*(groups[g] for g in testable))
+        omnibus_rows.append(
+            {
+                "metric": metric_label,
+                "test": "Kruskal-Wallis",
+                "groups": ", ".join(testable),
+                "statistic": float(stat),
+                "p": float(p),
+                "sig": _p_value_to_sig(float(p)),
+            }
+        )
+
+    pair_stats: list[dict[str, Any]] = []
+    for group_a, group_b in combinations(testable, 2):
+        vals_a = groups[group_a]
+        vals_b = groups[group_b]
+        try:
+            stat_u, p = mannwhitneyu(vals_a, vals_b, alternative="two-sided")
+        except ValueError:
+            stat_u, p = np.nan, np.nan
+        pair_stats.append(
+            {
+                "metric": metric_label,
+                "group_a": group_a,
+                "group_b": group_b,
+                "n_a": len(vals_a),
+                "n_b": len(vals_b),
+                "mean_a": float(np.mean(vals_a)),
+                "mean_b": float(np.mean(vals_b)),
+                "U": float(stat_u) if np.isfinite(stat_u) else np.nan,
+                "p": float(p) if np.isfinite(p) else np.nan,
+            }
+        )
+
+    n_tests = sum(1 for row in pair_stats if np.isfinite(row["p"]))
+    for row in pair_stats:
+        p_raw = row["p"]
+        p_adj = min(1.0, p_raw * n_tests) if np.isfinite(p_raw) and n_tests > 0 else np.nan
+        pairwise_rows.append(
+            {
+                **row,
+                "p_adj": p_adj,
+                "sig": _p_value_to_sig(p_adj) if np.isfinite(p_adj) else "",
+            }
+        )
+
+    return pd.DataFrame(omnibus_rows), pd.DataFrame(pairwise_rows)
+
+
+def _plot_cohen_kappa_by_stage(
+    kappa_stage_df: pd.DataFrame,
+    metric_col: str,
+    *,
+    title: str,
+    yaxis_title: str,
+) -> go.Figure | None:
+    """Box plot of per-session Cohen's kappa grouped by training level."""
+    required = {metric_col, "learning_stage"}
+    if kappa_stage_df.empty or not required.issubset(kappa_stage_df.columns):
+        return None
+
+    work = kappa_stage_df.dropna(subset=[metric_col]).copy()
+    if work.empty:
+        return None
+
+    stages = sorted(work["learning_stage"].unique(), key=lambda s: _GROUP_STAGE_RANK.get(s, 99))
+    accent_color = _KAPPA_PLOT_COLORS.get(metric_col)
+
+    fig = go.Figure()
+    for stage in stages:
+        stage_df = work[work["learning_stage"] == stage]
+        fig.add_trace(
+            go.Box(
+                x=stage_df["learning_stage"],
+                y=stage_df[metric_col],
+                name=stage,
+                marker_color=accent_color or _STAGE_LINE_COLORS.get(stage, "#888888"),
+                boxpoints="all",
+                jitter=0.35,
+                pointpos=0,
+                line_width=2,
+                marker_size=8,
+                showlegend=False,
+            )
+        )
+    fig.add_hline(y=0, line=dict(color=COLOR_GRAY, dash="dash", width=2))
+    fig.update_layout(
+        title=title,
+        xaxis_title="Training Level",
+        yaxis_title=yaxis_title,
+        yaxis=dict(range=[-0.2, 1.05]),
+        height=440,
+    )
+    fig.update_xaxes(categoryorder="array", categoryarray=stages)
+    return fig
+
+
+def _render_cohen_kappa_by_stage(
+    kappa_stage_df: pd.DataFrame,
+    metric_col: str,
+    *,
+    plot_key: str,
+) -> None:
+    """Box plot + Kruskal-Wallis / pairwise tests for one Cohen's kappa metric."""
+    metric_label = _KAPPA_PLOT_METRICS.get(metric_col, metric_col)
+    fig = _plot_cohen_kappa_by_stage(
+        kappa_stage_df,
+        metric_col,
+        title=f"{metric_label} Cohen's Kappa by Training Level",
+        yaxis_title=f"Cohen's \u03ba ({metric_label})",
+    )
+    if fig is None:
+        st.info(f"Not enough per-session data for {metric_label} Cohen's kappa.")
+        return
+
+    st.markdown(f"**{metric_label} Cohen's kappa by training level**")
+    st.caption(
+        "Per-session chance-corrected Go/No-Go agreement. "
+        "1 = perfect, 0 = chance-level, <0 = systematic disagreement. Each point is one session."
+    )
+    st.plotly_chart(
+        fig,
+        use_container_width=True,
+        config=get_plotly_config(plot_key),
+    )
+
+    omnibus_df, pairwise_df = _run_cohen_kappa_learning_stage_tests(kappa_stage_df, metric_col)
+    if omnibus_df.empty and pairwise_df.empty:
+        st.caption(
+            f"{metric_label}: not enough sessions per training level "
+            f"(need \u22652 per group among {_COHEN_KAPPA_STAGE_ORDER})."
+        )
+        return
+
+    if not omnibus_df.empty:
+        st.caption(
+            f"{metric_label}: Kruskal-Wallis across "
+            f"{', '.join(_COHEN_KAPPA_STAGE_ORDER)}; "
+            "pairwise Mann-Whitney U with Bonferroni correction."
+        )
+        st.dataframe(
+            omnibus_df,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "statistic": st.column_config.NumberColumn("H", format="%.3f"),
+                "p": st.column_config.NumberColumn(format="%.4g"),
+            },
+        )
+
+    if not pairwise_df.empty:
+        st.dataframe(
+            pairwise_df,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "n_a": st.column_config.NumberColumn("N (A)", format="%d"),
+                "n_b": st.column_config.NumberColumn("N (B)", format="%d"),
+                "mean_a": st.column_config.NumberColumn("Mean (A)", format="%.3f"),
+                "mean_b": st.column_config.NumberColumn("Mean (B)", format="%.3f"),
+                "U": st.column_config.NumberColumn(format="%.3f"),
+                "p": st.column_config.NumberColumn(format="%.4g"),
+                "p_adj": st.column_config.NumberColumn("p (Bonferroni)", format="%.4g"),
+            },
+        )
+
+
 def _spearman_dprime_accuracy_label(
     x: pd.Series,
     y: pd.Series,
@@ -4009,6 +4229,7 @@ every reported number is held-out. Areas are **never pooled** and sessions are *
                     "cohen_gt_mouse",
                     "fleiss_mouse_acx_ofc",
                     "fleiss_mouse_acx_ofc_gt",
+                    "var_agree_acx_ofc",
                 ]
                 if col in kappa_summary.columns
             ]
@@ -4018,10 +4239,13 @@ every reported number is held-out. Areas are **never pooled** and sessions are *
                 hide_index=True,
                 column_config={
                     "n_trials": st.column_config.NumberColumn("Trials", format="%d"),
+                    "var_agree_acx_ofc": st.column_config.NumberColumn(
+                        "ACx/OFC agree var", format="%.4f"
+                    ),
                     **{
                         col: st.column_config.NumberColumn(col.replace("_", " "), format="%.3f")
                         for col in summary_cols
-                        if col != "n_trials"
+                        if col not in ("n_trials", "var_agree_acx_ofc")
                     },
                 },
             )
@@ -4688,7 +4912,6 @@ and ACx/OFC ↔ behavior agreement vary across sessions, learning stages, and se
             "_group_psychometric_model_disagree_df", pd.DataFrame()
         )
         kappa_agreement_df = st.session_state.get("_group_kappa_agreement_df", pd.DataFrame())
-        kappa_by_stimulus_df = st.session_state.get("_group_kappa_by_stimulus_df", pd.DataFrame())
         filtered_joint = _filter_group_sidecar_to_view(joint_probs_df, view_df)
         filtered_agreement = _filter_group_sidecar_to_view(model_agreement_df, view_df)
         filtered_psych_agree = _filter_group_sidecar_to_view(psychometric_model_agree_df, view_df)
@@ -4696,7 +4919,6 @@ and ACx/OFC ↔ behavior agreement vary across sessions, learning stages, and se
             psychometric_model_disagree_df, view_df
         )
         filtered_kappa = _filter_group_sidecar_to_view(kappa_agreement_df, view_df)
-        filtered_kappa_stimulus = _filter_group_sidecar_to_view(kappa_by_stimulus_df, view_df)
 
         dual_session_count = 0
         if not filtered_joint.empty:
@@ -4791,6 +5013,8 @@ and ACx/OFC ↔ behavior agreement vary across sessions, learning stages, and se
                             "sem_fleiss_mouse_acx_ofc",
                             "mean_fleiss_mouse_acx_ofc_gt",
                             "sem_fleiss_mouse_acx_ofc_gt",
+                            "mean_var_agree_acx_ofc",
+                            "sem_var_agree_acx_ofc",
                         ]
                         if col in pooled_kappa.columns
                     ]
@@ -4809,75 +5033,16 @@ and ACx/OFC ↔ behavior agreement vary across sessions, learning stages, and se
                         },
                     )
 
-            if filtered_kappa_stimulus.empty:
-                expected_kappa_stim_path = _group_decoder_sidecar_path(batch_source_path, "kappa_by_stimulus")
-                expected_kappa_stim_name = (
-                    os.path.basename(expected_kappa_stim_path)
-                    if expected_kappa_stim_path is not None
-                    else "*_kappa_by_stimulus.csv"
-                )
-                st.info(
-                    f"Stimulus-resolved kappa sidecar not found for the currently loaded "
-                    f"**{histology_label}** results (`{expected_kappa_stim_name}`). Re-run batch "
-                    f"for this mode, or use interactive group analysis."
-                    f"{_group_decoder_alternate_sidecar_hint(g_use_histology, 'kappa_by_stimulus')}"
-                )
-            else:
-                st.markdown("**Stimulus-resolved kappa**")
-                kappa_stim_stage_df = _attach_learning_stage(filtered_kappa_stimulus)
-                kappa_stim_stage_df = kappa_stim_stage_df[
-                    kappa_stim_stage_df["learning_stage"].isin(_PSYCHOMETRIC_EXPERT_STAGES)
-                ]
-                kappa_stim_stage_df = _filter_1b_psychometric_above_high_boundary(kappa_stim_stage_df)
-                kappa_stim_stage_df = _log_bin_stimulus_per_stage(kappa_stim_stage_df, bins_per_class=4)
-                pooled_kappa_stimulus = _aggregate_kappa_by_stimulus(
-                    kappa_stim_stage_df,
-                    extra_group_cols=["learning_stage"],
-                    min_trials_per_bin=_PSYCHOMETRIC_GROUP_MIN_TRIALS_PER_BIN,
-                )
-                kappa_stim_fig = _plot_group_kappa_by_stimulus(pooled_kappa_stimulus)
-                if kappa_stim_fig is None:
-                    st.info("Not enough binned stimulus rows for a stimulus-resolved kappa plot.")
-                else:
-                    st.plotly_chart(
-                        kappa_stim_fig,
-                        use_container_width=True,
-                        config=get_plotly_config("group_kappa_by_stimulus"),
+                for metric_col, plot_key in (
+                    ("cohen_acx_ofc", "group_cohen_acx_ofc_by_stage"),
+                    ("cohen_mouse_acx", "group_cohen_mouse_acx_by_stage"),
+                    ("cohen_mouse_ofc", "group_cohen_mouse_ofc_by_stage"),
+                ):
+                    _render_cohen_kappa_by_stage(
+                        kappa_stage_df,
+                        metric_col,
+                        plot_key=plot_key,
                     )
-                    with st.expander("Stimulus-resolved kappa table", expanded=False):
-                        display_cols = [
-                            col
-                            for col in [
-                                "learning_stage",
-                                "stimulus",
-                                "n_sessions",
-                                "n_trials",
-                                "cohen_mouse_acx",
-                                "cohen_mouse_ofc",
-                                "cohen_acx_ofc",
-                                "cohen_gt_acx",
-                                "cohen_gt_ofc",
-                                "cohen_gt_mouse",
-                                "fleiss_mouse_acx_ofc",
-                                "fleiss_mouse_acx_ofc_gt",
-                            ]
-                            if col in pooled_kappa_stimulus.columns
-                        ]
-                        st.dataframe(
-                            pooled_kappa_stimulus[display_cols],
-                            use_container_width=True,
-                            hide_index=True,
-                            column_config={
-                                "stimulus": st.column_config.NumberColumn("Stimulus (kHz)", format="%.3f"),
-                                "n_sessions": st.column_config.NumberColumn("Sessions", format="%d"),
-                                "n_trials": st.column_config.NumberColumn("Trials", format="%d"),
-                                **{
-                                    col: st.column_config.NumberColumn(col.replace("_", " "), format="%.3f")
-                                    for col in display_cols
-                                    if col.startswith(("cohen_", "fleiss_"))
-                                },
-                            },
-                        )
 
             if filtered_psych_agree.empty:
                 st.info(

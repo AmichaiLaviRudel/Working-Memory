@@ -58,6 +58,7 @@ from Analysis.NPXL_analysis.single_unit_offline_analysis.selectivity import (
 from Analysis.NPXL_analysis.single_unit_offline_analysis.visualization import (
     save_raw_psth_for_active_units,
     plot_unit_heatmap,
+    plot_psth_by_choice,
 )
 from Analysis.NPXL_analysis.single_unit_offline_analysis.category_analysis import (
     compute_category_sensitivity_for_all_units,
@@ -83,7 +84,7 @@ def compute_event_offsets(df: pd.DataFrame, column: str, bin_size: float) -> np.
     return offsets_bins * bin_size
 
 
-def main(parent_dir: str | None = None, save_plots: bool = False) -> None:
+def main(parent_dir: str | None = None, save_plots: bool = True) -> None:
     """
     Main execution function with nested loops for clean, DRY code.
     
@@ -92,8 +93,8 @@ def main(parent_dir: str | None = None, save_plots: bool = False) -> None:
     parent_dir : str, optional
         Path to the parent directory containing the data
     save_plots : bool, optional
-        If True, write PSTH/heatmap HTML under results_dir/plots. Default False speeds
-        batch runs when only tables/metrics are needed.
+        If True, write PSTH/heatmap HTML under results_dir/plots. Default True.
+        Set False for batch runs when only tables/metrics are needed.
     """
     print_config()
     
@@ -169,12 +170,12 @@ def main(parent_dir: str | None = None, save_plots: bool = False) -> None:
             "good_units": ACx_g,
             "data_dir": data_dir_ACx,
             "tone_before": (int(-0.1 * bin_to_sec), 0),
-            "tone_after": (0, int(0.5 * bin_to_sec)),
-            "selectivity_window": (-0.1, 1.0),
-            "category_window": (-0.1, 0.5),
-            "tone_display_window": (-0.5, 2.0),
-            "choice_outcome_display_window": (-0.5, 1.5),
-            "alpha": 0.05,
+            "tone_after": (0, int(0.3 * bin_to_sec)),
+            "selectivity_window": (-0.1, 0.3),
+            "category_window": (-0.1, 0.3),
+            "tone_display_window": (-0.1, 0.3),
+            "choice_outcome_display_window": (-0.1, 0.3),
+            "alpha": 0.005,
         }
     if data_dir_OFC is not None and OFC_all is not None and ofc_event_windows_data is not None:
         _, _, _, ofc_stimuli_outcome_df, _, _ = ofc_event_windows_data
@@ -186,12 +187,12 @@ def main(parent_dir: str | None = None, save_plots: bool = False) -> None:
             "unit_labels": ofc_g_index,
             "good_units": OFC_g,
             "data_dir": data_dir_OFC,
-            "tone_before": (int(-0.5 * bin_to_sec), 0),
-            "tone_after": (0, int(2 * bin_to_sec)),
-            "selectivity_window": (-0.5, 1.5),
-            "category_window": (-0.5, 1.5),
-            "tone_display_window": (-0.5, 2.0),
-            "choice_outcome_display_window": (-0.5, 1.5),
+            "tone_before": (int(-0.1 * bin_to_sec), 0),
+            "tone_after": (0, int(0.3 * bin_to_sec)),
+            "selectivity_window": (-0.1, 0.3),
+            "category_window": (-0.1, 0.3),
+            "tone_display_window": (-0.1, 0.3),
+            "choice_outcome_display_window": (-0.1, 0.3),
             "alpha": 0.05,
         }
 
@@ -337,8 +338,8 @@ def main(parent_dir: str | None = None, save_plots: bool = False) -> None:
                 lick_offsets,
                 bin_size_sec=orig_bin_size_sec,
                 alpha=1.0,
-                before_window=(-0.5, 0.0),
-                after_window=(0.0, 1.5),
+                before_window=(-0.1, 0.0),
+                after_window=(0.0, 0.3),
             )
             alignment_units["choice"] = choice_units
             alignment_pvals["choice"] = choice_pvals
@@ -353,8 +354,8 @@ def main(parent_dir: str | None = None, save_plots: bool = False) -> None:
                 outcome_offsets,
                 bin_size_sec=orig_bin_size_sec,
                 alpha=1.0,
-                before_window=(-0.5, 0.0),
-                after_window=(0.0, 1.5),
+                before_window=(-0.1, 0.0),
+                after_window=(0.0, 0.3),
             )
             alignment_units["outcome"] = outcome_units
             alignment_pvals["outcome"] = outcome_pvals
@@ -457,7 +458,7 @@ def main(parent_dir: str | None = None, save_plots: bool = False) -> None:
                             unit_obj.plot_psth_by_category(
                                 low_boundary=0.983,
                                 high_boundary=1.525,
-                                display_window=(-0.5, 1.0),
+                                display_window=region_config["category_window"],
                                 cache_plot=True
                             )
                             # Store category PSTH path
@@ -492,25 +493,51 @@ def main(parent_dir: str | None = None, save_plots: bool = False) -> None:
                 if len(significant_units) == 0:
                     print(f"  No units with p<{region_config['alpha']} for {align_type}-aligned plots")
                     continue
-                
-                # Save PSTHs for significant units only (p < alpha)
-                save_raw_psth_for_active_units(
-                    align_data,
-                    significant_units,
-                    significant_pvals,
-                    psth_region_name,
-                    results_dir,
-                    display_window=display_window,
-                )
-                
-                # Store PSTH paths for this alignment type
+
                 sorted_idx = np.argsort(significant_pvals)
                 sorted_units = significant_units[sorted_idx]
                 sorted_p = significant_pvals[sorted_idx]
                 psth_dir = os.path.join(results_dir, "plots", "psth", f"{region_key}_{align_type}")
-                for rank, (u, p) in enumerate(zip(sorted_units, sorted_p), start=1):
-                    fname = f"unit_{int(u)}_rank{rank:03d}_p{float(p):.4f}_raw_psth.html"
-                    psth_paths[align_type][int(u)] = os.path.join(psth_dir, fname)
+
+                if align_type == "choice":
+                    # Choice PSTH: Lick vs Withhold (like category PSTH split)
+                    os.makedirs(psth_dir, exist_ok=True)
+                    print(
+                        f"  Plotting PSTH by choice (Lick vs Withhold) for "
+                        f"{len(significant_units)} units with p<{region_config['alpha']}..."
+                    )
+                    for rank, (unit_idx, p_val) in enumerate(zip(sorted_units, sorted_p), start=1):
+                        unit_idx_int = int(unit_idx)
+                        fig_choice_psth = plot_psth_by_choice(
+                            align_data,
+                            unit_idx_int,
+                            display_window=display_window,
+                            region_name=region_name,
+                        )
+                        fname = (
+                            f"unit_{unit_idx_int}_rank{rank:03d}_p{float(p_val):.4f}"
+                            f"_psth_by_choice.html"
+                        )
+                        choice_psth_path = os.path.join(psth_dir, fname)
+                        save_plot_to_html(
+                            fig_choice_psth,
+                            choice_psth_path,
+                            f"{region_name} Unit {unit_idx_int} PSTH by Choice (Lick vs Withhold)",
+                        )
+                        psth_paths["choice"][unit_idx_int] = choice_psth_path
+                else:
+                    # Tone / outcome: raw PSTH (all trials averaged)
+                    save_raw_psth_for_active_units(
+                        align_data,
+                        significant_units,
+                        significant_pvals,
+                        psth_region_name,
+                        results_dir,
+                        display_window=display_window,
+                    )
+                    for rank, (u, p) in enumerate(zip(sorted_units, sorted_p), start=1):
+                        fname = f"unit_{int(u)}_rank{rank:03d}_p{float(p):.4f}_raw_psth.html"
+                        psth_paths[align_type][int(u)] = os.path.join(psth_dir, fname)
                 
                 # Generate heatmaps for significant units (p < alpha for this alignment)
                 print(f"  Generating {align_type}-aligned heatmaps for {len(significant_units)} units with p<{region_config['alpha']}...")

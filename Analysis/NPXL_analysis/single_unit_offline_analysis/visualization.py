@@ -9,6 +9,8 @@ from Analysis.GNG_bpod_analysis.colors import (
     OUTCOME_COLOR_MAP,
     SUBJECT_COLORS,
     COLOR_GRAY,
+    COLOR_GO,
+    COLOR_NOGO,
     COLOR_HIT,
     COLOR_FA,
     COLOR_CR,
@@ -248,6 +250,124 @@ def plot_psth_by_outcome(
         template='plotly_white'
     )
     
+    return fig
+
+
+_LICK_OUTCOMES = frozenset({"Hit", "False Alarm"})
+_WITHHOLD_OUTCOMES = frozenset({"Miss", "CR"})
+_CHOICE_COLORS = {"Lick": COLOR_GO, "Withhold": COLOR_NOGO}
+
+
+def assign_lick_withhold(outcomes: np.ndarray) -> np.ndarray:
+    """Label trials as Lick (Hit/FA) vs Withhold (Miss/CR)."""
+    labels = np.full(len(outcomes), "Withhold", dtype=object)
+    for i, outcome in enumerate(outcomes):
+        if outcome in _LICK_OUTCOMES:
+            labels[i] = "Lick"
+        elif outcome not in _WITHHOLD_OUTCOMES:
+            # Unknown outcome: skip from both groups via neither mask matching both
+            labels[i] = ""
+    return labels
+
+
+def _slice_unit_data_to_display_window(
+    event_windows_matrix: np.ndarray,
+    unit_idx: int,
+    time_axis: np.ndarray,
+    metadata: dict,
+    display_window: tuple[float, float],
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return unit_data [time × trials] and time axis for the display window."""
+    unit_data = event_windows_matrix[unit_idx, :, :]
+    aligned_to = str(metadata.get("aligned_to", "")).lower() if isinstance(metadata, dict) else ""
+    if aligned_to:
+        n_time = event_windows_matrix.shape[1]
+        mid = n_time // 2
+        try:
+            bin_size_sec = float(metadata.get("bin_size", 0))
+        except (TypeError, ValueError):
+            bin_size_sec = 0.0
+        if bin_size_sec <= 0 and len(time_axis) > 1:
+            bin_size_sec = float(time_axis[1] - time_axis[0])
+        elif bin_size_sec <= 0:
+            bin_size_sec = 1.0
+        plot_time_axis = (np.arange(n_time) - mid) * bin_size_sec
+    else:
+        plot_time_axis = time_axis
+
+    time_mask = (plot_time_axis >= display_window[0]) & (plot_time_axis <= display_window[1])
+    if not np.any(time_mask):
+        return np.empty((0, unit_data.shape[1])), plot_time_axis[:0]
+    return unit_data[time_mask, :], plot_time_axis[time_mask]
+
+
+def plot_psth_by_choice(
+    event_windows_data: tuple,
+    unit_idx: int,
+    display_window: tuple[float, float] = (-0.5, 1.0),
+    region_name: str = "Unit",
+) -> go.Figure:
+    """
+    Plot PSTH separated by choice (Lick vs Withhold) for a single unit.
+    """
+    if len(event_windows_data) == 6:
+        event_windows_matrix, time_axis, valid_event_indices, stimuli_outcome_df, metadata, _ = event_windows_data
+    else:
+        event_windows_matrix, time_axis, valid_event_indices, stimuli_outcome_df, metadata = event_windows_data
+
+    if "outcome" not in stimuli_outcome_df.columns:
+        print("No outcome information available for choice PSTH")
+        return go.Figure()
+
+    unit_data_windowed, time_axis_windowed = _slice_unit_data_to_display_window(
+        event_windows_matrix,
+        unit_idx,
+        time_axis,
+        metadata,
+        display_window,
+    )
+    if unit_data_windowed.size == 0:
+        return go.Figure()
+
+    choice_labels = assign_lick_withhold(stimuli_outcome_df["outcome"].values)
+    fig = go.Figure()
+
+    for choice in ("Lick", "Withhold"):
+        choice_mask = choice_labels == choice
+        choice_trials = unit_data_windowed[:, choice_mask]
+        if choice_trials.shape[1] == 0:
+            continue
+
+        psth_mean, psth_sem = _nanmean_sem(choice_trials)
+        color = _CHOICE_COLORS[choice]
+
+        fig.add_trace(go.Scatter(
+            x=time_axis_windowed,
+            y=psth_mean,
+            mode="lines",
+            name=f"{choice} (n={choice_trials.shape[1]})",
+            line=dict(color=color, width=2),
+        ))
+        fig.add_trace(go.Scatter(
+            x=np.concatenate([time_axis_windowed, time_axis_windowed[::-1]]),
+            y=np.concatenate([psth_mean + psth_sem, (psth_mean - psth_sem)[::-1]]),
+            fill="toself",
+            fillcolor=_hex_to_rgba(color, alpha=0.2),
+            line=dict(color="rgba(255,255,255,0)"),
+            showlegend=False,
+            hoverinfo="skip",
+        ))
+
+    fig.add_vline(x=0, line_dash="dash", line_color=COLOR_GRAY, line_width=1)
+    _add_time_zero_annotation(fig, metadata)
+
+    fig.update_layout(
+        title=f"{region_name} Unit {unit_idx} - PSTH by Choice (Lick vs Withhold)",
+        xaxis_title="Time (s)",
+        yaxis_title="Firing Rate (Hz)",
+        hovermode="x unified",
+        template="plotly_white",
+    )
     return fig
 
 
@@ -637,7 +757,7 @@ def plot_unit_heatmap(
         x=filtered_time_axis,
         y=np.arange(ordered_data.shape[0]),
         colorbar=dict(title="Firing Rate (Hz)", len=0.8),
-        colorscale='Viridis'
+        colorscale='Greys'
     ))
     
     # Add colored rectangles for trial type indicators

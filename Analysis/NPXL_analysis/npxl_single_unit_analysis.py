@@ -447,6 +447,11 @@ def _category_boundary_khz() -> tuple[float, float]:
 _CAT_FREQ_STORAGE_SCALE = 10.0
 _FRA_AXIS_KHZ_THRESHOLD = 5.0
 
+# Tuning heatmap typography (larger than Plotly defaults for panel/export readability).
+_HEATMAP_TITLE_FONT_SIZE = 26
+_HEATMAP_AXIS_TITLE_FONT_SIZE = 22
+_HEATMAP_TICK_FONT_SIZE = 18
+
 
 def _freq_display_scale(x_hi: float) -> float:
     """Label multiplier: 10 for categorization storage units, 1 for FRA/broadband axes."""
@@ -722,8 +727,12 @@ def plot_tuning_curves_heatmap(
         y=[f"Unit {uid}" for uid in unit_indices],
         colorscale='Viridis',
         colorbar=dict(
-            title="Norm. Response" if normalize_per_unit else "Firing Rate (sp/s)",
+            title=dict(
+                text="Norm. Response" if normalize_per_unit else "Firing Rate (sp/s)",
+                font=dict(size=_HEATMAP_AXIS_TITLE_FONT_SIZE),
+            ),
             len=0.82, y=0.59, yanchor='middle',
+            tickfont=dict(size=_HEATMAP_TICK_FONT_SIZE),
         ),
         hovertemplate=(
             "Unit: %{y}<br>Frequency: %{customdata[1]:.1f} kHz<br>"
@@ -802,16 +811,32 @@ def plot_tuning_curves_heatmap(
         )
     )
     heatmap_height = min(700, max(300, 300 + len(tuning_data) * 3))
+    freq_axis_title = "Frequency (kHz)" + (" [log scale]" if use_log_scale else "")
     fig.update_layout(
-        title="Tuning Curves Heatmap (Sorted by Best Frequency - Lowest First)",
-        xaxis2=dict(title="Frequency (kHz)" + (" [log scale]" if use_log_scale else ""), **x_axis_cfg),
+        title=dict(
+            text="Tuning Curves Heatmap (Sorted by Best Frequency - Lowest First)",
+            font=dict(size=_HEATMAP_TITLE_FONT_SIZE),
+        ),
+        xaxis2=dict(title=freq_axis_title, **x_axis_cfg),
         xaxis=dict(**x_axis_cfg),
         yaxis=dict(showgrid=False, autorange='reversed', showticklabels=False),
-        yaxis2=dict(showgrid=False, showticklabels=False, title='Density'),
+        yaxis2=dict(
+            showgrid=False,
+            showticklabels=False,
+            title=dict(text="Density", font=dict(size=_HEATMAP_AXIS_TITLE_FONT_SIZE)),
+        ),
         plot_bgcolor='white',
         paper_bgcolor='white',
-        margin=dict(l=60, r=40, t=60, b=60),
+        margin=dict(l=60, r=40, t=72, b=72),
         height=heatmap_height + 120,
+    )
+    fig.update_xaxes(
+        title_font=dict(size=_HEATMAP_AXIS_TITLE_FONT_SIZE),
+        tickfont=dict(size=_HEATMAP_TICK_FONT_SIZE),
+    )
+    fig.update_yaxes(
+        title_font=dict(size=_HEATMAP_AXIS_TITLE_FONT_SIZE),
+        tickfont=dict(size=_HEATMAP_TICK_FONT_SIZE),
     )
 
     return fig

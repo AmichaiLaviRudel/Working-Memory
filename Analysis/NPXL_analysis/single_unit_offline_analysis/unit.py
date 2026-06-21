@@ -19,6 +19,7 @@ from Analysis.NPXL_analysis.single_unit_offline_analysis.category_analysis impor
 from Analysis.NPXL_analysis.single_unit_offline_analysis.visualization import (
     plot_psth_by_stimulus,
     plot_psth_by_outcome,
+    plot_psth_by_choice,
     plot_raw_psth,
     plot_unit_heatmap,
     get_trial_statistics,
@@ -490,6 +491,33 @@ class Unit:
                 region_lower = self.region_name.lower()
                 subfolder = f"psth/{region_lower}_category"
                 self.save_plot('psth_by_category', fig, subfolder=subfolder, cache_in_memory=True)
+        return fig
+
+    def plot_psth_by_choice(
+        self,
+        display_window: Tuple[float, float] = (-0.5, 1.0),
+        cache_plot: bool = True,
+        *,
+        event_windows_data: Optional[tuple] = None,
+    ):
+        """
+        Plot PSTH separated by choice (Lick vs Withhold) for this unit.
+
+        Uses choice-aligned data when available (``_aligned_action_data``).
+        """
+        data = event_windows_data or self._aligned_action_data or self._event_windows_data
+        fig = plot_psth_by_choice(
+            data,
+            self.unit_idx,
+            display_window=display_window,
+            region_name=self.region_name,
+        )
+        if cache_plot:
+            self._plot_cache["psth_by_choice"] = fig
+            if self._plots_dir is not None:
+                region_lower = self.region_name.lower()
+                subfolder = f"psth/{region_lower}_choice"
+                self.save_plot("psth_by_choice", fig, subfolder=subfolder, cache_in_memory=True)
         return fig
     
     def plot_heatmap(
