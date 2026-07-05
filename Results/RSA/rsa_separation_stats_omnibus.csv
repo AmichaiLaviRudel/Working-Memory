@@ -1,0 +1,5 @@
+metric,area,test,groups,statistic,p,sig
+categoricality_index,ACx,Kruskal-Wallis,"Novice, 1b Expert, 2b Expert",0.5370500438981611,0.7645062931329831,
+categoricality_index,OFC,Kruskal-Wallis,"Novice, 1b Expert, 2b Expert",9.028571428571425,0.01095142478003731,*
+separation_index,ACx,Kruskal-Wallis,"Novice, 1b Expert, 2b Expert",0.5370500438981611,0.7645062931329831,
+separation_index,OFC,Kruskal-Wallis,"Novice, 1b Expert, 2b Expert",9.028571428571425,0.01095142478003731,*

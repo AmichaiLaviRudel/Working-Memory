@@ -1,14 +1,16 @@
 {
-  "timestamp_utc": "2026-05-25T08:17:08Z",
+  "timestamp_utc": "2026-07-05T11:15:34Z",
   "results_dir": "\\\\ems.elsc.huji.ac.il\\mizrahi-lab\\Shared\\Amichai\\Code\\DB\\Results\\RSA",
   "low_boundary_khz": 0.983,
   "high_boundary_khz": 1.525,
-  "decode_window_start_s": 0.0,
-  "decode_window_stop_s": 0.25,
+  "decode_window_start_s": -0.05,
+  "decode_window_stop_s": 0.3,
   "aggregation": "Mean",
-  "use_histology": true,
+  "use_histology": false,
   "min_trials_per_stimulus": 3,
+  "use_log_stimulus_bins": true,
+  "rsa_bins_per_class": 4,
   "n_sessions_selected": 27,
-  "n_per_session_metrics": 13,
-  "n_failures": 41
+  "n_per_session_metrics": 35,
+  "n_failures": 19
 }

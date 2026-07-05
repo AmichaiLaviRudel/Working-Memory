@@ -64,11 +64,24 @@ RSA_COHORT_LABELS: dict[str, str] = {
     "1b Expert": "1b Expert — 1b Categorization",
     "2b Expert": "2b Expert — 2b Categorization",
 }
-# Default decode window (seconds, relative to tone onset). Mirrors the agreement decoder.
-DEFAULT_DECODE_WINDOW: tuple[float, float] = (0.0, 0.25)
+# Default decode window (seconds, relative to tone onset).
+DEFAULT_DECODE_WINDOW: tuple[float, float] = (-0.05, 0.3)
 DEFAULT_MIN_TRIALS_PER_STIM = 3
 # Minimum stimuli required to compute a meaningful RSA matrix.
 MIN_STIMULI_FOR_RSA = 2
+# Per-cohort stimulus caps (kHz). «21.5» = deci-kHz psychometric notation → 2.15 kHz.
+DECI_KHZ_21_5_MAX_STIM_KHZ = 2.15
+# Log-spaced bins per category band (matches ``_log_bin_stimulus_per_stage`` in agreement decoder).
+RSA_BINS_PER_CLASS = 4
+
+
+def _stage_max_stim_khz(stage: str, high_boundary: float) -> float | None:
+    """Return the upper stimulus frequency (kHz) for RSA, or None for no cap."""
+    if stage == "1b Expert":
+        return float(high_boundary)
+    if stage in ("Novice", "2b Expert"):
+        return DECI_KHZ_21_5_MAX_STIM_KHZ
+    return None
 
 # Persisted outputs (under Code/DB/Results/RSA).
 _RSA_MODULE_DIR = Path(__file__).resolve().parent
@@ -257,6 +270,108 @@ def _stimulus_per_trial(trials_df: pd.DataFrame) -> np.ndarray:
     return khz
 
 
+def build_log_stimulus_bin_grid(
+    stim_min: float,
+    stim_max: float,
+    low_boundary: float,
+    high_boundary: float,
+    *,
+    bins_per_class: int = RSA_BINS_PER_CLASS,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Geometric bin edges and centres between category boundaries (≤4 bins per band).
+
+    Mirrors ``_log_bin_stimulus_per_stage`` in ``npxl_agreement_decoder.py`` so RSA
+    pools similar kHz tones into a shared ladder across sessions.
+    """
+    if not np.isfinite(stim_min) or stim_min <= 0 or not np.isfinite(stim_max) or stim_max <= stim_min:
+        return np.array([]), np.array([])
+
+    class_edges = sorted(
+        {float(stim_min), float(stim_max)}
+        | {float(b) for b in (low_boundary, high_boundary) if stim_min < b < stim_max}
+    )
+    if len(class_edges) < 2:
+        return np.array([]), np.array([])
+
+    edge_set: set[float] = set()
+    for left, right in zip(class_edges[:-1], class_edges[1:]):
+        for edge in np.geomspace(left, right, bins_per_class + 1):
+            edge_set.add(float(edge))
+    edges = np.array(sorted(edge_set))
+    if edges.size < 2:
+        return np.array([]), np.array([])
+
+    centers = np.sqrt(edges[:-1] * edges[1:])
+    return edges, centers
+
+
+def assign_stimuli_to_log_bins(
+    stimuli_khz: np.ndarray,
+    bin_edges: np.ndarray,
+    bin_centers: np.ndarray,
+) -> np.ndarray:
+    """Map raw trial kHz values to log-bin centres (``side='right'`` at class edges)."""
+    if bin_edges.size < 2 or bin_centers.size == 0:
+        return stimuli_khz
+    idx = np.clip(np.searchsorted(bin_edges, stimuli_khz, side="right") - 1, 0, len(bin_centers) - 1)
+    return bin_centers[idx]
+
+
+def _session_stimuli_khz(
+    session_dir: str,
+    *,
+    use_histology: bool,
+    max_stim_khz: float | None,
+) -> np.ndarray:
+    """Lightweight scan of one session's tone frequencies (ACx trials table)."""
+    loaded, _errors = _load_session_areas(session_dir, use_histology=use_histology)
+    if "ACx" not in loaded:
+        return np.array([], dtype=float)
+    stimuli = _stimulus_per_trial(loaded["ACx"]["trials_df"])
+    stimuli = stimuli[np.isfinite(stimuli) & (stimuli > 0)]
+    if max_stim_khz is not None:
+        stimuli = stimuli[stimuli <= float(max_stim_khz)]
+    return stimuli
+
+
+def _scan_selection_stimuli_khz(
+    selected_sessions_df: pd.DataFrame,
+    *,
+    use_histology: bool,
+    low_boundary: float,
+    high_boundary: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Collect capped trial stimuli and build a shared log-bin grid for the run."""
+    pooled: list[np.ndarray] = []
+    for _, row in selected_sessions_df.iterrows():
+        stage = rsa_cohort_stage(row.get("Session Type"))
+        if stage is None:
+            continue
+        session_dir = str(row.get("current_dir", "")).strip()
+        if not session_dir or not os.path.isdir(session_dir):
+            continue
+        cap = _stage_max_stim_khz(stage, high_boundary)
+        try:
+            pooled.append(
+                _session_stimuli_khz(session_dir, use_histology=use_histology, max_stim_khz=cap)
+            )
+        except (FileNotFoundError, ValueError, OSError):
+            continue
+
+    if not pooled:
+        return np.array([]), np.array([])
+    all_stim = np.concatenate([p for p in pooled if p.size > 0])
+    if all_stim.size == 0:
+        return np.array([]), np.array([])
+    return build_log_stimulus_bin_grid(
+        float(all_stim.min()),
+        float(all_stim.max()),
+        low_boundary,
+        high_boundary,
+        bins_per_class=RSA_BINS_PER_CLASS,
+    )
+
+
 # --- RSA core -----------------------------------------------------------------
 
 def compute_session_rsa(
@@ -265,8 +380,11 @@ def compute_session_rsa(
     *,
     decode_window: tuple[float, float] = DEFAULT_DECODE_WINDOW,
     aggregation: str = "Mean",
-    use_histology: bool = True,
+    use_histology: bool = False,
     min_trials_per_stim: int = DEFAULT_MIN_TRIALS_PER_STIM,
+    max_stim_khz: float | None = None,
+    log_bin_edges: np.ndarray | None = None,
+    log_bin_centers: np.ndarray | None = None,
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
     """Compute one ``[stimuli x stimuli]`` RSA matrix for a (session, area).
 
@@ -300,6 +418,21 @@ def compute_session_rsa(
     features = features[valid]
     stimuli_khz = stimuli_khz[valid]
 
+    if max_stim_khz is not None:
+        cap_mask = stimuli_khz <= float(max_stim_khz)
+        if not cap_mask.any():
+            raise ValueError(f"No trials with stimulus_khz <= {max_stim_khz}.")
+        features = features[cap_mask]
+        stimuli_khz = stimuli_khz[cap_mask]
+
+    if (
+        log_bin_edges is not None
+        and log_bin_centers is not None
+        and log_bin_edges.size >= 2
+        and log_bin_centers.size > 0
+    ):
+        stimuli_khz = assign_stimuli_to_log_bins(stimuli_khz, log_bin_edges, log_bin_centers)
+
     unique_khz, counts = np.unique(stimuli_khz, return_counts=True)
     keep_mask = counts >= int(min_trials_per_stim)
     unique_khz = unique_khz[keep_mask]
@@ -327,6 +460,10 @@ def compute_session_rsa(
         "n_trials": int(features.shape[0]),
         "n_stimuli": int(unique_khz.size),
         "trials_per_stim": dict(zip(unique_khz.tolist(), counts.tolist())),
+        "max_stim_khz": float(max_stim_khz) if max_stim_khz is not None else None,
+        "log_binned": bool(
+            log_bin_centers is not None and log_bin_centers.size > 0
+        ),
     }
     return rsa_df, info
 
@@ -365,7 +502,35 @@ def aggregate_rsa_across_sessions(
     )
 
 
-# --- Categoricality metric (Panel G) ------------------------------------------
+def subtract_rsa_matrices(
+    minuend: pd.DataFrame,
+    subtrahend: pd.DataFrame,
+) -> pd.DataFrame:
+    """Element-wise RSA difference (minuend − subtrahend) on the union kHz grid."""
+    if minuend.empty or subtrahend.empty:
+        return pd.DataFrame()
+
+    union = sorted({float(k) for k in minuend.index} | {float(k) for k in subtrahend.index})
+    if not union:
+        return pd.DataFrame()
+
+    a = minuend.reindex(index=union, columns=union).to_numpy(dtype=float)
+    b = subtrahend.reindex(index=union, columns=union).to_numpy(dtype=float)
+    with np.errstate(invalid="ignore"):
+        diff = a - b
+    return pd.DataFrame(diff, index=union, columns=union)
+
+
+# --- Categoricality / category-separation metrics (Panels G & H) --------------
+
+PAIR_TYPE_LABELS: dict[str, str] = {
+    "within_go": "Go-Go",
+    "within_nogo": "NoGo-NoGo",
+    "across": "Go-NoGo",
+}
+# Session-level metrics tested across learning stages (Panel H stats).
+SEPARATION_TEST_METRICS: tuple[str, ...] = ("categoricality_index", "separation_index")
+
 
 def _stimulus_category(khz: float, low_boundary: float, high_boundary: float) -> str:
     """Map kHz to Go (outside boundaries) / No-Go (between boundaries).
@@ -380,74 +545,49 @@ def _stimulus_category(khz: float, low_boundary: float, high_boundary: float) ->
     return "NoGo"
 
 
-def compute_categoricality_index(
-    rsa_df: pd.DataFrame,
-    *,
-    low_boundary: float,
-    high_boundary: float,
-) -> dict[str, float]:
-    """Compute within / across category similarities and a categoricality index.
+def _pair_type_from_categories(cat_i: str, cat_j: str) -> str:
+    if cat_i == "Go" and cat_j == "Go":
+        return "within_go"
+    if cat_i == "NoGo" and cat_j == "NoGo":
+        return "within_nogo"
+    return "across"
 
-    Index = mean(within_go, within_nogo) - across.
 
-    Returns NaN for any term lacking off-diagonal pairs.
-    """
-    if rsa_df.empty or rsa_df.shape[0] < 2:
-        return {
-            "within_go": np.nan,
-            "within_nogo": np.nan,
-            "within_avg": np.nan,
-            "across": np.nan,
-            "categoricality_index": np.nan,
-            "n_stimuli": int(rsa_df.shape[0]),
-        }
+def _nanmean(arr: np.ndarray) -> float:
+    if arr.size == 0:
+        return float("nan")
+    with np.errstate(invalid="ignore"):
+        return float(np.nanmean(arr))
 
-    stim = np.asarray(rsa_df.index, dtype=float)
-    cats = np.asarray(
-        [_stimulus_category(k, low_boundary, high_boundary) for k in stim]
-    )
-    values = rsa_df.to_numpy(dtype=float)
-    # Off-diagonal upper-triangle mask to avoid double-counting i,j vs j,i.
-    n = values.shape[0]
-    iu, ju = np.triu_indices(n, k=1)
-    pair_vals = values[iu, ju]
-    pair_cat_i = cats[iu]
-    pair_cat_j = cats[ju]
 
-    within_go_mask = (pair_cat_i == "Go") & (pair_cat_j == "Go")
-    within_nogo_mask = (pair_cat_i == "NoGo") & (pair_cat_j == "NoGo")
-    across_mask = pair_cat_i != pair_cat_j
+def _nanvar(arr: np.ndarray) -> float:
+    if arr.size < 2:
+        return float("nan")
+    with np.errstate(invalid="ignore"):
+        return float(np.nanvar(arr, ddof=1))
 
-    def _nanmean(arr: np.ndarray) -> float:
-        if arr.size == 0:
-            return float("nan")
-        with np.errstate(invalid="ignore"):
-            return float(np.nanmean(arr))
 
-    within_go = _nanmean(pair_vals[within_go_mask])
-    within_nogo = _nanmean(pair_vals[within_nogo_mask])
-    within_avg = _nanmean(
-        np.concatenate([pair_vals[within_go_mask], pair_vals[within_nogo_mask]])
-    )
-    across = _nanmean(pair_vals[across_mask])
-    cat_idx = within_avg - across if np.isfinite(within_avg) and np.isfinite(across) else np.nan
-
+def _empty_separation_summary(n_stimuli: int = 0) -> dict[str, float | int]:
     return {
-        "within_go": within_go,
-        "within_nogo": within_nogo,
-        "within_avg": within_avg,
-        "across": across,
-        "categoricality_index": cat_idx,
-        "n_stimuli": int(n),
+        "within_go": np.nan,
+        "within_nogo": np.nan,
+        "within_avg": np.nan,
+        "across": np.nan,
+        "categoricality_index": np.nan,
+        "separation_index": np.nan,
+        "d_prime_pairs": np.nan,
+        "var_within_go": np.nan,
+        "var_within_nogo": np.nan,
+        "var_across": np.nan,
+        "n_pairs_within_go": 0,
+        "n_pairs_within_nogo": 0,
+        "n_pairs_across": 0,
+        "n_stimuli": int(n_stimuli),
     }
 
 
-# --- MDS embedding ------------------------------------------------------------
-
 # MDS converts similarity r in [-1, 1] -> dissimilarity in [0, 1]:
 #   d(i, j) = (1 - r(i, j)) / 2
-# This keeps anti-correlated stimuli as far apart as identical stimuli are close,
-# and bounds distances in [0, 1] so optimization is well-conditioned.
 def _rsa_to_dissimilarity(rsa_df: pd.DataFrame) -> pd.DataFrame:
     """Convert correlation similarity to a [0, 1] dissimilarity matrix."""
     values = (1.0 - rsa_df.to_numpy(dtype=float)) / 2.0
@@ -459,6 +599,160 @@ def _rsa_to_dissimilarity(rsa_df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(values, index=rsa_df.index, columns=rsa_df.columns)
 
 
+def extract_category_pair_values(
+    rsa_df: pd.DataFrame,
+    *,
+    low_boundary: float,
+    high_boundary: float,
+) -> dict[str, Any]:
+    """Extract off-diagonal stimulus pairs and session-level separation summaries.
+
+    Returns
+    -------
+    dict with keys ``pair_values`` (DataFrame) and ``summary`` (metric dict).
+    """
+    empty_pairs = pd.DataFrame(
+        columns=["stim_i", "stim_j", "cat_i", "cat_j", "pair_type", "similarity", "dissimilarity"]
+    )
+    if rsa_df.empty or rsa_df.shape[0] < 2:
+        return {"pair_values": empty_pairs, "summary": _empty_separation_summary(rsa_df.shape[0])}
+
+    stim = np.asarray(rsa_df.index, dtype=float)
+    cats = np.asarray([_stimulus_category(k, low_boundary, high_boundary) for k in stim])
+    values = rsa_df.to_numpy(dtype=float)
+    n = values.shape[0]
+    iu, ju = np.triu_indices(n, k=1)
+    pair_sim = values[iu, ju]
+    pair_cat_i = cats[iu]
+    pair_cat_j = cats[ju]
+    pair_types = np.array(
+        [_pair_type_from_categories(ci, cj) for ci, cj in zip(pair_cat_i, pair_cat_j)],
+        dtype=object,
+    )
+    pair_dissim = (1.0 - pair_sim) / 2.0
+
+    pair_values = pd.DataFrame({
+        "stim_i": stim[iu],
+        "stim_j": stim[ju],
+        "cat_i": pair_cat_i,
+        "cat_j": pair_cat_j,
+        "pair_type": pair_types,
+        "similarity": pair_sim,
+        "dissimilarity": pair_dissim,
+    })
+
+    within_go_mask = pair_types == "within_go"
+    within_nogo_mask = pair_types == "within_nogo"
+    across_mask = pair_types == "across"
+
+    within_go_sim = pair_sim[within_go_mask]
+    within_nogo_sim = pair_sim[within_nogo_mask]
+    across_sim = pair_sim[across_mask]
+    within_go_dissim = pair_dissim[within_go_mask]
+    within_nogo_dissim = pair_dissim[within_nogo_mask]
+    across_dissim = pair_dissim[across_mask]
+
+    within_go = _nanmean(within_go_sim)
+    within_nogo = _nanmean(within_nogo_sim)
+    within_avg = _nanmean(np.concatenate([within_go_sim, within_nogo_sim]))
+    across = _nanmean(across_sim)
+    cat_idx = within_avg - across if np.isfinite(within_avg) and np.isfinite(across) else np.nan
+
+    within_dissim_all = np.concatenate([within_go_dissim, within_nogo_dissim])
+    within_dissim_mean = _nanmean(within_dissim_all)
+    across_dissim_mean = _nanmean(across_dissim)
+    denom = across_dissim_mean + within_dissim_mean
+    separation_index = (
+        (across_dissim_mean - within_dissim_mean) / denom
+        if np.isfinite(denom) and denom > 0
+        else np.nan
+    )
+
+    # Cohen's d on pair-level dissimilarities (within vs across).
+    n_w = int(within_dissim_all.size)
+    n_a = int(across_dissim.size)
+    d_prime_pairs = np.nan
+    if n_w >= 2 and n_a >= 2:
+        var_w = _nanvar(within_dissim_all)
+        var_a = _nanvar(across_dissim)
+        if np.isfinite(var_w) and np.isfinite(var_a):
+            pooled_var = ((n_w - 1) * var_w + (n_a - 1) * var_a) / (n_w + n_a - 2)
+            if pooled_var > 0:
+                d_prime_pairs = float(
+                    (across_dissim_mean - within_dissim_mean) / np.sqrt(pooled_var)
+                )
+
+    summary = {
+        "within_go": within_go,
+        "within_nogo": within_nogo,
+        "within_avg": within_avg,
+        "across": across,
+        "categoricality_index": cat_idx,
+        "separation_index": separation_index,
+        "d_prime_pairs": d_prime_pairs,
+        "var_within_go": _nanvar(within_go_sim),
+        "var_within_nogo": _nanvar(within_nogo_sim),
+        "var_across": _nanvar(across_sim),
+        "n_pairs_within_go": int(within_go_mask.sum()),
+        "n_pairs_within_nogo": int(within_nogo_mask.sum()),
+        "n_pairs_across": int(across_mask.sum()),
+        "n_stimuli": int(n),
+    }
+    return {"pair_values": pair_values, "summary": summary}
+
+
+def compute_categoricality_index(
+    rsa_df: pd.DataFrame,
+    *,
+    low_boundary: float,
+    high_boundary: float,
+) -> dict[str, float | int]:
+    """Compute within / across category similarities and separation indices.
+
+    Backward-compatible wrapper around :func:`extract_category_pair_values`.
+    """
+    return extract_category_pair_values(
+        rsa_df, low_boundary=low_boundary, high_boundary=high_boundary
+    )["summary"]
+
+
+# --- MDS embedding ------------------------------------------------------------
+
+# This keeps anti-correlated stimuli as far apart as identical stimuli are close,
+# and bounds distances in [0, 1] so optimization is well-conditioned.
+def _largest_finite_stimulus_subset(dissim: pd.DataFrame) -> list[float]:
+    """Return the largest stimulus set with all pairwise dissimilarities observed.
+
+    Stage-mean RSA is built on the union of per-session tone ladders, so many
+    off-diagonal cells are NaN (no session contained both frequencies). MDS needs
+    a complete matrix; this picks the largest fully observed submatrix via a
+    greedy max-clique search on the finite-pair graph.
+    """
+    if dissim.empty:
+        return []
+
+    labels = [float(x) for x in dissim.index]
+    n = len(labels)
+    finite = np.isfinite(dissim.to_numpy(dtype=float))
+    np.fill_diagonal(finite, True)
+
+    # Seed order by node degree so the greedy expansion finds a large clique.
+    order = np.argsort(-finite.sum(axis=1))
+    best_idx: list[int] = []
+    for seed in order:
+        selected = [int(seed)]
+        for j in order:
+            j = int(j)
+            if j in selected:
+                continue
+            if all(finite[i, j] for i in selected):
+                selected.append(j)
+        if len(selected) > len(best_idx):
+            best_idx = selected
+
+    return [labels[i] for i in best_idx]
+
+
 def compute_mds_from_rsa(
     rsa_df: pd.DataFrame,
     *,
@@ -466,22 +760,38 @@ def compute_mds_from_rsa(
     random_state: int = 42,
     n_init: int = 8,
     max_iter: int = 500,
-) -> tuple[pd.DataFrame, float]:
+) -> tuple[pd.DataFrame, float, dict[str, int]]:
     """Run metric MDS on the dissimilarity matrix derived from ``rsa_df``.
 
-    Drops stimuli with any NaN dissimilarity (otherwise sklearn raises).
-    Returns the 2D embedding indexed by kHz plus the final stress value.
+    When the input matrix has NaNs (typical for stage means over sessions with
+    different tone ladders), embeds the largest fully observed stimulus subset.
+
+    Returns the 2D embedding indexed by kHz, stress, and embedding metadata.
     """
+    empty_meta = {"n_stimuli_input": int(rsa_df.shape[0]), "n_stimuli_embedded": 0}
     if rsa_df.empty or rsa_df.shape[0] < 2:
-        return pd.DataFrame(columns=[f"mds_{i + 1}" for i in range(n_components)]), float("nan")
+        return (
+            pd.DataFrame(columns=[f"mds_{i + 1}" for i in range(n_components)]),
+            float("nan"),
+            empty_meta,
+        )
 
     dissim = _rsa_to_dissimilarity(rsa_df)
-    # Drop any stimulus that has a NaN pair (e.g. cell only seen in a subset of sessions).
-    finite_mask = np.isfinite(dissim.to_numpy()).all(axis=1)
-    kept_stim = dissim.index[finite_mask]
-    if len(kept_stim) < 2:
-        return pd.DataFrame(columns=[f"mds_{i + 1}" for i in range(n_components)]), float("nan")
-    dissim = dissim.loc[kept_stim, kept_stim]
+    kept_labels = _largest_finite_stimulus_subset(dissim)
+    meta = {
+        "n_stimuli_input": int(rsa_df.shape[0]),
+        "n_stimuli_embedded": int(len(kept_labels)),
+    }
+    if len(kept_labels) < 2:
+        return (
+            pd.DataFrame(columns=[f"mds_{i + 1}" for i in range(n_components)]),
+            float("nan"),
+            meta,
+        )
+
+    label_to_pos = {float(label): pos for pos, label in enumerate(dissim.index)}
+    idx = [label_to_pos[float(k)] for k in kept_labels]
+    sub_dissim = dissim.to_numpy(dtype=float)[np.ix_(idx, idx)]
 
     mds = MDS(
         n_components=n_components,
@@ -491,10 +801,10 @@ def compute_mds_from_rsa(
         max_iter=max_iter,
         normalized_stress="auto",
     )
-    coords = mds.fit_transform(dissim.to_numpy(dtype=float))
+    coords = mds.fit_transform(sub_dissim)
     coord_cols = [f"mds_{i + 1}" for i in range(n_components)]
-    coords_df = pd.DataFrame(coords, index=kept_stim, columns=coord_cols)
-    return coords_df, float(mds.stress_)
+    coords_df = pd.DataFrame(coords, index=kept_labels, columns=coord_cols)
+    return coords_df, float(mds.stress_), meta
 
 
 # --- Plot helpers -------------------------------------------------------------
@@ -548,6 +858,183 @@ def plot_rsa_heatmap(
         yaxis=dict(title="Stimulus (kHz)", type="log", autorange="reversed"),
     )
     return fig
+
+
+def plot_rsa_difference_heatmap(
+    diff_df: pd.DataFrame,
+    *,
+    title: str,
+    low_boundary: float,
+    high_boundary: float,
+    height: int = 520,
+) -> go.Figure:
+    """Diverging heatmap of an RSA difference matrix (e.g. 2b Expert − Novice)."""
+    if diff_df.empty:
+        fig = go.Figure()
+        fig.update_layout(title=f"{title} — no data", height=height)
+        return fig
+
+    stim = [float(k) for k in diff_df.index]
+    z = diff_df.to_numpy(dtype=float)
+    z_abs = np.nanmax(np.abs(z)) if np.isfinite(z).any() else 1.0
+    z_lim = float(max(z_abs, 0.05))
+
+    fig = go.Figure(
+        data=go.Heatmap(
+            z=z,
+            x=stim,
+            y=stim,
+            zmin=-z_lim,
+            zmax=z_lim,
+            colorscale="RdBu_r",
+            reversescale=False,
+            zmid=0,
+            colorbar=dict(title="Δr"),
+            hovertemplate=(
+                "stim_x=%{x:.3f} kHz<br>stim_y=%{y:.3f} kHz<br>Δr=%{z:.2f}<extra></extra>"
+            ),
+        )
+    )
+    for boundary, color in ((low_boundary, COLOR_LOW_BD), (high_boundary, COLOR_HIGH_BD)):
+        fig.add_vline(x=boundary, line=dict(color=color, dash="dash", width=1))
+        fig.add_hline(y=boundary, line=dict(color=color, dash="dash", width=1))
+    fig.update_layout(
+        title=title,
+        height=height,
+        xaxis=dict(title="Stimulus (kHz)", type="log", scaleanchor="y", constrain="domain"),
+        yaxis=dict(title="Stimulus (kHz)", type="log", autorange="reversed"),
+    )
+    return fig
+
+
+def _per_session_rsa_lookup(
+    per_session_rsa: list[dict[str, Any]],
+) -> dict[tuple[str, str], dict[str, Any]]:
+    """Map (session label, area) -> per-session RSA record."""
+    return {(rec["session"], rec["area"]): rec for rec in per_session_rsa}
+
+
+def render_per_session_rsa_navigator(
+    per_session_rsa: list[dict[str, Any]],
+    summary_df: pd.DataFrame,
+    *,
+    low_boundary_khz: float,
+    high_boundary_khz: float,
+) -> None:
+    """Prev/next and dropdown navigation over individual session RSA heatmaps."""
+    if not per_session_rsa:
+        return
+
+    st.subheader("Single-session RSA navigator")
+    st.caption("Browse per-session RSA matrices from the current run (ACx and OFC side by side).")
+
+    stages_present = sorted({rec["learning_stage"] for rec in per_session_rsa})
+    stage_options = ["All stages"] + [s for s in STAGE_ORDER if s in stages_present]
+    if len(stage_options) == 1:
+        stage_options.extend(stages_present)
+
+    filt_col1, filt_col2 = st.columns(2)
+    with filt_col1:
+        stage_filter = st.selectbox("Learning stage", stage_options, key="rsa_nav_stage")
+    with filt_col2:
+        area_view = st.selectbox("Areas shown", ["ACx and OFC", "ACx only", "OFC only"], key="rsa_nav_area")
+
+    session_labels: list[str] = []
+    seen: set[str] = set()
+    for rec in per_session_rsa:
+        if stage_filter != "All stages" and rec["learning_stage"] != stage_filter:
+            continue
+        label = rec["session"]
+        if label not in seen:
+            seen.add(label)
+            session_labels.append(label)
+    session_labels.sort()
+
+    if not session_labels:
+        st.info("No sessions match the current filters.")
+        return
+
+    idx_key = "rsa_single_session_idx"
+    if idx_key not in st.session_state:
+        st.session_state[idx_key] = 0
+    st.session_state[idx_key] = int(np.clip(st.session_state[idx_key], 0, len(session_labels) - 1))
+
+    nav_prev, nav_select, nav_next = st.columns([1, 8, 1])
+    with nav_prev:
+        if st.button("◀ Prev", key="rsa_nav_prev", disabled=st.session_state[idx_key] <= 0):
+            st.session_state[idx_key] -= 1
+            st.rerun()
+    with nav_next:
+        if st.button(
+            "Next ▶",
+            key="rsa_nav_next",
+            disabled=st.session_state[idx_key] >= len(session_labels) - 1,
+        ):
+            st.session_state[idx_key] += 1
+            st.rerun()
+    with nav_select:
+        selected_session = st.selectbox(
+            "Session",
+            session_labels,
+            index=st.session_state[idx_key],
+            key="rsa_nav_session_select",
+        )
+        st.session_state[idx_key] = session_labels.index(selected_session)
+
+    lookup = _per_session_rsa_lookup(per_session_rsa)
+    rec0 = next(iter(per_session_rsa))
+    learning_stage = lookup.get((selected_session, "ACx"), lookup.get((selected_session, "OFC"), rec0))[
+        "learning_stage"
+    ]
+    stage_color = LEARNING_STAGE_COLORS.get(learning_stage, (COLOR_GRAY, COLOR_GRAY))[0]
+    st.markdown(
+        f"<span style='color:{stage_color}'>●</span> **{learning_stage}** · "
+        f"Session {st.session_state[idx_key] + 1} of {len(session_labels)}",
+        unsafe_allow_html=True,
+    )
+
+    areas_to_plot = ("ACx", "OFC")
+    if area_view == "ACx only":
+        areas_to_plot = ("ACx",)
+    elif area_view == "OFC only":
+        areas_to_plot = ("OFC",)
+
+    plot_cols = st.columns(len(areas_to_plot))
+    for col, area in zip(plot_cols, areas_to_plot):
+        rec = lookup.get((selected_session, area))
+        with col:
+            if rec is None:
+                st.caption(f"{area}: no RSA matrix for this session.")
+                continue
+            rsa_df = rec["rsa_df"]
+            n_stim = rsa_df.shape[0]
+            title = f"{area} ({n_stim} stim)"
+            fig = plot_rsa_heatmap(
+                rsa_df,
+                title=title,
+                low_boundary=low_boundary_khz,
+                high_boundary=high_boundary_khz,
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+    if not summary_df.empty:
+        sess_metrics = summary_df[summary_df["session"] == selected_session]
+        if area_view == "ACx only":
+            sess_metrics = sess_metrics[sess_metrics["area"] == "ACx"]
+        elif area_view == "OFC only":
+            sess_metrics = sess_metrics[sess_metrics["area"] == "OFC"]
+        metric_cols = [
+            "area", "n_units", "n_trials", "n_stimuli",
+            "categoricality_index", "separation_index", "within_go", "within_nogo", "across",
+        ]
+        present = [c for c in metric_cols if c in sess_metrics.columns]
+        if present and not sess_metrics.empty:
+            st.caption("Session metrics")
+            st.dataframe(
+                sess_metrics[present].reset_index(drop=True),
+                use_container_width=True,
+                hide_index=True,
+            )
 
 
 def plot_mds_embedding(
@@ -694,6 +1181,371 @@ def plot_within_vs_across_panel(summary_df: pd.DataFrame) -> go.Figure:
     return fig
 
 
+# --- Panel H: category separation plots & stats --------------------------------
+
+def build_pooled_pairs_df(per_session_pairs: list[dict[str, Any]]) -> pd.DataFrame:
+    """Concatenate per-session pair tables with session metadata for plotting."""
+    frames: list[pd.DataFrame] = []
+    for rec in per_session_pairs:
+        pair_df = rec.get("pair_values")
+        if pair_df is None or pair_df.empty:
+            continue
+        tagged = pair_df.copy()
+        tagged["session"] = rec["session"]
+        tagged["learning_stage"] = rec["learning_stage"]
+        tagged["area"] = rec["area"]
+        tagged["pair_type_label"] = tagged["pair_type"].map(PAIR_TYPE_LABELS)
+        frames.append(tagged)
+    if not frames:
+        return pd.DataFrame()
+    return pd.concat(frames, ignore_index=True)
+
+
+def plot_pair_type_violin(pooled_pairs_df: pd.DataFrame) -> go.Figure:
+    """Violin + strip plot of pair similarities by pair type, stage, and area."""
+    if pooled_pairs_df.empty:
+        fig = go.Figure()
+        fig.update_layout(title="No pair-level data for violin plot.", height=320)
+        return fig
+
+    stage_order = [s for s in STAGE_ORDER if s in pooled_pairs_df["learning_stage"].unique()]
+    pair_order = [PAIR_TYPE_LABELS[k] for k in ("within_go", "within_nogo", "across")]
+    fig = make_subplots(
+        rows=1, cols=2,
+        subplot_titles=("ACx", "OFC"),
+        shared_yaxes=True,
+    )
+    pair_colors = {"Go-Go": COLOR_GO, "NoGo-NoGo": COLOR_NOGO, "Go-NoGo": COLOR_GRAY}
+    for col_idx, area in enumerate(("ACx", "OFC"), start=1):
+        sub = pooled_pairs_df[pooled_pairs_df["area"] == area]
+        if sub.empty:
+            continue
+        for pair_label in pair_order:
+            pair_sub = sub[sub["pair_type_label"] == pair_label]
+            if pair_sub.empty:
+                continue
+            fig.add_trace(
+                go.Violin(
+                    x=pair_sub["learning_stage"],
+                    y=pair_sub["similarity"],
+                    name=pair_label if col_idx == 1 else pair_label,
+                    legendgroup=pair_label,
+                    showlegend=(col_idx == 1),
+                    line_color=pair_colors.get(pair_label, COLOR_GRAY),
+                    fillcolor=pair_colors.get(pair_label, COLOR_GRAY),
+                    opacity=0.55,
+                    box_visible=True,
+                    meanline_visible=True,
+                    points="all",
+                    jitter=0.3,
+                    pointpos=0,
+                    side="positive",
+                ),
+                row=1, col=col_idx,
+            )
+        fig.update_xaxes(
+            categoryorder="array", categoryarray=stage_order, title_text="Learning stage",
+            row=1, col=col_idx,
+        )
+    fig.update_yaxes(title_text="Pearson r", range=[-0.5, 1.0], row=1, col=1)
+    fig.update_layout(
+        title="Pair-type similarity distributions (session-pooled pairs)",
+        height=480,
+        violinmode="group",
+    )
+    return fig
+
+
+def plot_pair_type_kde(pooled_pairs_df: pd.DataFrame) -> go.Figure:
+    """KDE overlay of pair similarities per (area, stage, pair type)."""
+    from scipy.stats import gaussian_kde
+
+    if pooled_pairs_df.empty:
+        fig = go.Figure()
+        fig.update_layout(title="No pair-level data for KDE plot.", height=320)
+        return fig
+
+    stage_order = [s for s in STAGE_ORDER if s in pooled_pairs_df["learning_stage"].unique()]
+    if not stage_order:
+        fig = go.Figure()
+        fig.update_layout(title="No stages in pair data.", height=320)
+        return fig
+
+    fig = make_subplots(
+        rows=len(stage_order), cols=2,
+        subplot_titles=[f"{stage} — {area}" for stage in stage_order for area in ("ACx", "OFC")],
+        vertical_spacing=0.08,
+        shared_xaxes=True,
+    )
+    pair_colors = {"within_go": COLOR_GO, "within_nogo": COLOR_NOGO, "across": COLOR_GRAY}
+    x_grid = np.linspace(-0.5, 1.0, 200)
+
+    for row_idx, stage in enumerate(stage_order, start=1):
+        for col_idx, area in enumerate(("ACx", "OFC"), start=1):
+            sub = pooled_pairs_df[
+                (pooled_pairs_df["learning_stage"] == stage) & (pooled_pairs_df["area"] == area)
+            ]
+            for pair_type in ("within_go", "within_nogo", "across"):
+                vals = pd.to_numeric(
+                    sub.loc[sub["pair_type"] == pair_type, "similarity"], errors="coerce"
+                ).dropna().to_numpy()
+                if vals.size < 2:
+                    continue
+                try:
+                    kde = gaussian_kde(vals)
+                    y = kde(x_grid)
+                except (np.linalg.LinAlgError, ValueError):
+                    continue
+                show_legend = row_idx == 1 and col_idx == 1
+                fig.add_trace(
+                    go.Scatter(
+                        x=x_grid, y=y,
+                        mode="lines",
+                        name=PAIR_TYPE_LABELS[pair_type],
+                        legendgroup=pair_type,
+                        showlegend=show_legend,
+                        line=dict(color=pair_colors[pair_type], width=2),
+                    ),
+                    row=row_idx, col=col_idx,
+                )
+            fig.update_xaxes(range=[-0.5, 1.0], row=row_idx, col=col_idx)
+            if col_idx == 1:
+                fig.update_yaxes(title_text=stage, row=row_idx, col=col_idx)
+    fig.update_layout(
+        title="Pair-type similarity KDEs by stage and area",
+        height=140 * len(stage_order) + 80,
+    )
+    return fig
+
+
+def plot_separation_index_panel(summary_df: pd.DataFrame) -> go.Figure:
+    """Box plot of normalized separation index (CCI) per stage and area."""
+    if summary_df.empty or "separation_index" not in summary_df.columns:
+        fig = go.Figure()
+        fig.update_layout(title="No separation index data.", height=320)
+        return fig
+
+    stage_order = [s for s in STAGE_ORDER if s in summary_df["learning_stage"].unique()]
+    fig = go.Figure()
+    for area, color in (("ACx", COLOR_ACX), ("OFC", COLOR_OFC)):
+        sub = summary_df[summary_df["area"] == area]
+        if sub.empty:
+            continue
+        fig.add_trace(
+            go.Box(
+                x=sub["learning_stage"],
+                y=sub["separation_index"],
+                name=area,
+                marker_color=color,
+                boxpoints="all",
+                jitter=0.4,
+                pointpos=0,
+                line=dict(width=1.2),
+            )
+        )
+    fig.add_hline(y=0, line=dict(color=COLOR_GRAY, dash="dot", width=1))
+    fig.update_layout(
+        title="Separation Index (CCI): (across_dissim − within_dissim) / (across_dissim + within_dissim)",
+        boxmode="group",
+        xaxis=dict(title="Learning stage", categoryorder="array", categoryarray=stage_order),
+        yaxis=dict(title="Separation index", range=[-1, 1]),
+        height=420,
+    )
+    return fig
+
+
+def plot_within_across_detailed(summary_df: pd.DataFrame) -> go.Figure:
+    """Three-way within Go-Go / NoGo-NoGo / Go-NoGo session-level means by stage."""
+    if summary_df.empty:
+        fig = go.Figure()
+        fig.update_layout(title="No per-session within/across data.", height=320)
+        return fig
+
+    stage_order = [s for s in STAGE_ORDER if s in summary_df["learning_stage"].unique()]
+    fig = make_subplots(
+        rows=1, cols=3,
+        subplot_titles=("Go-Go", "NoGo-NoGo", "Go-NoGo"),
+    )
+    metric_cols = ("within_go", "within_nogo", "across")
+    for col_idx, metric_col in enumerate(metric_cols, start=1):
+        for area, color in (("ACx", COLOR_ACX), ("OFC", COLOR_OFC)):
+            sub = summary_df[summary_df["area"] == area]
+            if sub.empty or metric_col not in sub.columns:
+                continue
+            fig.add_trace(
+                go.Box(
+                    x=sub["learning_stage"], y=sub[metric_col],
+                    name=area if col_idx == 1 else area,
+                    marker_color=color,
+                    boxpoints="all", jitter=0.4, pointpos=0,
+                    legendgroup=area, showlegend=(col_idx == 1),
+                ),
+                row=1, col=col_idx,
+            )
+        fig.update_xaxes(categoryorder="array", categoryarray=stage_order, row=1, col=col_idx)
+        fig.update_yaxes(title_text="Pearson r", range=[-0.5, 1.0], row=1, col=col_idx)
+    fig.update_layout(boxmode="group", height=420, title="Within- and across-category similarity (3 pair types)")
+    return fig
+
+
+def summarize_category_separation(summary_df: pd.DataFrame) -> pd.DataFrame:
+    """Cohort-level mean / SEM / median per (learning_stage, area)."""
+    metric_cols = [
+        "within_go", "within_nogo", "within_avg", "across",
+        "categoricality_index", "separation_index", "d_prime_pairs",
+        "var_within_go", "var_within_nogo", "var_across",
+    ]
+    if summary_df.empty:
+        return pd.DataFrame()
+
+    rows: list[dict[str, Any]] = []
+    for (stage, area), group in summary_df.groupby(["learning_stage", "area"], sort=False):
+        row: dict[str, Any] = {
+            "learning_stage": stage,
+            "area": area,
+            "n_sessions": int(len(group)),
+        }
+        for metric in metric_cols:
+            if metric not in group.columns:
+                continue
+            vals = pd.to_numeric(group[metric], errors="coerce").dropna().to_numpy(dtype=float)
+            row[f"{metric}_mean"] = float(np.mean(vals)) if vals.size else np.nan
+            row[f"{metric}_sem"] = float(np.std(vals, ddof=1) / np.sqrt(vals.size)) if vals.size > 1 else np.nan
+            row[f"{metric}_median"] = float(np.median(vals)) if vals.size else np.nan
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def _p_value_to_sig(p: float) -> str:
+    if not np.isfinite(p):
+        return ""
+    if p < 0.001:
+        return "***"
+    if p < 0.01:
+        return "**"
+    if p < 0.05:
+        return "*"
+    return ""
+
+
+def _separation_groups_by_stage(
+    summary_df: pd.DataFrame,
+    area: str,
+    metric_col: str,
+    *,
+    min_n: int = 2,
+    stages: tuple[str, ...] = STAGE_ORDER,
+) -> dict[str, np.ndarray]:
+    groups: dict[str, np.ndarray] = {}
+    sub = summary_df[summary_df["area"] == area]
+    for stage in stages:
+        vals = pd.to_numeric(
+            sub.loc[sub["learning_stage"] == stage, metric_col], errors="coerce"
+        ).dropna()
+        if len(vals) >= min_n:
+            groups[stage] = vals.to_numpy(dtype=float)
+    return groups
+
+
+def run_separation_stage_tests(
+    summary_df: pd.DataFrame,
+    metric_col: str,
+    *,
+    min_n: int = 2,
+    stages: tuple[str, ...] = STAGE_ORDER,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Kruskal-Wallis across stages + pairwise Mann-Whitney U per area (Bonferroni)."""
+    from itertools import combinations
+
+    from scipy.stats import kruskal, mannwhitneyu
+
+    omnibus_rows: list[dict[str, Any]] = []
+    pairwise_rows: list[dict[str, Any]] = []
+    metric_label = metric_col
+
+    for area in sorted(summary_df["area"].dropna().astype(str).unique()):
+        groups = _separation_groups_by_stage(
+            summary_df, area, metric_col, min_n=min_n, stages=stages
+        )
+        testable = [s for s in stages if s in groups]
+        if len(testable) < 2:
+            continue
+
+        if len(testable) >= 3:
+            stat, p = kruskal(*(groups[g] for g in testable))
+            omnibus_rows.append({
+                "metric": metric_label,
+                "area": area,
+                "test": "Kruskal-Wallis",
+                "groups": ", ".join(testable),
+                "statistic": float(stat),
+                "p": float(p),
+                "sig": _p_value_to_sig(float(p)),
+            })
+
+        pair_stats: list[dict[str, Any]] = []
+        for group_a, group_b in combinations(testable, 2):
+            vals_a = groups[group_a]
+            vals_b = groups[group_b]
+            try:
+                stat_u, p = mannwhitneyu(vals_a, vals_b, alternative="two-sided")
+            except ValueError:
+                stat_u, p = np.nan, np.nan
+            pair_stats.append({
+                "metric": metric_label,
+                "area": area,
+                "group_a": group_a,
+                "group_b": group_b,
+                "n_a": len(vals_a),
+                "n_b": len(vals_b),
+                "mean_a": float(np.mean(vals_a)),
+                "mean_b": float(np.mean(vals_b)),
+                "U": float(stat_u) if np.isfinite(stat_u) else np.nan,
+                "p": float(p) if np.isfinite(p) else np.nan,
+            })
+
+        n_tests = sum(1 for row in pair_stats if np.isfinite(row["p"]))
+        for row in pair_stats:
+            p_raw = row["p"]
+            p_adj = min(1.0, p_raw * n_tests) if np.isfinite(p_raw) and n_tests > 0 else np.nan
+            pairwise_rows.append({
+                **row,
+                "p_adj": p_adj,
+                "sig": _p_value_to_sig(p_adj) if np.isfinite(p_adj) else "",
+            })
+
+    return pd.DataFrame(omnibus_rows), pd.DataFrame(pairwise_rows)
+
+
+def render_separation_stats_panel(summary_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Render omnibus and pairwise stage-comparison tables in Streamlit."""
+    all_omnibus: list[pd.DataFrame] = []
+    all_pairwise: list[pd.DataFrame] = []
+    for metric_col in SEPARATION_TEST_METRICS:
+        if metric_col not in summary_df.columns:
+            continue
+        omnibus_df, pairwise_df = run_separation_stage_tests(summary_df, metric_col)
+        if not omnibus_df.empty:
+            all_omnibus.append(omnibus_df)
+        if not pairwise_df.empty:
+            all_pairwise.append(pairwise_df)
+        st.markdown(f"**{metric_col}**")
+        if omnibus_df.empty and pairwise_df.empty:
+            st.caption("Not enough sessions per stage for statistical tests.")
+            continue
+        if not omnibus_df.empty:
+            st.caption("Omnibus (Kruskal-Wallis across learning stages, per area)")
+            st.dataframe(omnibus_df, use_container_width=True, hide_index=True)
+        if not pairwise_df.empty:
+            st.caption("Pairwise (Mann-Whitney U, Bonferroni-corrected, per area)")
+            st.dataframe(pairwise_df, use_container_width=True, hide_index=True)
+
+    return (
+        pd.concat(all_omnibus, ignore_index=True) if all_omnibus else pd.DataFrame(),
+        pd.concat(all_pairwise, ignore_index=True) if all_pairwise else pd.DataFrame(),
+    )
+
+
 # --- Result persistence -------------------------------------------------------
 
 def _safe_filename_token(text: str, *, max_len: int = 80) -> str:
@@ -712,6 +1564,7 @@ def save_rsa_results(
     failures: list[dict[str, str]],
     rsa_by_cell: dict[tuple[str, str], list[pd.DataFrame]],
     per_session_rsa: list[dict[str, Any]],
+    per_session_pairs: list[dict[str, Any]] | None = None,
     run_settings: dict[str, Any],
     low_boundary_khz: float,
     high_boundary_khz: float,
@@ -719,19 +1572,35 @@ def save_rsa_results(
     """Write RSA outputs and append failures to the persistent error log.
 
     Files written under ``RSA_RESULTS_DIR``:
-    - ``rsa_per_session_metrics.csv`` — categoricality table (current run).
+    - ``rsa_per_session_metrics.csv`` — categoricality / separation table (current run).
+    - ``rsa_cohort_separation_summary.csv`` — stage × area metric summaries.
+    - ``rsa_separation_stats_omnibus.csv`` / ``rsa_separation_stats_pairwise.csv``.
     - ``rsa_errors.csv`` — failures from the current run only.
     - ``rsa_error_log.csv`` — append-only error history (timestamped rows).
     - ``rsa_run_metadata.json`` — decode window, aggregation, boundaries, UTC time.
     - ``cohort_mean_rsa_{stage}_{area}.csv`` — stage-averaged matrices.
     - ``cohort_mds_{stage}_{area}.csv`` — 2D MDS coordinates + stress column.
     - ``per_session/*.csv`` — one RSA matrix per successful (session, area).
+    - ``per_session/category_pairs/*.csv`` — pair-level tables per session.
     """
     RSA_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     run_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     if not summary_df.empty:
         summary_df.to_csv(RSA_RESULTS_DIR / "rsa_per_session_metrics.csv", index=False)
+        cohort_summary = summarize_category_separation(summary_df)
+        if not cohort_summary.empty:
+            cohort_summary.to_csv(RSA_RESULTS_DIR / "rsa_cohort_separation_summary.csv", index=False)
+        omnibus_df, pairwise_df = run_separation_stage_tests(summary_df, SEPARATION_TEST_METRICS[0])
+        for metric_col in SEPARATION_TEST_METRICS[1:]:
+            if metric_col in summary_df.columns:
+                om, pw = run_separation_stage_tests(summary_df, metric_col)
+                omnibus_df = pd.concat([omnibus_df, om], ignore_index=True)
+                pairwise_df = pd.concat([pairwise_df, pw], ignore_index=True)
+        if not omnibus_df.empty:
+            omnibus_df.to_csv(RSA_RESULTS_DIR / "rsa_separation_stats_omnibus.csv", index=False)
+        if not pairwise_df.empty:
+            pairwise_df.to_csv(RSA_RESULTS_DIR / "rsa_separation_stats_pairwise.csv", index=False)
 
     errors_df = pd.DataFrame(failures)
     if not errors_df.empty:
@@ -773,19 +1642,103 @@ def save_rsa_results(
         )
         rsa_df.to_csv(per_session_dir / fname)
 
+    if per_session_pairs:
+        pairs_dir = per_session_dir / "category_pairs"
+        pairs_dir.mkdir(parents=True, exist_ok=True)
+        for rec in per_session_pairs:
+            pair_df: pd.DataFrame = rec.get("pair_values", pd.DataFrame())
+            if pair_df.empty:
+                continue
+            fname = f"{_safe_filename_token(rec['session'])}_{rec['area']}_pairs.csv"
+            pair_df.to_csv(pairs_dir / fname, index=False)
+
     for (stage, area), matrices in rsa_by_cell.items():
         slug = _stage_area_slug(stage, area)
         mean_rsa, n_sessions = aggregate_rsa_across_sessions(matrices)
         if not mean_rsa.empty:
             mean_rsa.to_csv(RSA_RESULTS_DIR / f"cohort_mean_rsa_{slug}.csv")
             n_sessions.to_csv(RSA_RESULTS_DIR / f"cohort_mean_rsa_{slug}_n_sessions.csv")
-        coords_df, stress = compute_mds_from_rsa(mean_rsa)
+        coords_df, stress, _mds_meta = compute_mds_from_rsa(mean_rsa)
         if not coords_df.empty:
             coords_out = coords_df.copy()
             coords_out["mds_stress"] = stress
             coords_out.to_csv(RSA_RESULTS_DIR / f"cohort_mds_{slug}.csv")
 
     return RSA_RESULTS_DIR
+
+
+def _render_rsa_methods_section(
+    *,
+    decode_window: tuple[float, float],
+    aggregation: str,
+    use_histology: bool,
+    min_trials_per_stim: int,
+    use_log_stimulus_bins: bool,
+    low_boundary_khz: float,
+    high_boundary_khz: float,
+) -> None:
+    """Collapsible methods summary for the Regional RSA page."""
+    histology_note = (
+        "Histology-matched good units + MUA only."
+        if use_histology
+        else "All Bombcell good units + MUA (no histology filter)."
+    )
+    binning_note = (
+        f"Enabled: trial tones are assigned to a shared log-spaced grid with up to "
+        f"{RSA_BINS_PER_CLASS} geometric bins per category band (edges anchored at "
+        f"low/high boundaries), then trials are pooled per bin centre before RSA."
+        if use_log_stimulus_bins
+        else "Disabled: RSA is computed on raw per-kHz stimulus labels."
+    )
+    st.subheader("Methods")
+    with st.expander("Regional RSA — analysis pipeline", expanded=False):
+        st.markdown(
+            f"""
+**Cohorts.** Three matched categorization groups are analysed separately:
+Novice — 2b Categorization, 1b Expert — 1b Categorization, and
+2b Expert — 2b Categorization. Session is the independent statistical unit.
+
+**Neural data.** Tone-aligned spike counts are loaded from ACx (`imec0`) and OFC (`imec1`).
+{histology_note}
+
+**Feature extraction.** Population activity is collapsed to `[trials × units]` by taking the
+**{aggregation.lower()}** firing rate in a **{decode_window[0]:.2f}–{decode_window[1]:.2f} s**
+window relative to tone onset.
+
+**Stimulus inclusion and binning.**
+- Go / No-Go categories: tones below **{low_boundary_khz:.3f} kHz** or above
+  **{high_boundary_khz:.3f} kHz** are Go; tones between are No-Go.
+- Frequency caps: Novice and 2b Expert ≤ **{DECI_KHZ_21_5_MAX_STIM_KHZ:g} kHz** (21.5 deci-kHz);
+  1b Expert ≤ **high boundary** ({high_boundary_khz:.3f} kHz).
+- {binning_note}
+- Stimuli with fewer than **{min_trials_per_stim}** trials after pooling are excluded.
+
+**RSA matrix (per session × area).** For each surviving stimulus, the mean population vector
+is computed, each unit is z-scored across stimuli, and Pearson correlation between stimulus
+columns yields a symmetric representational similarity matrix (*r* ∈ [−1, 1]).
+
+**Cohort aggregation.** Session-level RSA matrices are element-wise averaged (nan-mean) onto the
+union stimulus grid within each (learning stage × area) cell.
+
+**Panel F — stage means and learning contrast.** Heatmaps show cohort-mean RSA. When both
+cohorts are present, a side panel shows **2b Expert − Novice** (element-wise Δ*r* on the
+aligned grid).
+
+**MDS embedding.** Dissimilarity *d* = (1 − *r*) / 2. When the cohort-mean matrix is sparse
+(sessions used different tone ladders), metric MDS is run on the **largest fully observed
+stimulus subset** (all pairwise *d* finite).
+
+**Category separation metrics (Panels G & H).** Off-diagonal RSA pairs are classified as
+Go-Go, NoGo-NoGo, or Go-NoGo. Per session × area:
+- **Categoricality index** = mean(within-category *r*) − mean(across-category *r*)
+- **Separation index (CCI)** = (across *d* − within *d*) / (across *d* + within *d*)
+- **d′ (pairs)** = Cohen's *d* on pair-level dissimilarities (within vs across)
+
+**Statistics.** Nonparametric tests on session-level summaries, run separately for ACx and OFC:
+Kruskal-Wallis across learning stages (≥3 groups) and pairwise Mann-Whitney *U* with
+Bonferroni correction for `categoricality_index` and `separation_index`.
+            """.strip()
+        )
 
 
 # --- Streamlit entry point ----------------------------------------------------
@@ -797,10 +1750,12 @@ def _run_rsa_for_selection(
     aggregation: str,
     use_histology: bool,
     min_trials_per_stim: int,
+    use_log_stimulus_bins: bool = True,
 ) -> tuple[
     dict[tuple[str, str], list[pd.DataFrame]],
     pd.DataFrame,
     list[dict[str, str]],
+    list[dict[str, Any]],
     list[dict[str, Any]],
 ]:
     """Iterate selected sessions and accumulate per-(stage, area) RSA matrices + per-session metrics.
@@ -811,12 +1766,26 @@ def _run_rsa_for_selection(
     summary_df  : per-session metrics (one row per area where RSA succeeded).
     failures    : list of {session, area, error} for skipped sessions/areas.
     per_session_rsa : list of {session, learning_stage, area, rsa_df} for disk export.
+    per_session_pairs : list of {session, learning_stage, area, pair_values} for Panel H.
     """
     rsa_by_cell: dict[tuple[str, str], list[pd.DataFrame]] = {}
     per_session_rsa: list[dict[str, Any]] = []
+    per_session_pairs: list[dict[str, Any]] = []
     rows: list[dict[str, Any]] = []
     failures: list[dict[str, str]] = []
     low_b, high_b = _category_boundary_khz()
+
+    log_bin_edges: np.ndarray | None = None
+    log_bin_centers: np.ndarray | None = None
+    if use_log_stimulus_bins:
+        log_bin_edges, log_bin_centers = _scan_selection_stimuli_khz(
+            selected_sessions_df,
+            use_histology=use_histology,
+            low_boundary=low_b,
+            high_boundary=high_b,
+        )
+        if log_bin_centers is None or log_bin_centers.size == 0:
+            log_bin_edges, log_bin_centers = None, None
 
     n_total = len(selected_sessions_df)
     progress = st.progress(0.0, text="Computing RSA per session...")
@@ -853,6 +1822,9 @@ def _run_rsa_for_selection(
                     aggregation=aggregation,
                     use_histology=use_histology,
                     min_trials_per_stim=min_trials_per_stim,
+                    max_stim_khz=_stage_max_stim_khz(stage, high_b),
+                    log_bin_edges=log_bin_edges,
+                    log_bin_centers=log_bin_centers,
                 )
             except (ValueError, OSError, KeyError) as exc:
                 failures.append({"session": label, "area": area, "error": str(exc)})
@@ -865,9 +1837,16 @@ def _run_rsa_for_selection(
                 "area": area,
                 "rsa_df": rsa_df,
             })
-            metrics = compute_categoricality_index(
+            extracted = extract_category_pair_values(
                 rsa_df, low_boundary=low_b, high_boundary=high_b
             )
+            metrics = extracted["summary"]
+            per_session_pairs.append({
+                "session": label,
+                "learning_stage": stage,
+                "area": area,
+                "pair_values": extracted["pair_values"],
+            })
             rows.append({
                 "session": label,
                 "animal": animal,
@@ -883,7 +1862,7 @@ def _run_rsa_for_selection(
     progress.progress(1.0, text="Done.")
     progress.empty()
     summary_df = pd.DataFrame(rows)
-    return rsa_by_cell, summary_df, failures, per_session_rsa
+    return rsa_by_cell, summary_df, failures, per_session_rsa, per_session_pairs
 
 
 def regional_rsa_panel(selected_sessions_df: pd.DataFrame) -> None:
@@ -896,7 +1875,8 @@ def regional_rsa_panel(selected_sessions_df: pd.DataFrame) -> None:
     st.caption(
         "Cohorts: Novice 2b Categorization, 1b Expert 1b Categorization, and "
         "2b Expert 2b Categorization only. Per-session RSA matrices are averaged within "
-        "each (cohort × area) cell."
+        "each (cohort × area) cell. Stimulus caps: Novice and 2b Expert ≤ 21.5 deci-kHz "
+        f"({DECI_KHZ_21_5_MAX_STIM_KHZ:g} kHz); 1b Expert ≤ category high boundary."
     )
     if selected_sessions_df is None or selected_sessions_df.empty:
         st.info("Select sessions in the table above to compute RSA matrices.")
@@ -928,13 +1908,22 @@ def regional_rsa_panel(selected_sessions_df: pd.DataFrame) -> None:
                 help="How to collapse spike counts across the analysis window.",
             )
             use_histology = st.checkbox(
-                "Use histology filter", value=True, key="rsa_use_histology",
+                "Use histology filter", value=False, key="rsa_use_histology",
                 help="Keep only units confirmed in the area by histology mapping.",
             )
         with col3:
             min_trials_per_stim = st.number_input(
                 "Min trials per stimulus", min_value=1, value=DEFAULT_MIN_TRIALS_PER_STIM,
                 step=1, key="rsa_min_trials_per_stim",
+            )
+            use_log_stimulus_bins = st.checkbox(
+                "Log-bin stimuli (4 per class band)",
+                value=True,
+                key="rsa_use_log_bins",
+                help=(
+                    "Pool similar kHz tones into shared log-spaced bins anchored at "
+                    "category boundaries (same scheme as the agreement-decoder psychometric plots)."
+                ),
             )
 
     if window_stop <= window_start:
@@ -946,12 +1935,13 @@ def regional_rsa_panel(selected_sessions_df: pd.DataFrame) -> None:
         return
 
     decode_window = (float(window_start), float(window_stop))
-    rsa_by_cell, summary_df, failures, per_session_rsa = _run_rsa_for_selection(
+    rsa_by_cell, summary_df, failures, per_session_rsa, per_session_pairs = _run_rsa_for_selection(
         selected_sessions_df,
         decode_window=decode_window,
         aggregation=aggregation,
         use_histology=bool(use_histology),
         min_trials_per_stim=int(min_trials_per_stim),
+        use_log_stimulus_bins=bool(use_log_stimulus_bins),
     )
 
     low_b, high_b = _category_boundary_khz()
@@ -960,12 +1950,15 @@ def regional_rsa_panel(selected_sessions_df: pd.DataFrame) -> None:
         failures=failures,
         rsa_by_cell=rsa_by_cell,
         per_session_rsa=per_session_rsa,
+        per_session_pairs=per_session_pairs,
         run_settings={
             "decode_window_start_s": decode_window[0],
             "decode_window_stop_s": decode_window[1],
             "aggregation": aggregation,
             "use_histology": bool(use_histology),
             "min_trials_per_stimulus": int(min_trials_per_stim),
+            "use_log_stimulus_bins": bool(use_log_stimulus_bins),
+            "rsa_bins_per_class": int(RSA_BINS_PER_CLASS),
             "n_sessions_selected": int(len(selected_sessions_df)),
         },
         low_boundary_khz=low_b,
@@ -994,15 +1987,36 @@ def regional_rsa_panel(selected_sessions_df: pd.DataFrame) -> None:
     m3.metric("Areas covered", n_areas)
     m4.metric("Failures", n_failed)
 
+    render_per_session_rsa_navigator(
+        per_session_rsa,
+        summary_df,
+        low_boundary_khz=low_b,
+        high_boundary_khz=high_b,
+    )
+
     if not rsa_by_cell:
         st.warning("No RSA matrices could be computed for the selected sessions.")
         if failures:
             st.subheader("Error log (current run)")
             st.dataframe(pd.DataFrame(failures), use_container_width=True, hide_index=True)
+        _render_rsa_methods_section(
+            decode_window=decode_window,
+            aggregation=aggregation,
+            use_histology=bool(use_histology),
+            min_trials_per_stim=int(min_trials_per_stim),
+            use_log_stimulus_bins=bool(use_log_stimulus_bins),
+            low_boundary_khz=low_b,
+            high_boundary_khz=high_b,
+        )
         return
 
-    # --- Panel F: RSA heatmaps per (area x stage) ------------------------------
+    # --- Panel F: RSA heatmaps per (area x stage) + 2b Expert − Novice side panel ---
     st.subheader("Panel F — RSA matrices (stage averages)")
+    st.caption(
+        f"When log-binning is enabled, similar tones are pooled into ≤{RSA_BINS_PER_CLASS} "
+        "bins per category band (log-spaced between boundaries). "
+        "The right-hand panel shows the stage-mean difference 2b Expert − Novice."
+    )
     stage_order = [s for s in STAGE_ORDER if any(cell[0] == s for cell in rsa_by_cell)]
     if not stage_order:
         stage_order = sorted({cell[0] for cell in rsa_by_cell})
@@ -1012,9 +2026,14 @@ def regional_rsa_panel(selected_sessions_df: pd.DataFrame) -> None:
         if not present:
             continue
         st.markdown(f"**{area}**")
-        cols = st.columns(len(present))
-        for col, stage in zip(cols, present):
+        can_diff = "2b Expert" in present and "Novice" in present
+        col_widths = [1.0] * len(present) + ([1.45] if can_diff else [])
+        cols = st.columns(col_widths)
+
+        mean_rsa_by_stage: dict[str, pd.DataFrame] = {}
+        for col, stage in zip(cols[: len(present)], present):
             mean_rsa, n_sessions = aggregate_rsa_across_sessions(rsa_by_cell[(stage, area)])
+            mean_rsa_by_stage[stage] = mean_rsa
             with col:
                 stage_color = LEARNING_STAGE_COLORS.get(stage, (COLOR_GRAY, COLOR_GRAY))[0]
                 cohort_label = RSA_COHORT_LABELS.get(stage, stage)
@@ -1029,16 +2048,39 @@ def regional_rsa_panel(selected_sessions_df: pd.DataFrame) -> None:
                     high_boundary=high_b,
                     n_sessions=n_sessions,
                 )
-                # Highlight stage with a colored title prefix dot via annotation.
                 fig.update_layout(title=dict(text=f"<span style='color:{stage_color}'>●</span> {title}"))
                 st.plotly_chart(fig, use_container_width=True)
+
+        if can_diff:
+            with cols[len(present)]:
+                diff_rsa = subtract_rsa_matrices(
+                    mean_rsa_by_stage["2b Expert"],
+                    mean_rsa_by_stage["Novice"],
+                )
+                n_2b = n_sessions_per_cell.get(("2b Expert", area), 0)
+                n_nov = n_sessions_per_cell.get(("Novice", area), 0)
+                diff_title = f"2b Expert − Novice (n={n_2b} vs {n_nov} sessions)"
+                stage_color = LEARNING_STAGE_COLORS.get("2b Expert", (COLOR_GRAY, COLOR_GRAY))[0]
+                fig_diff = plot_rsa_difference_heatmap(
+                    diff_rsa,
+                    title=diff_title,
+                    low_boundary=low_b,
+                    high_boundary=high_b,
+                    height=520,
+                )
+                fig_diff.update_layout(
+                    title=dict(text=f"<span style='color:{stage_color}'>●</span> {diff_title}")
+                )
+                st.plotly_chart(fig_diff, use_container_width=True)
 
     # --- MDS embeddings (2D projection of each stage's mean RSA) -------------
     st.subheader("MDS — 2D embedding of stage-mean RSA")
     st.caption(
-        "Each point is a stimulus frequency; distance approximates 1 - r between stimuli "
-        "in the stage-averaged RSA matrix. Tight category clusters and large between-category "
-        "separation indicate strong categorical representation."
+        "Each point is a stimulus frequency; distance approximates 1 − r between stimuli "
+        "in the stage-averaged RSA matrix. When sessions used different tone ladders, "
+        "MDS embeds the largest stimulus subset with complete pairwise coverage "
+        "(see subtitle for embedded/total counts). Tight category clusters and large "
+        "between-category separation indicate strong categorical representation."
     )
     for area in ("ACx", "OFC"):
         present = [s for s in stage_order if (s, area) in rsa_by_cell]
@@ -1048,11 +2090,15 @@ def regional_rsa_panel(selected_sessions_df: pd.DataFrame) -> None:
         cols = st.columns(len(present))
         for col, stage in zip(cols, present):
             mean_rsa, _ = aggregate_rsa_across_sessions(rsa_by_cell[(stage, area)])
-            coords_df, stress = compute_mds_from_rsa(mean_rsa)
+            coords_df, stress, mds_meta = compute_mds_from_rsa(mean_rsa)
             with col:
                 stage_color = LEARNING_STAGE_COLORS.get(stage, (COLOR_GRAY, COLOR_GRAY))[0]
                 cohort_label = RSA_COHORT_LABELS.get(stage, stage)
                 title = f"{cohort_label} — {area}"
+                n_in = mds_meta["n_stimuli_input"]
+                n_emb = mds_meta["n_stimuli_embedded"]
+                if n_emb < n_in and n_emb >= 2:
+                    title = f"{title} ({n_emb}/{n_in} stims embedded)"
                 fig = plot_mds_embedding(
                     coords_df,
                     title=title,
@@ -1070,12 +2116,39 @@ def regional_rsa_panel(selected_sessions_df: pd.DataFrame) -> None:
     st.plotly_chart(plot_categoricality_panel(summary_df), use_container_width=True)
     st.plotly_chart(plot_within_vs_across_panel(summary_df), use_container_width=True)
 
+    # --- Panel H: category separation (pair-type distributions + CCI + stats) ---
+    st.subheader("Panel H — Category separation")
+    st.caption(
+        "Pair-level RSA similarities decomposed into Go-Go, NoGo-NoGo, and Go-NoGo. "
+        "Separation index (CCI) is normalized on the dissimilarity scale; "
+        "categoricality index (Panel G) is the unnormalized similarity contrast."
+    )
+    pooled_pairs_df = build_pooled_pairs_df(per_session_pairs)
+    st.plotly_chart(plot_within_across_detailed(summary_df), use_container_width=True)
+    st.plotly_chart(plot_separation_index_panel(summary_df), use_container_width=True)
+    if not pooled_pairs_df.empty:
+        st.plotly_chart(plot_pair_type_violin(pooled_pairs_df), use_container_width=True)
+        st.plotly_chart(plot_pair_type_kde(pooled_pairs_df), use_container_width=True)
+    else:
+        st.info("No pair-level data available for distribution plots.")
+
+    st.subheader("Panel H — Statistical tests (session-level)")
+    render_separation_stats_panel(summary_df)
+
+    cohort_summary = summarize_category_separation(summary_df)
+    if not cohort_summary.empty:
+        with st.expander("Cohort separation summary (mean ± SEM)", expanded=False):
+            st.dataframe(cohort_summary, use_container_width=True, hide_index=True)
+
     # --- Per-session table + download -----------------------------------------
     st.subheader("Per-session metrics")
     if not summary_df.empty:
         display_cols = [
             "session", "learning_stage", "area", "n_units", "n_trials", "n_stimuli",
-            "within_go", "within_nogo", "within_avg", "across", "categoricality_index",
+            "within_go", "within_nogo", "within_avg", "across",
+            "categoricality_index", "separation_index", "d_prime_pairs",
+            "var_within_go", "var_within_nogo", "var_across",
+            "n_pairs_within_go", "n_pairs_within_nogo", "n_pairs_across",
         ]
         present_cols = [c for c in display_cols if c in summary_df.columns]
         st.dataframe(summary_df[present_cols], use_container_width=True, hide_index=True)
@@ -1086,7 +2159,25 @@ def regional_rsa_panel(selected_sessions_df: pd.DataFrame) -> None:
             mime="text/csv",
             key="rsa_download_per_session",
         )
+        if not pooled_pairs_df.empty:
+            st.download_button(
+                "Download pooled pair-level data (CSV)",
+                data=pooled_pairs_df.to_csv(index=False).encode("utf-8"),
+                file_name="npxl_rsa_pooled_pairs.csv",
+                mime="text/csv",
+                key="rsa_download_pooled_pairs",
+            )
 
     if failures:
         with st.expander(f"{len(failures)} skipped session/area pairs (see rsa_errors.csv)", expanded=False):
             st.dataframe(pd.DataFrame(failures), use_container_width=True, hide_index=True)
+
+    _render_rsa_methods_section(
+        decode_window=decode_window,
+        aggregation=aggregation,
+        use_histology=bool(use_histology),
+        min_trials_per_stim=int(min_trials_per_stim),
+        use_log_stimulus_bins=bool(use_log_stimulus_bins),
+        low_boundary_khz=low_b,
+        high_boundary_khz=high_b,
+    )

@@ -123,3 +123,310 @@ timestamp_utc,session,area,error
 2026-05-25T08:17:08Z,G7A1 | 28/10/2025 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G7A1_novice_2b_4t_g0
 2026-05-25T08:17:08Z,G7A1 | 28/10/2025 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G7A1_novice_2b_4t_g0
 2026-05-25T08:17:08Z,G7A3 | 28/10/2025 | (Novice) 2b Categorization,ACx,ACx: no usable units after filtering (use_histology=True).
+2026-07-05T08:28:23Z,G4A3 | 1/4/2025 | (1b Expert) 1b Categorization,ACx,ACx: no usable units after filtering (use_histology=True).
+2026-07-05T08:28:23Z,G4A3 | 1/4/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A2_1b_4t_g0
+2026-07-05T08:28:23Z,G3A3 | 14/02/2025 | (1b Expert) 1b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G3A3_rec2_g0
+2026-07-05T08:28:23Z,G3A3 | 14/02/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G3A3_rec2_g0
+2026-07-05T08:28:23Z,G3A5 | 18/2/2025 | (1b Expert) 1b Categorization,ACx,ACx: no usable units after filtering (use_histology=True).
+2026-07-05T08:28:23Z,G3A5 | 18/2/2025 | (1b Expert) 1b Categorization,OFC,OFC: no usable units after filtering (use_histology=True).
+2026-07-05T08:28:23Z,G4A2 | 6/4/2025 | (1b Expert) 1b Categorization,ACx,ACx: no usable units after filtering (use_histology=True).
+2026-07-05T08:28:23Z,G4A2 | 6/4/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A2_1b_4t_g0
+2026-07-05T08:28:23Z,G4A5 | 7/4/2025 | (1b Expert) 1b Categorization,ACx,ACx: no usable units after filtering (use_histology=True).
+2026-07-05T08:28:23Z,G4A6 | 7/4/2025 | (1b Expert) 1b Categorization,ACx,ACx: no usable units after filtering (use_histology=True).
+2026-07-05T08:28:23Z,G4A6 | 7/4/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A6_1b_4t_expert_g0
+2026-07-05T08:28:23Z,G6A5 | 30/9/2025 | (1b Expert) 1b Categorization,ACx,ACx: no usable units after filtering (use_histology=True).
+2026-07-05T08:28:23Z,G6A5 | 30/9/2025 | (1b Expert) 1b Categorization,OFC,OFC: no usable units after filtering (use_histology=True).
+2026-07-05T08:28:23Z,G7A1 | 12/11/2025 | (1b Expert) 1b Categorization,ACx,ACx: no usable units after filtering (use_histology=True).
+2026-07-05T08:28:23Z,G7A1 | 12/11/2025 | (1b Expert) 1b Categorization,OFC,OFC: no usable units after filtering (use_histology=True).
+2026-07-05T08:28:23Z,G3A3 | 20/2/2025 | (2b Expert) 2b Categorization,ACx,ACx: no usable units after filtering (use_histology=True).
+2026-07-05T08:28:23Z,G3A5 | 20/2/2026 | (2b Expert) 2b Categorization,ACx,ACx: no usable units after filtering (use_histology=True).
+2026-07-05T08:28:23Z,G3A5 | 20/2/2026 | (2b Expert) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G3A5_rec2_g0
+2026-07-05T08:28:23Z,G4A2 | 8/4/2025 | (2b Expert) 2b Categorization,ACx,ACx: no usable units after filtering (use_histology=True).
+2026-07-05T08:28:23Z,G4A2 | 8/4/2025 | (2b Expert) 2b Categorization,OFC,OFC: no usable units after filtering (use_histology=True).
+2026-07-05T08:28:23Z,G4A3 | 6/4/2025 | (2b Expert) 2b Categorization,ACx,ACx: no usable units after filtering (use_histology=True).
+2026-07-05T08:28:23Z,G4A5 | 9/4/2025 | (2b Expert) 2b Categorization,ACx,ACx: no usable units after filtering (use_histology=True).
+2026-07-05T08:28:23Z,G4A5 | 9/4/2025 | (2b Expert) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A5_2b_4t_expert_g0
+2026-07-05T08:28:23Z,G4A6 | 9/4/2025 | (2b Expert) 2b Categorization,ACx,ACx: no usable units after filtering (use_histology=True).
+2026-07-05T08:28:23Z,G4A6 | 9/4/2025 | (2b Expert) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A6_2b_4t_expert_g0
+2026-07-05T08:28:23Z,G4A2 | 26/3/2025 | (Novice) 2b Categorization,ACx,ACx: no usable units after filtering (use_histology=True).
+2026-07-05T08:28:23Z,G4A2 | 26/3/2025 | (Novice) 2b Categorization,OFC,OFC: no usable units after filtering (use_histology=True).
+2026-07-05T08:28:23Z,G4A3 | 26/3/2025 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A3_novice_2boudaries4_g0
+2026-07-05T08:28:23Z,G4A3 | 26/3/2025 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A3_novice_2boudaries4_g0
+2026-07-05T08:28:23Z,G4A4 | 27/3/2025 | (Novice) 2b Categorization,OFC,OFC: no usable units after filtering (use_histology=True).
+2026-07-05T08:28:23Z,G4A5 | 27/3/2025 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A5_novice_2b_4t_g0
+2026-07-05T08:28:23Z,G4A5 | 27/3/2025 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A5_novice_2b_4t_g0
+2026-07-05T08:28:23Z,G5A1 | 16/7 | (Novice) 2b Categorization,ACx,ACx: no usable units after filtering (use_histology=True).
+2026-07-05T08:28:23Z,G5A1 | 16/7 | (Novice) 2b Categorization,OFC,OFC: no usable units after filtering (use_histology=True).
+2026-07-05T08:28:23Z,G5A1 | 16/7 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G5A1_naive_2b_4t_high_and_low_g0
+2026-07-05T08:28:23Z,G5A1 | 16/7 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G5A1_naive_2b_4t_high_and_low_g0
+2026-07-05T08:28:23Z,G5A2 | 16/7 | (Novice) 2b Categorization,ACx,ACx: no usable units after filtering (use_histology=True).
+2026-07-05T08:28:23Z,G5A2 | 16/7 | (Novice) 2b Categorization,OFC,OFC: no usable units after filtering (use_histology=True).
+2026-07-05T08:28:23Z,G7A1 | 28/10/2025 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G7A1_novice_2b_4t_g0
+2026-07-05T08:28:23Z,G7A1 | 28/10/2025 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G7A1_novice_2b_4t_g0
+2026-07-05T08:28:23Z,G7A3 | 28/10/2025 | (Novice) 2b Categorization,ACx,ACx: no usable units after filtering (use_histology=True).
+2026-07-05T08:38:12Z,G4A3 | 1/4/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A2_1b_4t_g0
+2026-07-05T08:38:12Z,G3A3 | 14/02/2025 | (1b Expert) 1b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G3A3_rec2_g0
+2026-07-05T08:38:12Z,G3A3 | 14/02/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G3A3_rec2_g0
+2026-07-05T08:38:12Z,G4A2 | 6/4/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A2_1b_4t_g0
+2026-07-05T08:38:12Z,G4A6 | 7/4/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A6_1b_4t_expert_g0
+2026-07-05T08:38:12Z,G3A5 | 20/2/2026 | (2b Expert) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G3A5_rec2_g0
+2026-07-05T08:38:12Z,G4A5 | 9/4/2025 | (2b Expert) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A5_2b_4t_expert_g0
+2026-07-05T08:38:12Z,G4A6 | 9/4/2025 | (2b Expert) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A6_2b_4t_expert_g0
+2026-07-05T08:38:12Z,G4A2 | 26/3/2025 | (Novice) 2b Categorization,ACx,Only 0 stimulus bins meet min_trials_per_stim=3.
+2026-07-05T08:38:12Z,G4A2 | 26/3/2025 | (Novice) 2b Categorization,OFC,Only 0 stimulus bins meet min_trials_per_stim=3.
+2026-07-05T08:38:12Z,G4A3 | 26/3/2025 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A3_novice_2boudaries4_g0
+2026-07-05T08:38:12Z,G4A3 | 26/3/2025 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A3_novice_2boudaries4_g0
+2026-07-05T08:38:12Z,G4A5 | 27/3/2025 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A5_novice_2b_4t_g0
+2026-07-05T08:38:12Z,G4A5 | 27/3/2025 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A5_novice_2b_4t_g0
+2026-07-05T08:38:12Z,G5A1 | 16/7 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G5A1_naive_2b_4t_high_and_low_g0
+2026-07-05T08:38:12Z,G5A1 | 16/7 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G5A1_naive_2b_4t_high_and_low_g0
+2026-07-05T08:38:12Z,G7A1 | 28/10/2025 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G7A1_novice_2b_4t_g0
+2026-07-05T08:38:12Z,G7A1 | 28/10/2025 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G7A1_novice_2b_4t_g0
+2026-07-05T08:38:12Z,G7A3 | 28/10/2025 | (Novice) 2b Categorization,ACx,ACx: no usable units after filtering (use_histology=False).
+2026-07-05T08:44:32Z,G4A3 | 1/4/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A2_1b_4t_g0
+2026-07-05T08:44:32Z,G3A3 | 14/02/2025 | (1b Expert) 1b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G3A3_rec2_g0
+2026-07-05T08:44:32Z,G3A3 | 14/02/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G3A3_rec2_g0
+2026-07-05T08:44:32Z,G4A2 | 6/4/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A2_1b_4t_g0
+2026-07-05T08:44:32Z,G4A6 | 7/4/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A6_1b_4t_expert_g0
+2026-07-05T08:44:32Z,G3A5 | 20/2/2026 | (2b Expert) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G3A5_rec2_g0
+2026-07-05T08:44:32Z,G4A5 | 9/4/2025 | (2b Expert) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A5_2b_4t_expert_g0
+2026-07-05T08:44:32Z,G4A6 | 9/4/2025 | (2b Expert) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A6_2b_4t_expert_g0
+2026-07-05T08:44:32Z,G4A2 | 26/3/2025 | (Novice) 2b Categorization,ACx,Only 0 stimulus bins meet min_trials_per_stim=3.
+2026-07-05T08:44:32Z,G4A2 | 26/3/2025 | (Novice) 2b Categorization,OFC,Only 0 stimulus bins meet min_trials_per_stim=3.
+2026-07-05T08:44:32Z,G4A3 | 26/3/2025 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A3_novice_2boudaries4_g0
+2026-07-05T08:44:32Z,G4A3 | 26/3/2025 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A3_novice_2boudaries4_g0
+2026-07-05T08:44:32Z,G4A5 | 27/3/2025 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A5_novice_2b_4t_g0
+2026-07-05T08:44:32Z,G4A5 | 27/3/2025 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A5_novice_2b_4t_g0
+2026-07-05T08:44:32Z,G5A1 | 16/7 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G5A1_naive_2b_4t_high_and_low_g0
+2026-07-05T08:44:32Z,G5A1 | 16/7 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G5A1_naive_2b_4t_high_and_low_g0
+2026-07-05T08:44:32Z,G7A1 | 28/10/2025 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G7A1_novice_2b_4t_g0
+2026-07-05T08:44:32Z,G7A1 | 28/10/2025 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G7A1_novice_2b_4t_g0
+2026-07-05T08:44:32Z,G7A3 | 28/10/2025 | (Novice) 2b Categorization,ACx,ACx: no usable units after filtering (use_histology=False).
+2026-07-05T08:54:41Z,G4A3 | 1/4/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A2_1b_4t_g0
+2026-07-05T08:54:41Z,G3A3 | 14/02/2025 | (1b Expert) 1b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G3A3_rec2_g0
+2026-07-05T08:54:41Z,G3A3 | 14/02/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G3A3_rec2_g0
+2026-07-05T08:54:41Z,G4A2 | 6/4/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A2_1b_4t_g0
+2026-07-05T08:54:41Z,G4A6 | 7/4/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A6_1b_4t_expert_g0
+2026-07-05T08:54:41Z,G3A5 | 20/2/2026 | (2b Expert) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G3A5_rec2_g0
+2026-07-05T08:54:41Z,G4A5 | 9/4/2025 | (2b Expert) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A5_2b_4t_expert_g0
+2026-07-05T08:54:41Z,G4A6 | 9/4/2025 | (2b Expert) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A6_2b_4t_expert_g0
+2026-07-05T08:54:41Z,G4A2 | 26/3/2025 | (Novice) 2b Categorization,ACx,Only 0 stimulus bins meet min_trials_per_stim=3.
+2026-07-05T08:54:41Z,G4A2 | 26/3/2025 | (Novice) 2b Categorization,OFC,Only 0 stimulus bins meet min_trials_per_stim=3.
+2026-07-05T08:54:41Z,G4A3 | 26/3/2025 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A3_novice_2boudaries4_g0
+2026-07-05T08:54:41Z,G4A3 | 26/3/2025 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A3_novice_2boudaries4_g0
+2026-07-05T08:54:41Z,G4A5 | 27/3/2025 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A5_novice_2b_4t_g0
+2026-07-05T08:54:41Z,G4A5 | 27/3/2025 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A5_novice_2b_4t_g0
+2026-07-05T08:54:41Z,G5A1 | 16/7 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G5A1_naive_2b_4t_high_and_low_g0
+2026-07-05T08:54:41Z,G5A1 | 16/7 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G5A1_naive_2b_4t_high_and_low_g0
+2026-07-05T08:54:41Z,G7A1 | 28/10/2025 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G7A1_novice_2b_4t_g0
+2026-07-05T08:54:41Z,G7A1 | 28/10/2025 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G7A1_novice_2b_4t_g0
+2026-07-05T08:54:41Z,G7A3 | 28/10/2025 | (Novice) 2b Categorization,ACx,ACx: no usable units after filtering (use_histology=False).
+2026-07-05T08:57:28Z,G4A3 | 1/4/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A2_1b_4t_g0
+2026-07-05T08:57:28Z,G3A3 | 14/02/2025 | (1b Expert) 1b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G3A3_rec2_g0
+2026-07-05T08:57:28Z,G3A3 | 14/02/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G3A3_rec2_g0
+2026-07-05T08:57:28Z,G4A2 | 6/4/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A2_1b_4t_g0
+2026-07-05T08:57:28Z,G4A6 | 7/4/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A6_1b_4t_expert_g0
+2026-07-05T08:57:28Z,G3A5 | 20/2/2026 | (2b Expert) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G3A5_rec2_g0
+2026-07-05T08:57:28Z,G4A5 | 9/4/2025 | (2b Expert) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A5_2b_4t_expert_g0
+2026-07-05T08:57:28Z,G4A6 | 9/4/2025 | (2b Expert) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A6_2b_4t_expert_g0
+2026-07-05T08:57:28Z,G4A2 | 26/3/2025 | (Novice) 2b Categorization,ACx,Only 0 stimulus bins meet min_trials_per_stim=3.
+2026-07-05T08:57:28Z,G4A2 | 26/3/2025 | (Novice) 2b Categorization,OFC,Only 0 stimulus bins meet min_trials_per_stim=3.
+2026-07-05T08:57:28Z,G4A3 | 26/3/2025 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A3_novice_2boudaries4_g0
+2026-07-05T08:57:28Z,G4A3 | 26/3/2025 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A3_novice_2boudaries4_g0
+2026-07-05T08:57:28Z,G4A5 | 27/3/2025 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A5_novice_2b_4t_g0
+2026-07-05T08:57:28Z,G4A5 | 27/3/2025 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A5_novice_2b_4t_g0
+2026-07-05T08:57:28Z,G5A1 | 16/7 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G5A1_naive_2b_4t_high_and_low_g0
+2026-07-05T08:57:28Z,G5A1 | 16/7 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G5A1_naive_2b_4t_high_and_low_g0
+2026-07-05T08:57:28Z,G7A1 | 28/10/2025 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G7A1_novice_2b_4t_g0
+2026-07-05T08:57:28Z,G7A1 | 28/10/2025 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G7A1_novice_2b_4t_g0
+2026-07-05T08:57:28Z,G7A3 | 28/10/2025 | (Novice) 2b Categorization,ACx,ACx: no usable units after filtering (use_histology=False).
+2026-07-05T09:00:56Z,G4A3 | 1/4/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A2_1b_4t_g0
+2026-07-05T09:00:56Z,G3A3 | 14/02/2025 | (1b Expert) 1b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G3A3_rec2_g0
+2026-07-05T09:00:56Z,G3A3 | 14/02/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G3A3_rec2_g0
+2026-07-05T09:00:56Z,G4A2 | 6/4/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A2_1b_4t_g0
+2026-07-05T09:00:56Z,G4A6 | 7/4/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A6_1b_4t_expert_g0
+2026-07-05T09:00:56Z,G3A5 | 20/2/2026 | (2b Expert) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G3A5_rec2_g0
+2026-07-05T09:00:56Z,G4A5 | 9/4/2025 | (2b Expert) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A5_2b_4t_expert_g0
+2026-07-05T09:00:56Z,G4A6 | 9/4/2025 | (2b Expert) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A6_2b_4t_expert_g0
+2026-07-05T09:00:56Z,G4A2 | 26/3/2025 | (Novice) 2b Categorization,ACx,Only 0 stimulus bins meet min_trials_per_stim=3.
+2026-07-05T09:00:56Z,G4A2 | 26/3/2025 | (Novice) 2b Categorization,OFC,Only 0 stimulus bins meet min_trials_per_stim=3.
+2026-07-05T09:00:56Z,G4A3 | 26/3/2025 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A3_novice_2boudaries4_g0
+2026-07-05T09:00:56Z,G4A3 | 26/3/2025 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A3_novice_2boudaries4_g0
+2026-07-05T09:00:56Z,G4A5 | 27/3/2025 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A5_novice_2b_4t_g0
+2026-07-05T09:00:56Z,G4A5 | 27/3/2025 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A5_novice_2b_4t_g0
+2026-07-05T09:00:56Z,G5A1 | 16/7 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G5A1_naive_2b_4t_high_and_low_g0
+2026-07-05T09:00:56Z,G5A1 | 16/7 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G5A1_naive_2b_4t_high_and_low_g0
+2026-07-05T09:00:56Z,G7A1 | 28/10/2025 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G7A1_novice_2b_4t_g0
+2026-07-05T09:00:56Z,G7A1 | 28/10/2025 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G7A1_novice_2b_4t_g0
+2026-07-05T09:00:56Z,G7A3 | 28/10/2025 | (Novice) 2b Categorization,ACx,ACx: no usable units after filtering (use_histology=False).
+2026-07-05T09:04:30Z,G4A3 | 1/4/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A2_1b_4t_g0
+2026-07-05T09:04:30Z,G3A3 | 14/02/2025 | (1b Expert) 1b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G3A3_rec2_g0
+2026-07-05T09:04:30Z,G3A3 | 14/02/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G3A3_rec2_g0
+2026-07-05T09:04:30Z,G4A2 | 6/4/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A2_1b_4t_g0
+2026-07-05T09:04:30Z,G4A6 | 7/4/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A6_1b_4t_expert_g0
+2026-07-05T09:04:30Z,G3A5 | 20/2/2026 | (2b Expert) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G3A5_rec2_g0
+2026-07-05T09:04:30Z,G4A5 | 9/4/2025 | (2b Expert) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A5_2b_4t_expert_g0
+2026-07-05T09:04:30Z,G4A6 | 9/4/2025 | (2b Expert) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A6_2b_4t_expert_g0
+2026-07-05T09:04:30Z,G4A2 | 26/3/2025 | (Novice) 2b Categorization,ACx,Only 0 stimulus bins meet min_trials_per_stim=3.
+2026-07-05T09:04:30Z,G4A2 | 26/3/2025 | (Novice) 2b Categorization,OFC,Only 0 stimulus bins meet min_trials_per_stim=3.
+2026-07-05T09:04:30Z,G4A3 | 26/3/2025 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A3_novice_2boudaries4_g0
+2026-07-05T09:04:30Z,G4A3 | 26/3/2025 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A3_novice_2boudaries4_g0
+2026-07-05T09:04:30Z,G4A5 | 27/3/2025 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A5_novice_2b_4t_g0
+2026-07-05T09:04:30Z,G4A5 | 27/3/2025 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A5_novice_2b_4t_g0
+2026-07-05T09:04:30Z,G5A1 | 16/7 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G5A1_naive_2b_4t_high_and_low_g0
+2026-07-05T09:04:30Z,G5A1 | 16/7 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G5A1_naive_2b_4t_high_and_low_g0
+2026-07-05T09:04:30Z,G7A1 | 28/10/2025 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G7A1_novice_2b_4t_g0
+2026-07-05T09:04:30Z,G7A1 | 28/10/2025 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G7A1_novice_2b_4t_g0
+2026-07-05T09:04:30Z,G7A3 | 28/10/2025 | (Novice) 2b Categorization,ACx,ACx: no usable units after filtering (use_histology=False).
+2026-07-05T09:06:29Z,G4A3 | 1/4/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A2_1b_4t_g0
+2026-07-05T09:06:29Z,G3A3 | 14/02/2025 | (1b Expert) 1b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G3A3_rec2_g0
+2026-07-05T09:06:29Z,G3A3 | 14/02/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G3A3_rec2_g0
+2026-07-05T09:06:29Z,G4A2 | 6/4/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A2_1b_4t_g0
+2026-07-05T09:06:29Z,G4A6 | 7/4/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A6_1b_4t_expert_g0
+2026-07-05T09:06:29Z,G3A5 | 20/2/2026 | (2b Expert) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G3A5_rec2_g0
+2026-07-05T09:06:29Z,G4A5 | 9/4/2025 | (2b Expert) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A5_2b_4t_expert_g0
+2026-07-05T09:06:29Z,G4A6 | 9/4/2025 | (2b Expert) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A6_2b_4t_expert_g0
+2026-07-05T09:06:29Z,G4A2 | 26/3/2025 | (Novice) 2b Categorization,ACx,Only 0 stimulus bins meet min_trials_per_stim=3.
+2026-07-05T09:06:29Z,G4A2 | 26/3/2025 | (Novice) 2b Categorization,OFC,Only 0 stimulus bins meet min_trials_per_stim=3.
+2026-07-05T09:06:29Z,G4A3 | 26/3/2025 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A3_novice_2boudaries4_g0
+2026-07-05T09:06:29Z,G4A3 | 26/3/2025 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A3_novice_2boudaries4_g0
+2026-07-05T09:06:29Z,G4A5 | 27/3/2025 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A5_novice_2b_4t_g0
+2026-07-05T09:06:29Z,G4A5 | 27/3/2025 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A5_novice_2b_4t_g0
+2026-07-05T09:06:29Z,G5A1 | 16/7 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G5A1_naive_2b_4t_high_and_low_g0
+2026-07-05T09:06:29Z,G5A1 | 16/7 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G5A1_naive_2b_4t_high_and_low_g0
+2026-07-05T09:06:29Z,G7A1 | 28/10/2025 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G7A1_novice_2b_4t_g0
+2026-07-05T09:06:29Z,G7A1 | 28/10/2025 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G7A1_novice_2b_4t_g0
+2026-07-05T09:06:29Z,G7A3 | 28/10/2025 | (Novice) 2b Categorization,ACx,ACx: no usable units after filtering (use_histology=False).
+2026-07-05T09:07:49Z,G4A3 | 1/4/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A2_1b_4t_g0
+2026-07-05T09:07:49Z,G3A3 | 14/02/2025 | (1b Expert) 1b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G3A3_rec2_g0
+2026-07-05T09:07:49Z,G3A3 | 14/02/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G3A3_rec2_g0
+2026-07-05T09:07:49Z,G4A2 | 6/4/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A2_1b_4t_g0
+2026-07-05T09:07:49Z,G4A6 | 7/4/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A6_1b_4t_expert_g0
+2026-07-05T09:07:49Z,G3A5 | 20/2/2026 | (2b Expert) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G3A5_rec2_g0
+2026-07-05T09:07:49Z,G4A5 | 9/4/2025 | (2b Expert) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A5_2b_4t_expert_g0
+2026-07-05T09:07:49Z,G4A6 | 9/4/2025 | (2b Expert) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A6_2b_4t_expert_g0
+2026-07-05T09:07:49Z,G4A2 | 26/3/2025 | (Novice) 2b Categorization,ACx,Only 0 stimulus bins meet min_trials_per_stim=3.
+2026-07-05T09:07:49Z,G4A2 | 26/3/2025 | (Novice) 2b Categorization,OFC,Only 0 stimulus bins meet min_trials_per_stim=3.
+2026-07-05T09:07:49Z,G4A3 | 26/3/2025 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A3_novice_2boudaries4_g0
+2026-07-05T09:07:49Z,G4A3 | 26/3/2025 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A3_novice_2boudaries4_g0
+2026-07-05T09:07:49Z,G4A5 | 27/3/2025 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A5_novice_2b_4t_g0
+2026-07-05T09:07:49Z,G4A5 | 27/3/2025 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A5_novice_2b_4t_g0
+2026-07-05T09:07:49Z,G5A1 | 16/7 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G5A1_naive_2b_4t_high_and_low_g0
+2026-07-05T09:07:49Z,G5A1 | 16/7 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G5A1_naive_2b_4t_high_and_low_g0
+2026-07-05T09:07:49Z,G7A1 | 28/10/2025 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G7A1_novice_2b_4t_g0
+2026-07-05T09:07:49Z,G7A1 | 28/10/2025 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G7A1_novice_2b_4t_g0
+2026-07-05T09:07:49Z,G7A3 | 28/10/2025 | (Novice) 2b Categorization,ACx,ACx: no usable units after filtering (use_histology=False).
+2026-07-05T09:13:08Z,G4A3 | 1/4/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A2_1b_4t_g0
+2026-07-05T09:13:08Z,G3A3 | 14/02/2025 | (1b Expert) 1b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G3A3_rec2_g0
+2026-07-05T09:13:08Z,G3A3 | 14/02/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G3A3_rec2_g0
+2026-07-05T09:13:08Z,G4A2 | 6/4/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A2_1b_4t_g0
+2026-07-05T09:13:08Z,G4A6 | 7/4/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A6_1b_4t_expert_g0
+2026-07-05T09:13:08Z,G3A5 | 20/2/2026 | (2b Expert) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G3A5_rec2_g0
+2026-07-05T09:13:08Z,G4A5 | 9/4/2025 | (2b Expert) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A5_2b_4t_expert_g0
+2026-07-05T09:13:08Z,G4A6 | 9/4/2025 | (2b Expert) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A6_2b_4t_expert_g0
+2026-07-05T09:13:08Z,G4A2 | 26/3/2025 | (Novice) 2b Categorization,ACx,Only 0 stimulus bins meet min_trials_per_stim=3.
+2026-07-05T09:13:08Z,G4A2 | 26/3/2025 | (Novice) 2b Categorization,OFC,Only 0 stimulus bins meet min_trials_per_stim=3.
+2026-07-05T09:13:08Z,G4A3 | 26/3/2025 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A3_novice_2boudaries4_g0
+2026-07-05T09:13:08Z,G4A3 | 26/3/2025 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A3_novice_2boudaries4_g0
+2026-07-05T09:13:08Z,G4A5 | 27/3/2025 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A5_novice_2b_4t_g0
+2026-07-05T09:13:08Z,G4A5 | 27/3/2025 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A5_novice_2b_4t_g0
+2026-07-05T09:13:08Z,G5A1 | 16/7 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G5A1_naive_2b_4t_high_and_low_g0
+2026-07-05T09:13:08Z,G5A1 | 16/7 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G5A1_naive_2b_4t_high_and_low_g0
+2026-07-05T09:13:08Z,G7A1 | 28/10/2025 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G7A1_novice_2b_4t_g0
+2026-07-05T09:13:08Z,G7A1 | 28/10/2025 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G7A1_novice_2b_4t_g0
+2026-07-05T09:13:08Z,G7A3 | 28/10/2025 | (Novice) 2b Categorization,ACx,ACx: no usable units after filtering (use_histology=False).
+2026-07-05T09:16:33Z,G4A3 | 1/4/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A2_1b_4t_g0
+2026-07-05T09:16:33Z,G3A3 | 14/02/2025 | (1b Expert) 1b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G3A3_rec2_g0
+2026-07-05T09:16:33Z,G3A3 | 14/02/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G3A3_rec2_g0
+2026-07-05T09:16:33Z,G4A2 | 6/4/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A2_1b_4t_g0
+2026-07-05T09:16:33Z,G4A6 | 7/4/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A6_1b_4t_expert_g0
+2026-07-05T09:16:33Z,G3A5 | 20/2/2026 | (2b Expert) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G3A5_rec2_g0
+2026-07-05T09:16:33Z,G4A5 | 9/4/2025 | (2b Expert) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A5_2b_4t_expert_g0
+2026-07-05T09:16:33Z,G4A6 | 9/4/2025 | (2b Expert) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A6_2b_4t_expert_g0
+2026-07-05T09:16:33Z,G4A2 | 26/3/2025 | (Novice) 2b Categorization,ACx,Only 0 stimulus bins meet min_trials_per_stim=3.
+2026-07-05T09:16:33Z,G4A2 | 26/3/2025 | (Novice) 2b Categorization,OFC,Only 0 stimulus bins meet min_trials_per_stim=3.
+2026-07-05T09:16:33Z,G4A3 | 26/3/2025 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A3_novice_2boudaries4_g0
+2026-07-05T09:16:33Z,G4A3 | 26/3/2025 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A3_novice_2boudaries4_g0
+2026-07-05T09:16:33Z,G4A5 | 27/3/2025 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A5_novice_2b_4t_g0
+2026-07-05T09:16:33Z,G4A5 | 27/3/2025 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A5_novice_2b_4t_g0
+2026-07-05T09:16:33Z,G5A1 | 16/7 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G5A1_naive_2b_4t_high_and_low_g0
+2026-07-05T09:16:33Z,G5A1 | 16/7 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G5A1_naive_2b_4t_high_and_low_g0
+2026-07-05T09:16:33Z,G7A1 | 28/10/2025 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G7A1_novice_2b_4t_g0
+2026-07-05T09:16:33Z,G7A1 | 28/10/2025 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G7A1_novice_2b_4t_g0
+2026-07-05T09:16:33Z,G7A3 | 28/10/2025 | (Novice) 2b Categorization,ACx,ACx: no usable units after filtering (use_histology=False).
+2026-07-05T10:41:53Z,G4A3 | 1/4/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A2_1b_4t_g0
+2026-07-05T10:41:53Z,G3A3 | 14/02/2025 | (1b Expert) 1b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G3A3_rec2_g0
+2026-07-05T10:41:53Z,G3A3 | 14/02/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G3A3_rec2_g0
+2026-07-05T10:41:53Z,G4A2 | 6/4/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A2_1b_4t_g0
+2026-07-05T10:41:53Z,G4A6 | 7/4/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A6_1b_4t_expert_g0
+2026-07-05T10:41:53Z,G3A5 | 20/2/2026 | (2b Expert) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G3A5_rec2_g0
+2026-07-05T10:41:53Z,G4A5 | 9/4/2025 | (2b Expert) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A5_2b_4t_expert_g0
+2026-07-05T10:41:53Z,G4A6 | 9/4/2025 | (2b Expert) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A6_2b_4t_expert_g0
+2026-07-05T10:41:53Z,G4A2 | 26/3/2025 | (Novice) 2b Categorization,ACx,Only 0 stimulus bins meet min_trials_per_stim=3.
+2026-07-05T10:41:53Z,G4A2 | 26/3/2025 | (Novice) 2b Categorization,OFC,Only 0 stimulus bins meet min_trials_per_stim=3.
+2026-07-05T10:41:53Z,G4A3 | 26/3/2025 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A3_novice_2boudaries4_g0
+2026-07-05T10:41:53Z,G4A3 | 26/3/2025 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A3_novice_2boudaries4_g0
+2026-07-05T10:41:53Z,G4A5 | 27/3/2025 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A5_novice_2b_4t_g0
+2026-07-05T10:41:53Z,G4A5 | 27/3/2025 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A5_novice_2b_4t_g0
+2026-07-05T10:41:53Z,G5A1 | 16/7 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G5A1_naive_2b_4t_high_and_low_g0
+2026-07-05T10:41:53Z,G5A1 | 16/7 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G5A1_naive_2b_4t_high_and_low_g0
+2026-07-05T10:41:53Z,G7A1 | 28/10/2025 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G7A1_novice_2b_4t_g0
+2026-07-05T10:41:53Z,G7A1 | 28/10/2025 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G7A1_novice_2b_4t_g0
+2026-07-05T10:41:53Z,G7A3 | 28/10/2025 | (Novice) 2b Categorization,ACx,ACx: no usable units after filtering (use_histology=False).
+2026-07-05T10:45:56Z,G4A3 | 1/4/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A2_1b_4t_g0
+2026-07-05T10:45:56Z,G3A3 | 14/02/2025 | (1b Expert) 1b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G3A3_rec2_g0
+2026-07-05T10:45:56Z,G3A3 | 14/02/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G3A3_rec2_g0
+2026-07-05T10:45:56Z,G4A2 | 6/4/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A2_1b_4t_g0
+2026-07-05T10:45:56Z,G4A6 | 7/4/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A6_1b_4t_expert_g0
+2026-07-05T10:45:56Z,G3A5 | 20/2/2026 | (2b Expert) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G3A5_rec2_g0
+2026-07-05T10:45:56Z,G4A5 | 9/4/2025 | (2b Expert) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A5_2b_4t_expert_g0
+2026-07-05T10:45:56Z,G4A6 | 9/4/2025 | (2b Expert) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A6_2b_4t_expert_g0
+2026-07-05T10:45:56Z,G4A2 | 26/3/2025 | (Novice) 2b Categorization,ACx,Only 0 stimulus bins meet min_trials_per_stim=3.
+2026-07-05T10:45:56Z,G4A2 | 26/3/2025 | (Novice) 2b Categorization,OFC,Only 0 stimulus bins meet min_trials_per_stim=3.
+2026-07-05T10:45:56Z,G4A3 | 26/3/2025 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A3_novice_2boudaries4_g0
+2026-07-05T10:45:56Z,G4A3 | 26/3/2025 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A3_novice_2boudaries4_g0
+2026-07-05T10:45:56Z,G4A5 | 27/3/2025 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A5_novice_2b_4t_g0
+2026-07-05T10:45:56Z,G4A5 | 27/3/2025 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A5_novice_2b_4t_g0
+2026-07-05T10:45:56Z,G5A1 | 16/7 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G5A1_naive_2b_4t_high_and_low_g0
+2026-07-05T10:45:56Z,G5A1 | 16/7 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G5A1_naive_2b_4t_high_and_low_g0
+2026-07-05T10:45:56Z,G7A1 | 28/10/2025 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G7A1_novice_2b_4t_g0
+2026-07-05T10:45:56Z,G7A1 | 28/10/2025 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G7A1_novice_2b_4t_g0
+2026-07-05T10:45:56Z,G7A3 | 28/10/2025 | (Novice) 2b Categorization,ACx,ACx: no usable units after filtering (use_histology=False).
+2026-07-05T10:49:19Z,G4A3 | 1/4/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A2_1b_4t_g0
+2026-07-05T10:49:19Z,G3A3 | 14/02/2025 | (1b Expert) 1b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G3A3_rec2_g0
+2026-07-05T10:49:19Z,G3A3 | 14/02/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G3A3_rec2_g0
+2026-07-05T10:49:19Z,G4A2 | 6/4/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A2_1b_4t_g0
+2026-07-05T10:49:19Z,G4A6 | 7/4/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A6_1b_4t_expert_g0
+2026-07-05T10:49:19Z,G3A5 | 20/2/2026 | (2b Expert) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G3A5_rec2_g0
+2026-07-05T10:49:19Z,G4A5 | 9/4/2025 | (2b Expert) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A5_2b_4t_expert_g0
+2026-07-05T10:49:19Z,G4A6 | 9/4/2025 | (2b Expert) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A6_2b_4t_expert_g0
+2026-07-05T10:49:19Z,G4A2 | 26/3/2025 | (Novice) 2b Categorization,ACx,Only 0 stimulus bins meet min_trials_per_stim=3.
+2026-07-05T10:49:19Z,G4A2 | 26/3/2025 | (Novice) 2b Categorization,OFC,Only 0 stimulus bins meet min_trials_per_stim=3.
+2026-07-05T10:49:19Z,G4A3 | 26/3/2025 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A3_novice_2boudaries4_g0
+2026-07-05T10:49:19Z,G4A3 | 26/3/2025 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A3_novice_2boudaries4_g0
+2026-07-05T10:49:19Z,G4A5 | 27/3/2025 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A5_novice_2b_4t_g0
+2026-07-05T10:49:19Z,G4A5 | 27/3/2025 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A5_novice_2b_4t_g0
+2026-07-05T10:49:19Z,G5A1 | 16/7 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G5A1_naive_2b_4t_high_and_low_g0
+2026-07-05T10:49:19Z,G5A1 | 16/7 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G5A1_naive_2b_4t_high_and_low_g0
+2026-07-05T10:49:19Z,G7A1 | 28/10/2025 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G7A1_novice_2b_4t_g0
+2026-07-05T10:49:19Z,G7A1 | 28/10/2025 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G7A1_novice_2b_4t_g0
+2026-07-05T10:49:19Z,G7A3 | 28/10/2025 | (Novice) 2b Categorization,ACx,ACx: no usable units after filtering (use_histology=False).
+2026-07-05T11:15:34Z,G4A3 | 1/4/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A2_1b_4t_g0
+2026-07-05T11:15:34Z,G3A3 | 14/02/2025 | (1b Expert) 1b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G3A3_rec2_g0
+2026-07-05T11:15:34Z,G3A3 | 14/02/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G3A3_rec2_g0
+2026-07-05T11:15:34Z,G4A2 | 6/4/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A2_1b_4t_g0
+2026-07-05T11:15:34Z,G4A6 | 7/4/2025 | (1b Expert) 1b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A6_1b_4t_expert_g0
+2026-07-05T11:15:34Z,G3A5 | 20/2/2026 | (2b Expert) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G3A5_rec2_g0
+2026-07-05T11:15:34Z,G4A5 | 9/4/2025 | (2b Expert) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A5_2b_4t_expert_g0
+2026-07-05T11:15:34Z,G4A6 | 9/4/2025 | (2b Expert) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A6_2b_4t_expert_g0
+2026-07-05T11:15:34Z,G4A2 | 26/3/2025 | (Novice) 2b Categorization,ACx,Only 0 stimulus bins meet min_trials_per_stim=3.
+2026-07-05T11:15:34Z,G4A2 | 26/3/2025 | (Novice) 2b Categorization,OFC,Only 0 stimulus bins meet min_trials_per_stim=3.
+2026-07-05T11:15:34Z,G4A3 | 26/3/2025 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A3_novice_2boudaries4_g0
+2026-07-05T11:15:34Z,G4A3 | 26/3/2025 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A3_novice_2boudaries4_g0
+2026-07-05T11:15:34Z,G4A5 | 27/3/2025 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A5_novice_2b_4t_g0
+2026-07-05T11:15:34Z,G4A5 | 27/3/2025 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G4A5_novice_2b_4t_g0
+2026-07-05T11:15:34Z,G5A1 | 16/7 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G5A1_naive_2b_4t_high_and_low_g0
+2026-07-05T11:15:34Z,G5A1 | 16/7 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G5A1_naive_2b_4t_high_and_low_g0
+2026-07-05T11:15:34Z,G7A1 | 28/10/2025 | (Novice) 2b Categorization,ACx,No imec0 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G7A1_novice_2b_4t_g0
+2026-07-05T11:15:34Z,G7A1 | 28/10/2025 | (Novice) 2b Categorization,OFC,No imec1 probe folder with event windows found under Z:\Shared\Amichai\Data\pipeline_output\catgt_G7A1_novice_2b_4t_g0
+2026-07-05T11:15:34Z,G7A3 | 28/10/2025 | (Novice) 2b Categorization,ACx,ACx: no usable units after filtering (use_histology=False).
